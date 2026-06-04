@@ -153,7 +153,9 @@ async def accept_challenge(
     loser = await session.get(User, loser_id)
     assert winner is not None and loser is not None
     winner.duels_won += 1
+    winner.duel_loss_streak = 0
     loser.duels_lost += 1
+    loser.duel_loss_streak += 1
 
     pending.status = STATUS_ACCEPTED
 

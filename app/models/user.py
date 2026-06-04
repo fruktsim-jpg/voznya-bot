@@ -46,6 +46,10 @@ class User(Base):
     # Счётчики для достижений
     farm_success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     casino_games_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Текущие серии проигрышей и крупнейший проигрыш в казино (секретки)
+    casino_loss_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    duel_loss_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_casino_loss: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
     # Активность (для пула «активных за N дней»)
     last_active_at: Mapped[datetime | None] = mapped_column(

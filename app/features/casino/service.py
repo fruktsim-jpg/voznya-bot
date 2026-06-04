@@ -26,6 +26,8 @@ class CasinoResult:
     net: int = 0
     balance: int = 0
     outcome: str = ""
+    jackpot: bool = False
+    all_in: bool = False
 
 
 def _pick_outcome() -> dict:
@@ -48,6 +50,9 @@ async def play_casino(session: AsyncSession, user_id: int, bet: int) -> CasinoRe
     if user.balance < bet:
         return CasinoResult(status="not_enough", balance=user.balance)
 
+    pre_balance = user.balance
+    all_in = bet == pre_balance
+
     outcome = _pick_outcome()
     multiplier = float(outcome["multiplier"])
     payout = math.floor(bet * multiplier)
@@ -61,6 +66,15 @@ async def play_casino(session: AsyncSession, user_id: int, bet: int) -> CasinoRe
         meta={"bet": bet, "multiplier": multiplier, "payout": payout, "outcome": outcome["name"]},
     )
     user.casino_games_count += 1
+
+    # Счётчики для секретных достижений.
+    if outcome["name"] == "loss":
+        user.casino_loss_streak += 1
+        if bet > user.max_casino_loss:
+            user.max_casino_loss = bet
+    else:
+        user.casino_loss_streak = 0
+
     await cooldowns.set_cooldown(session, user_id, "casino", balance.COOLDOWNS["casino"])
 
     return CasinoResult(
@@ -71,4 +85,6 @@ async def play_casino(session: AsyncSession, user_id: int, bet: int) -> CasinoRe
         net=net,
         balance=user.balance,
         outcome=outcome["name"],
+        jackpot=outcome["name"] == "jackpot",
+        all_in=all_in,
     )
