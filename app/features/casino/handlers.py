@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,26 +35,18 @@ def _format_multiplier(value: float) -> str:
     return str(int(value)) if value.is_integer() else str(value)
 
 
-def _render_result(result: CasinoResult, who: str) -> str:
-    """Формирует текст результата игры."""
+def _render_result(result: CasinoResult, who: str = "") -> str:
+    """Формирует короткий текст результата игры (случайная реплика из пула)."""
     if result.outcome == "loss":
         return texts.CASINO_LOSS.format(
-            mention=who, bet=money(result.bet), balance=money(result.balance)
+            phrase=random.choice(texts.CASINO_LOSS_VARIANTS), bet=money(result.bet)
         )
     if result.outcome == "jackpot":
         return texts.CASINO_JACKPOT.format(
-            mention=who,
-            bet=money(result.bet),
-            multiplier=_format_multiplier(result.multiplier),
-            payout=money(result.payout),
-            balance=money(result.balance),
+            multiplier=_format_multiplier(result.multiplier), net=money(result.net)
         )
     return texts.CASINO_WIN.format(
-        mention=who,
-        bet=money(result.bet),
-        multiplier=_format_multiplier(result.multiplier),
-        payout=money(result.payout),
-        balance=money(result.balance),
+        phrase=random.choice(texts.CASINO_WIN_VARIANTS), net=money(result.net)
     )
 
 
