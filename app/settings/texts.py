@@ -330,8 +330,8 @@ ACH_HEADER = (
 )
 ACH_OPENED_TITLE = f"\n{DIV}\n✅ <b>Открыто</b>"
 ACH_LOCKED_TITLE = f"\n{DIV}\n🔒 <b>Ещё впереди</b>"
-ACH_OPENED_ROW = "{label}"
-ACH_LOCKED_ROW = "🔒 {label} — <i>{description}</i>{reward}"
+ACH_OPENED_ROW = "✅ {label}"
+ACH_LOCKED_ROW = "🔒 {label}"
 ACH_REWARD = "  🎁 +{reward}"
 ACH_UNLOCK = (
     "🎉 <b>Новое достижение!</b>\n"

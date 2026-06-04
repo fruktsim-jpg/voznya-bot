@@ -163,12 +163,6 @@ async def render_achievements(session: AsyncSession, user_id: int) -> str:
 
     if locked_list:
         parts.append(texts.ACH_LOCKED_TITLE)
-        for a in locked_list:
-            reward = texts.ACH_REWARD.format(reward=money(a.reward)) if a.reward else ""
-            parts.append(
-                texts.ACH_LOCKED_ROW.format(
-                    label=a.label, description=a.description, reward=reward
-                )
-            )
+        parts.extend(texts.ACH_LOCKED_ROW.format(label=a.label) for a in locked_list)
 
     return "\n".join(parts)
