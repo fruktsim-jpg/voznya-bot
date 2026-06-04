@@ -18,7 +18,6 @@ from app.features.farm.handlers import render_farm_result
 from app.features.farm.service import do_farm
 from app.features.profile.handlers import render_profile
 from app.repositories import users as users_repo
-from app.services.economy import get_balance
 from app.settings import texts
 from app.settings.titles import get_title
 
@@ -51,13 +50,15 @@ async def q_farm(callback: CallbackQuery, session: AsyncSession) -> None:
 async def q_balance(callback: CallbackQuery, session: AsyncSession) -> None:
     """Быстрый баланс."""
     user = callback.from_user
-    amount = await get_balance(session, user.id)
+    record = await users_repo.get_user(session, user.id)
+    amount = record.balance if record else 0
+    earned = record.total_earned if record else 0
     if callback.message is not None:
         await callback.message.answer(
             texts.BALANCE.format(
                 mention=mention(user.id, user.first_name, user.username),
                 balance=money(amount),
-                title=get_title(amount).label,
+                title=get_title(earned).label,
             )
         )
     await callback.answer()

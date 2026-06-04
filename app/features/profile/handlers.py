@@ -48,16 +48,19 @@ async def _marital_status(session: AsyncSession, user_id: int) -> str:
     )
 
 
-def _progress_block(balance: int) -> str:
-    """Формирует блок прогресса до следующего титула с прогресс-баром."""
-    current_title = get_title(balance)
-    next_title = get_next_title(balance)
+def _progress_block(earned: int) -> str:
+    """Формирует блок прогресса до следующего титула с прогресс-баром.
+
+    Прогрессия считается по сумме «всего заработано» (total_earned).
+    """
+    current_title = get_title(earned)
+    next_title = get_next_title(earned)
     if next_title is None:
         return texts.PROFILE_PROGRESS_MAX
-    span = next_title.min_balance - current_title.min_balance
-    done = balance - current_title.min_balance
+    span = next_title.min_earned - current_title.min_earned
+    done = earned - current_title.min_earned
     ratio = done / span if span > 0 else 0.0
-    remaining = next_title.min_balance - balance
+    remaining = next_title.min_earned - earned
     return texts.PROFILE_PROGRESS.format(
         next_title=next_title.label,
         bar=progress_bar(ratio),
@@ -67,7 +70,7 @@ def _progress_block(balance: int) -> str:
 
 async def render_profile(session: AsyncSession, user: User) -> str:
     """Формирует текст карточки игрока (используется командой и кнопкой)."""
-    title = get_title(user.balance)
+    title = get_title(user.total_earned)
     rank = await users_repo.rank_by_balance(session, user.balance)
     unlocked = await get_unlocked_codes(session, user.user_id)
     marital = await _marital_status(session, user.user_id)
@@ -89,7 +92,7 @@ async def render_profile(session: AsyncSession, user: User) -> str:
         ach_opened=len(unlocked),
         ach_total=len(ACHIEVEMENTS),
         days_in_game=days_in_game,
-        progress=_progress_block(user.balance),
+        progress=_progress_block(user.total_earned),
     )
 
 
