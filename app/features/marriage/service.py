@@ -1,0 +1,160 @@
+"""Логика браков: предложение, подтверждение, информация, развод.
+
+Правила (согласованы в ТЗ):
+* у одного пользователя может быть только один активный брак;
+* разрешены любые пары;
+* свадьба и развод требуют подтверждения второй стороной.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.utils import now_utc
+from app.models import Marriage
+from app.models.pending_action import (
+    STATUS_ACCEPTED,
+    STATUS_EXPIRED,
+    STATUS_PENDING,
+    TYPE_DIVORCE,
+    TYPE_MARRY,
+    PendingAction,
+)
+from app.repositories import marriages as marriages_repo
+from app.settings import balance
+
+
+@dataclass
+class MarrySimpleResult:
+    status: str
+    partner_id: int = 0
+
+
+@dataclass
+class AcceptResult:
+    status: str  # "no_pending" / "initiator_busy" / "target_busy" / "done"
+    initiator_id: int = 0
+    target_id: int = 0
+
+
+async def propose(
+    session: AsyncSession, initiator_id: int, target_id: int, chat_id: int
+) -> MarrySimpleResult:
+    """Создаёт предложение руки и сердца."""
+    if await marriages_repo.get_active_marriage(session, initiator_id):
+        return MarrySimpleResult(status="initiator_busy")
+    if await marriages_repo.get_active_marriage(session, target_id):
+        return MarrySimpleResult(status="target_busy", partner_id=target_id)
+
+    expires_at = now_utc() + timedelta(minutes=balance.MARRIAGE_PROPOSAL_EXPIRE_MINUTES)
+    session.add(
+        PendingAction(
+            action_type=TYPE_MARRY,
+            initiator_id=initiator_id,
+            target_id=target_id,
+            chat_id=chat_id,
+            status=STATUS_PENDING,
+            expires_at=expires_at,
+        )
+    )
+    return MarrySimpleResult(status="ok", partner_id=target_id)
+
+
+async def accept_proposal(session: AsyncSession, confirmer_id: int) -> AcceptResult:
+    """Подтверждает предложение и создаёт брак."""
+    now = now_utc()
+    result = await session.execute(
+        select(PendingAction)
+        .where(
+            PendingAction.action_type == TYPE_MARRY,
+            PendingAction.target_id == confirmer_id,
+            PendingAction.status == STATUS_PENDING,
+        )
+        .order_by(PendingAction.created_at.desc())
+        .with_for_update()
+    )
+    pending = result.scalars().first()
+    if pending is None or pending.expires_at <= now:
+        if pending is not None:
+            pending.status = STATUS_EXPIRED
+        return AcceptResult(status="no_pending")
+
+    initiator_id = pending.initiator_id
+
+    # Повторно проверяем, что оба свободны (с блокировкой).
+    if await marriages_repo.get_active_marriage(session, initiator_id, lock=True):
+        pending.status = STATUS_EXPIRED
+        return AcceptResult(status="initiator_busy")
+    if await marriages_repo.get_active_marriage(session, confirmer_id, lock=True):
+        pending.status = STATUS_EXPIRED
+        return AcceptResult(status="target_busy")
+
+    session.add(
+        Marriage(user_id_1=initiator_id, user_id_2=confirmer_id, married_at=now_utc())
+    )
+    pending.status = STATUS_ACCEPTED
+    return AcceptResult(status="done", initiator_id=initiator_id, target_id=confirmer_id)
+
+
+async def get_marriage(session: AsyncSession, user_id: int) -> Marriage | None:
+    """Возвращает активный брак пользователя."""
+    return await marriages_repo.get_active_marriage(session, user_id)
+
+
+async def request_divorce(
+    session: AsyncSession, initiator_id: int, chat_id: int
+) -> MarrySimpleResult:
+    """Создаёт запрос на развод."""
+    marriage = await marriages_repo.get_active_marriage(session, initiator_id)
+    if marriage is None:
+        return MarrySimpleResult(status="no_marriage")
+
+    partner_id = (
+        marriage.user_id_2 if marriage.user_id_1 == initiator_id else marriage.user_id_1
+    )
+    expires_at = now_utc() + timedelta(minutes=balance.MARRIAGE_PROPOSAL_EXPIRE_MINUTES)
+    session.add(
+        PendingAction(
+            action_type=TYPE_DIVORCE,
+            initiator_id=initiator_id,
+            target_id=partner_id,
+            chat_id=chat_id,
+            status=STATUS_PENDING,
+            expires_at=expires_at,
+        )
+    )
+    return MarrySimpleResult(status="ok", partner_id=partner_id)
+
+
+async def confirm_divorce(session: AsyncSession, confirmer_id: int) -> AcceptResult:
+    """Подтверждает развод и завершает брак."""
+    now = now_utc()
+    result = await session.execute(
+        select(PendingAction)
+        .where(
+            PendingAction.action_type == TYPE_DIVORCE,
+            PendingAction.target_id == confirmer_id,
+            PendingAction.status == STATUS_PENDING,
+        )
+        .order_by(PendingAction.created_at.desc())
+        .with_for_update()
+    )
+    pending = result.scalars().first()
+    if pending is None or pending.expires_at <= now:
+        if pending is not None:
+            pending.status = STATUS_EXPIRED
+        return AcceptResult(status="no_pending")
+
+    initiator_id = pending.initiator_id
+    marriage = await marriages_repo.get_active_marriage(session, confirmer_id, lock=True)
+    if marriage is None:
+        pending.status = STATUS_EXPIRED
+        return AcceptResult(status="no_pending")
+
+    marriage.divorced_at = now_utc()
+    pending.status = STATUS_ACCEPTED
+    return AcceptResult(status="done", initiator_id=initiator_id, target_id=confirmer_id)
