@@ -7,7 +7,6 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
-from app.core.keyboards import quick_actions
 from app.core.money import money
 from app.core.utils import mention
 from app.repositories import users as users_repo
@@ -32,6 +31,5 @@ async def cmd_balance(message: Message, session: AsyncSession, command_args: str
             mention=mention(user.id, user.first_name, user.username),
             balance=money(amount),
             title=get_title(earned).label,
-        ),
-        reply_markup=quick_actions(),
+        )
     )

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timedelta
 
 from app.core.filters import RuCommand
-from app.core.keyboards import marriage_accept, quick_actions
+from app.core.keyboards import marriage_accept
 from app.core.targets import resolve_target
 from app.core.utils import format_marriage_duration, mention, now_utc
 from app.features.achievements.service import (
@@ -39,8 +39,7 @@ async def _finish_marriage(
         texts.MARRY_DONE.format(
             first=await _mention_of(session, initiator_id),
             second=await _mention_of(session, target_id),
-        ),
-        reply_markup=quick_actions(),
+        )
     )
     for uid in (initiator_id, target_id):
         u = await session.get(User, uid)

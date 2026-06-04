@@ -39,14 +39,20 @@ def _render_result(result: CasinoResult, who: str = "") -> str:
     """Формирует короткий текст результата игры (случайная реплика из пула)."""
     if result.outcome == "loss":
         return texts.CASINO_LOSS.format(
-            phrase=random.choice(texts.CASINO_LOSS_VARIANTS), bet=money(result.bet)
+            phrase=random.choice(texts.CASINO_LOSS_VARIANTS),
+            bet=money(result.bet),
+            balance=money(result.balance),
         )
     if result.outcome == "jackpot":
         return texts.CASINO_JACKPOT.format(
-            multiplier=_format_multiplier(result.multiplier), net=money(result.net)
+            multiplier=_format_multiplier(result.multiplier),
+            net=money(result.net),
+            balance=money(result.balance),
         )
     return texts.CASINO_WIN.format(
-        phrase=random.choice(texts.CASINO_WIN_VARIANTS), net=money(result.net)
+        phrase=random.choice(texts.CASINO_WIN_VARIANTS),
+        net=money(result.net),
+        balance=money(result.balance),
     )
 
 

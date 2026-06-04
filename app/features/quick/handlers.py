@@ -81,7 +81,5 @@ async def q_achievements(callback: CallbackQuery, session: AsyncSession) -> None
     """Быстрые достижения."""
     user = callback.from_user
     if callback.message is not None:
-        await callback.message.answer(
-            await render_achievements(session, user.id), reply_markup=quick_actions()
-        )
+        await callback.message.answer(await render_achievements(session, user.id))
     await callback.answer()
