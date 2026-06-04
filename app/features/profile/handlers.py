@@ -66,8 +66,19 @@ async def render_profile(session: AsyncSession, user: User) -> str:
 
 
 @router.message(Command("profile"), RuCommand("профиль"))
-async def profile_command(message: Message, user: User, session: AsyncSession) -> None:
+async def profile_command(message: Message, session: AsyncSession) -> None:
     """Показывает профиль игрока с кнопкой на сайт."""
+    from app.repositories.users import get_user
+    
+    user_tg = message.from_user
+    if user_tg is None:
+        return
+    
+    user = await get_user(session, user_tg.id)
+    if user is None:
+        await message.answer("❌ Пользователь не найден в базе данных.")
+        return
+    
     settings = get_settings()
     text = await render_profile(session, user)
     
