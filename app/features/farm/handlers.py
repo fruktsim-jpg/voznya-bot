@@ -7,12 +7,38 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
+from app.core.keyboards import quick_actions
+from app.core.money import money
 from app.core.responses import notify_and_cleanup
 from app.core.utils import format_cooldown, mention
+from app.features.achievements.service import check_award_and_notify
 from app.features.farm.service import do_farm
-from app.settings import balance, texts
+from app.settings import texts
 
 router = Router(name="farm")
+
+
+def render_farm_result(result, who: str) -> str:
+    """Формирует текст результата фермы (используется командой и кнопкой)."""
+    if result.outcome == "loss":
+        return texts.FARM_LOSS.format(
+            mention=who,
+            amount=money(abs(result.amount)),
+            balance=money(result.balance),
+        )
+    if result.amount == 0:
+        return texts.FARM_ZERO.format(mention=who, balance=money(result.balance))
+    streak_suffix = ""
+    if result.streak_percent > 0:
+        streak_suffix = texts.FARM_STREAK_SUFFIX.format(
+            days=result.streak, percent=result.streak_percent
+        )
+    return texts.FARM_GAIN.format(
+        mention=who,
+        amount=money(result.amount),
+        streak=streak_suffix,
+        balance=money(result.balance),
+    )
 
 
 @router.message(RuCommand("ферма", "farm"))
@@ -33,28 +59,5 @@ async def cmd_farm(message: Message, session: AsyncSession, command_args: str) -
         return
 
     who = mention(user.id, user.first_name, user.username)
-
-    if result.outcome == "loss":
-        text = texts.FARM_LOSS.format(
-            mention=who,
-            amount=abs(result.amount),
-            currency=balance.CURRENCY_NAME,
-            balance=result.balance,
-        )
-    elif result.amount == 0:
-        text = texts.FARM_ZERO.format(mention=who, balance=result.balance)
-    else:
-        streak_suffix = ""
-        if result.streak_percent > 0:
-            streak_suffix = texts.FARM_STREAK_SUFFIX.format(
-                days=result.streak, percent=result.streak_percent
-            )
-        text = texts.FARM_GAIN.format(
-            mention=who,
-            amount=result.amount,
-            currency=balance.CURRENCY_NAME,
-            streak=streak_suffix,
-            balance=result.balance,
-        )
-
-    await message.answer(text)
+    await message.answer(render_farm_result(result, who), reply_markup=quick_actions())
+    await check_award_and_notify(message, session, user.id, user.first_name, user.username)

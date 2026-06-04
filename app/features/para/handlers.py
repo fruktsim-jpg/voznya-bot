@@ -7,6 +7,7 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
+from app.core.money import money
 from app.core.utils import mention
 from app.features.para.service import get_or_choose_para
 from app.models import User
@@ -22,7 +23,7 @@ async def _mention_of(session: AsyncSession, user_id: int) -> str:
     return mention(user.user_id, user.first_name, user.username)
 
 
-@router.message(RuCommand("пара", "para"))
+@router.message(RuCommand("пара", "couple", "para"))
 async def cmd_para(message: Message, session: AsyncSession, command_args: str) -> None:
     """Обрабатывает команду /пара."""
     user = message.from_user
@@ -31,8 +32,10 @@ async def cmd_para(message: Message, session: AsyncSession, command_args: str) -
 
     result = await get_or_choose_para(session, user.id)
 
-    if result.status == "no_active":
-        await message.answer(texts.PARA_NO_ACTIVE)
+    if result.status == "not_enough":
+        await message.answer(
+            texts.NOMINATION_NOT_ENOUGH.format(min=balance.NOMINATION_MIN_CANDIDATES)
+        )
         return
 
     first = await _mention_of(session, result.first_id)
@@ -42,8 +45,7 @@ async def cmd_para(message: Message, session: AsyncSession, command_args: str) -
         text = texts.PARA_CHOSEN.format(
             first=first,
             second=second,
-            bonus=result.opener_bonus,
-            currency=balance.CURRENCY_NAME,
+            bonus=money(result.opener_bonus),
         )
     else:
         text = texts.PARA_TODAY.format(first=first, second=second)

@@ -94,3 +94,11 @@ async def top_by_pidor(session: AsyncSession, limit: int) -> list[User]:
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def rank_by_balance(session: AsyncSession, balance: int) -> int:
+    """Возвращает место пользователя в рейтинге богатства (1 — самый богатый)."""
+    higher = await session.scalar(
+        select(func.count()).select_from(User).where(User.balance > balance)
+    )
+    return int(higher or 0) + 1

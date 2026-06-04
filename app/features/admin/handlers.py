@@ -12,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.filters import RuCommand
+from app.core.money import money
 from app.core.targets import extract_amount_after_target, resolve_target
 from app.core.utils import mention
+from app.features.achievements.service import check_award_and_notify
 from app.features.treasure.service import spawn_treasure
 from app.services.economy import change_balance
 from app.settings import balance, texts
@@ -28,12 +30,23 @@ def _is_admin(message: Message) -> bool:
 async def _parse_target_amount(
     session: AsyncSession, message: Message, command_args: str
 ):
-    """Возвращает (target_user, amount) или (None, None) при ошибке разбора."""
+    """Возвращает (target_user, amount) или (None, None) при ошибке разбора.
+
+    Сумма должна быть положительной и не превышать ADMIN_MAX_AMOUNT.
+    """
     target = await resolve_target(session, message, command_args)
     amount_str = extract_amount_after_target(command_args)
-    if target is None or not amount_str or not amount_str.lstrip("-").isdigit():
+    if (
+        target is None
+        or not amount_str
+        or len(amount_str) > 12
+        or not amount_str.lstrip("-").isdigit()
+    ):
         return None, None
-    return target, int(amount_str)
+    amount = int(amount_str)
+    if amount <= 0 or amount > balance.ADMIN_MAX_AMOUNT:
+        return None, None
+    return target, amount
 
 
 @router.message(RuCommand("выдать", "give"))
@@ -44,7 +57,7 @@ async def cmd_give(message: Message, session: AsyncSession, command_args: str) -
         return
 
     target, amount = await _parse_target_amount(session, message, command_args)
-    if target is None or amount is None or amount <= 0:
+    if target is None or amount is None:
         await message.answer(texts.ADMIN_GIVE_USAGE)
         return
 
@@ -53,11 +66,13 @@ async def cmd_give(message: Message, session: AsyncSession, command_args: str) -
     )
     await message.answer(
         texts.ADMIN_GIVE_DONE.format(
-            amount=amount,
-            currency=balance.CURRENCY_NAME,
+            amount=money(amount),
             mention=mention(target.user_id, target.first_name, target.username),
-            balance=user.balance,
+            balance=money(user.balance),
         )
+    )
+    await check_award_and_notify(
+        message, session, target.user_id, target.first_name, target.username
     )
 
 
@@ -69,19 +84,30 @@ async def cmd_take(message: Message, session: AsyncSession, command_args: str) -
         return
 
     target, amount = await _parse_target_amount(session, message, command_args)
-    if target is None or amount is None or amount <= 0:
+    if target is None or amount is None:
         await message.answer(texts.ADMIN_TAKE_USAGE)
         return
 
+    # Не уводим баланс в минус: списываем не больше, чем есть.
+    take = min(amount, max(target.balance, 0))
+    if take <= 0:
+        await message.answer(
+            texts.ADMIN_TAKE_DONE.format(
+                amount=money(0),
+                mention=mention(target.user_id, target.first_name, target.username),
+                balance=money(target.balance),
+            )
+        )
+        return
+
     user = await change_balance(
-        session, target.user_id, -amount, "admin", {"action": "take"}, allow_negative=True
+        session, target.user_id, -take, "admin", {"action": "take"}
     )
     await message.answer(
         texts.ADMIN_TAKE_DONE.format(
-            amount=amount,
-            currency=balance.CURRENCY_NAME,
+            amount=money(take),
             mention=mention(target.user_id, target.first_name, target.username),
-            balance=user.balance,
+            balance=money(user.balance),
         )
     )
 
@@ -102,15 +128,17 @@ async def cmd_info(message: Message, session: AsyncSession, command_args: str) -
         texts.ADMIN_INFO.format(
             mention=mention(target.user_id, target.first_name, target.username),
             user_id=target.user_id,
-            balance=target.balance,
-            earned=target.total_earned,
-            spent=target.total_spent,
+            balance=money(target.balance),
+            earned=money(target.total_earned),
+            spent=money(target.total_spent),
             streak=target.farm_streak,
             max_streak=target.max_farm_streak,
             pidor=target.pidor_count,
             wins=target.duels_won,
             losses=target.duels_lost,
             treasures=target.treasures_found,
+            farms=target.farm_success_count,
+            casino=target.casino_games_count,
         )
     )
 

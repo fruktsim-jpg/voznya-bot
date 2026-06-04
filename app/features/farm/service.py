@@ -93,6 +93,10 @@ async def do_farm(session: AsyncSession, user_id: int) -> FarmResult:
             meta={"outcome": outcome["name"], "base": base, "streak": new_streak},
         )
 
+    # Успешной считается ферма с положительным результатом (для достижений).
+    if amount > 0:
+        user.farm_success_count += 1
+
     user.last_farm_at = now_utc()
     user.farm_streak = new_streak
     if new_streak > user.max_farm_streak:

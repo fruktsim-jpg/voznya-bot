@@ -13,6 +13,7 @@ from app.models.scheduled_deletion import ScheduledDeletion
 from app.models.transaction import Transaction
 from app.models.treasure import Treasure
 from app.models.user import User
+from app.models.user_achievement import UserAchievement
 
 __all__ = [
     "Base",
@@ -24,4 +25,5 @@ __all__ = [
     "PendingAction",
     "Treasure",
     "ScheduledDeletion",
+    "UserAchievement",
 ]
