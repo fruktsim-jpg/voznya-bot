@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +29,7 @@ async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) ->
     if winner is None or loser is None:
         return
     await answerable.answer(
-        texts.DUEL_RESULT.format(
+        random.choice(texts.DUEL_RESULT_VARIANTS).format(
             winner=mention(winner.user_id, winner.first_name, winner.username),
             loser=mention(loser.user_id, loser.first_name, loser.username),
             bank=money(result.bank),
