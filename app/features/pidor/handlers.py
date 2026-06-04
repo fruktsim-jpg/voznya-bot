@@ -7,6 +7,7 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
+from app.core.money import money
 from app.core.utils import mention
 from app.features.pidor.service import get_or_choose_pidor
 from app.models import User
@@ -41,8 +42,10 @@ async def cmd_pidor(message: Message, session: AsyncSession, command_args: str) 
 
     result = await get_or_choose_pidor(session, user.id)
 
-    if result.status == "no_active":
-        await message.answer(texts.PIDOR_NO_ACTIVE)
+    if result.status == "not_enough":
+        await message.answer(
+            texts.NOMINATION_NOT_ENOUGH.format(min=balance.NOMINATION_MIN_CANDIDATES)
+        )
         return
 
     winner = await session.get(User, result.winner_id)
@@ -57,8 +60,7 @@ async def cmd_pidor(message: Message, session: AsyncSession, command_args: str) 
         text = texts.PIDOR_CHOSEN.format(
             mention=who,
             count=result.count,
-            bonus=result.opener_bonus,
-            currency=balance.CURRENCY_NAME,
+            bonus=money(result.opener_bonus),
         )
     else:
         text = texts.PIDOR_TODAY.format(mention=who, count=result.count)
