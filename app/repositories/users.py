@@ -18,11 +18,15 @@ async def upsert_user(
     username: str | None,
     first_name: str | None,
     touch_activity: bool = True,
+    increment_messages: bool = False,
 ) -> None:
     """Создаёт пользователя или обновляет его username/имя/активность.
 
     Используется в middleware на каждое сообщение. Реализовано через
     ``INSERT ... ON CONFLICT`` (атомарно и без гонок).
+
+    :param increment_messages: если True — атомарно увеличивает messages_count
+        на 1 (только для сообщений, не для нажатий кнопок).
     """
     values: dict = {
         "user_id": user_id,
@@ -37,6 +41,9 @@ async def upsert_user(
         now = now_utc()
         values["last_active_at"] = now
         update_set["last_active_at"] = now
+    if increment_messages:
+        values["messages_count"] = 1
+        update_set["messages_count"] = User.messages_count + 1
 
     stmt = pg_insert(User).values(**values)
     stmt = stmt.on_conflict_do_update(

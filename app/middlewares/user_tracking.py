@@ -17,7 +17,8 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
-from app.core.utils import now_utc
+from app.core.utils import now_local, now_utc
+from app.repositories import messages as messages_repo
 from app.repositories import users as users_repo
 from app.settings import balance
 
@@ -39,19 +40,27 @@ class UserTrackingMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         user = None
-        if isinstance(event, (Message, CallbackQuery)):
+        is_message = isinstance(event, Message)
+        if is_message or isinstance(event, CallbackQuery):
             user = event.from_user
 
         if user is not None and not user.is_bot:
             session: AsyncSession = data["session"]
             await self._maybe_award_ghost(session, user.id)
+            # messages_count увеличиваем только на сообщения, не на кнопки.
             await users_repo.upsert_user(
                 session,
                 user.id,
                 user.username,
                 user.first_name,
                 touch_activity=True,
+                increment_messages=is_message,
             )
+            if is_message:
+                # Дневной счётчик (день — по часовому поясу Europe/Amsterdam).
+                await messages_repo.increment_daily(
+                    session, user.id, now_local().date()
+                )
         return await handler(event, data)
 
     async def _maybe_award_ghost(self, session: AsyncSession, user_id: int) -> None:

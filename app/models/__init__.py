@@ -7,6 +7,7 @@
 from app.models.base import Base
 from app.models.cooldown import Cooldown
 from app.models.marriage import Marriage
+from app.models.message_daily import MessageDaily
 from app.models.nomination import DailyNomination
 from app.models.pending_action import PendingAction
 from app.models.scheduled_deletion import ScheduledDeletion
@@ -26,4 +27,5 @@ __all__ = [
     "Treasure",
     "ScheduledDeletion",
     "UserAchievement",
+    "MessageDaily",
 ]
