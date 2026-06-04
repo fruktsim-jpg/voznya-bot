@@ -1,9 +1,10 @@
-"""Логика браков: предложение, подтверждение, информация, развод.
+"""Логика браков: предложение, подтверждение, отказ, информация, развод.
 
-Правила (согласованы в ТЗ):
+Правила:
 * у одного пользователя может быть только один активный брак;
 * разрешены любые пары;
-* свадьба и развод требуют подтверждения второй стороной.
+* свадьба требует подтверждения второй стороной;
+* развод мгновенный (без подтверждения).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from app.core.utils import now_utc
 from app.models import Marriage
 from app.models.pending_action import (
     STATUS_ACCEPTED,
+    STATUS_DECLINED,
     STATUS_EXPIRED,
     STATUS_PENDING,
     TYPE_DIVORCE,
@@ -109,6 +111,41 @@ async def accept_proposal(
     )
     pending.status = STATUS_ACCEPTED
     return AcceptResult(status="done", initiator_id=initiator_id, target_id=confirmer_id)
+
+
+async def decline_proposal(
+    session: AsyncSession, decliner_id: int, pending_id: int | None = None
+) -> AcceptResult:
+    """Отказывает в предложении брака."""
+    now = now_utc()
+    if pending_id is not None:
+        pending = await session.get(PendingAction, pending_id, with_for_update=True)
+        if pending is None or pending.action_type != TYPE_MARRY or pending.status != STATUS_PENDING:
+            return AcceptResult(status="no_pending")
+        if pending.target_id != decliner_id:
+            return AcceptResult(status="not_target")
+    else:
+        result = await session.execute(
+            select(PendingAction)
+            .where(
+                PendingAction.action_type == TYPE_MARRY,
+                PendingAction.target_id == decliner_id,
+                PendingAction.status == STATUS_PENDING,
+            )
+            .order_by(PendingAction.created_at.desc())
+            .with_for_update()
+        )
+        pending = result.scalars().first()
+        if pending is None:
+            return AcceptResult(status="no_pending")
+    
+    if pending.expires_at <= now:
+        pending.status = STATUS_EXPIRED
+        return AcceptResult(status="no_pending")
+
+    initiator_id = pending.initiator_id
+    pending.status = STATUS_DECLINED
+    return AcceptResult(status="done", initiator_id=initiator_id, target_id=decliner_id)
 
 
 async def get_marriage(session: AsyncSession, user_id: int) -> Marriage | None:

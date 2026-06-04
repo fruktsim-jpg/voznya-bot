@@ -109,3 +109,34 @@ async def rank_by_balance(session: AsyncSession, balance: int) -> int:
         select(func.count()).select_from(User).where(User.balance > balance)
     )
     return int(higher or 0) + 1
+
+
+async def top_by_balance_paginated(
+    session: AsyncSession, page: int, page_size: int
+) -> list[User]:
+    """Возвращает страницу топа по балансу."""
+    offset = (page - 1) * page_size
+    result = await session.execute(
+        select(User)
+        .where(User.balance > 0)
+        .order_by(User.balance.desc())
+        .limit(page_size)
+        .offset(offset)
+    )
+    return list(result.scalars().all())
+
+
+async def count_users_with_balance(session: AsyncSession) -> int:
+    """Возвращает количество пользователей с балансом > 0."""
+    count = await session.scalar(
+        select(func.count()).select_from(User).where(User.balance > 0)
+    )
+    return int(count or 0)
+
+
+async def get_user_rank_by_balance(session: AsyncSession, user_id: int) -> int | None:
+    """Возвращает место пользователя в рейтинге (1 = первый)."""
+    user = await session.get(User, user_id)
+    if user is None or user.balance <= 0:
+        return None
+    return await rank_by_balance(session, user.balance)

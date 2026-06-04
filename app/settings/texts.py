@@ -30,7 +30,10 @@ WELCOME_VARIANTS = [
 # --- Общие -------------------------------------------------------------------
 
 ERROR_GENERIC = "⚠️ Что-то сломалось. Попробуй ещё раз."
-USER_NOT_FOUND = "🤷 Не нашёл такого. Ответь на его сообщение или укажи @username."
+USER_NOT_FOUND = (
+    "🤷 Не нашёл такого.\n"
+    "💡 Надёжнее всего — ответь (reply) на его сообщение."
+)
 NEED_TARGET = "🤷 Кого? Ответь на сообщение или укажи @username."
 
 
@@ -101,13 +104,17 @@ PROFILE = (
     "👤 <b>{name}</b>\n"
     "🏷 {title}\n"
     "💰 {balance} (#{rank})\n"
-    "⚔️ {wins}W / {losses}L\n"
+    "{duels}"
     "📦 Клады: {treasures}\n"
     "🏅 Ачивки: {ach_opened}/{ach_total}\n"
+    "{streak}"
     "💍 {marital}"
     "{progress}"
 )
-PROFILE_PROGRESS = "\n🎯 До {next_title}: <b>{remaining}</b>"
+PROFILE_DUELS_COMPACT = "⚔️ Дуэли: {wins}-{losses}\n"
+PROFILE_DUELS_NONE = "⚔️ Дуэли: нет\n"
+PROFILE_STREAK = "🔥 Серия: {days} дней\n"
+PROFILE_PROGRESS = "\n🎯 До «{next_title}»: <b>{remaining}</b>"
 PROFILE_PROGRESS_MAX = "\n🏆 Макс. титул!"
 PROFILE_SINGLE = "Свободен"
 PROFILE_MARRIED = "в браке с {partner} ({duration})"
@@ -241,16 +248,12 @@ MARRY_PROPOSAL = (
 )
 MARRY_NO_PENDING = "💍 Тебе никто не предлагал (или уже поздно)."
 MARRY_DONE = "💍 Горько! {first} ❤️ {second} 🎉"
+MARRY_DECLINED = "💔 {target} отказал(а) в предложении."
 
 MARRIAGE_INFO = "💍 {first} ❤️ {second} · вместе <b>{duration}</b>"
 MARRIAGE_NONE = "💍 {mention}, ты свободен. Ищи половинку через «жениться»!"
 
 DIVORCE_NO_MARRIAGE = "💔 {mention}, ты не в браке."
-DIVORCE_REQUEST = (
-    "💔 {initiator} хочет развода с {target}.\n"
-    "{target}, напиши «подтвердить» ({minutes} мин)"
-)
-DIVORCE_NO_PENDING = "💔 Запроса на развод нет (или истёк)."
 DIVORCE_DONE = "💔 Всё. {first} 💔 {second}"
 
 
@@ -259,6 +262,8 @@ DIVORCE_DONE = "💔 Всё. {first} 💔 {second}"
 TOP_RICH_HEADER = "🏆 <b>Богачи Возни</b>\n{rows}"
 TOP_RICH_ROW = "{place} {mention} — <b>{balance}</b>"
 TOP_RICH_EMPTY = "🏆 Пусто. Время фармить!"
+TOP_RICH_USER_RANK = "📍 Твоё место: #{rank}"
+TOP_RICH_PAGE = "📄 Страница {page}/{total}"
 
 WEEKLY_HEADER = "📅 <b>Богачи недели</b>\n{rows}"
 WEEKLY_ROW = "{place} {mention} — <b>{amount}</b>"
@@ -276,8 +281,8 @@ ACH_OPENED_ROW = "✅ {label}"
 ACH_LOCKED_ROW = "🔒 {label}"
 ACH_REWARD = " · +{reward}"
 # Уведомление об открытии — максимально коротко.
-ACH_UNLOCK_ONE = "🏅 Новая ачивка: <b>{name}</b>{reward}"
-ACH_UNLOCK_MANY = "🏅 Новые ачивки:\n{lines}"
+ACH_UNLOCK_ONE = "🏅 {mention} · <b>{name}</b>{reward}"
+ACH_UNLOCK_MANY = "🏅 {mention} открыл:\n{lines}"
 ACH_UNLOCK_ROW = "• {name}{reward}"
 
 

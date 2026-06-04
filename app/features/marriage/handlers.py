@@ -1,4 +1,4 @@
-"""Хендлеры браков: /жениться, /да, /брак, /развод, /подтвердить + кнопка."""
+"""Хендлеры браков: /жениться, /да, /брак, /развод + кнопки."""
 
 from __future__ import annotations
 
@@ -136,6 +136,36 @@ async def cb_marry_accept(callback: CallbackQuery, session: AsyncSession) -> Non
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("marry:decline:"))
+async def cb_marry_decline(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Отказ от предложения брака кнопкой."""
+    parts = callback.data.split(":")
+    if len(parts) != 3 or not parts[2].isdigit():
+        await callback.answer()
+        return
+    pending_id = int(parts[2])
+
+    result = await service.decline_proposal(session, callback.from_user.id, pending_id=pending_id)
+
+    if result.status == "no_pending":
+        await callback.answer(texts.CB_EXPIRED, show_alert=True)
+        return
+    if result.status == "not_target":
+        await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
+        return
+
+    if callback.message is not None:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:  # noqa: BLE001
+            pass
+        target_mention = await _mention_of(session, result.target_id)
+        await callback.message.answer(
+            texts.MARRY_DECLINED.format(target=target_mention)
+        )
+    await callback.answer()
+
+
 @router.message(RuCommand("брак", "marriage"))
 async def cmd_marriage_info(
     message: Message, session: AsyncSession, command_args: str
@@ -173,13 +203,13 @@ async def cmd_marriage_info(
 
 @router.message(RuCommand("развод", "divorce"))
 async def cmd_divorce(message: Message, session: AsyncSession, command_args: str) -> None:
-    """Запрос на развод: /развод."""
+    """Развод (мгновенный, без подтверждения): /развод."""
     user = message.from_user
     if user is None:
         return
 
-    result = await service.request_divorce(session, user.id, message.chat.id)
-    if result.status == "no_marriage":
+    marriage = await service.get_marriage(session, user.id)
+    if marriage is None:
         await message.answer(
             texts.DIVORCE_NO_MARRIAGE.format(
                 mention=mention(user.id, user.first_name, user.username)
@@ -187,32 +217,17 @@ async def cmd_divorce(message: Message, session: AsyncSession, command_args: str
         )
         return
 
-    await message.answer(
-        texts.DIVORCE_REQUEST.format(
-            initiator=mention(user.id, user.first_name, user.username),
-            target=await _mention_of(session, result.partner_id),
-            minutes=balance.MARRIAGE_PROPOSAL_EXPIRE_MINUTES,
-        )
+    # Определяем партнёра
+    partner_id = (
+        marriage.user_id_2 if marriage.user_id_1 == user.id else marriage.user_id_1
     )
 
-
-@router.message(RuCommand("подтвердить", "confirm"))
-async def cmd_confirm_divorce(
-    message: Message, session: AsyncSession, command_args: str
-) -> None:
-    """Подтверждение развода: /подтвердить."""
-    user = message.from_user
-    if user is None:
-        return
-
-    result = await service.confirm_divorce(session, user.id)
-    # При отсутствии запроса молчим.
-    if result.status == "no_pending":
-        return
+    # Разводим сразу
+    marriage.divorced_at = now_utc()
 
     await message.answer(
         texts.DIVORCE_DONE.format(
-            first=await _mention_of(session, result.initiator_id),
-            second=await _mention_of(session, result.target_id),
+            first=mention(user.id, user.first_name, user.username),
+            second=await _mention_of(session, partner_id),
         )
     )

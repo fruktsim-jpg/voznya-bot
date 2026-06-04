@@ -149,14 +149,22 @@ def format_unlock_notification(
     """Формирует короткое уведомление об открытых достижениях (2–3 строки)."""
     if not newly:
         return None
+    
+    from app.core.utils import mention
+    user_mention = mention(user_id, name, username)
+    
     if len(newly) == 1:
         ach = newly[0]
-        return texts.ACH_UNLOCK_ONE.format(name=ach.name, reward=_reward_suffix(ach))
+        return texts.ACH_UNLOCK_ONE.format(
+            mention=user_mention,
+            name=ach.name,
+            reward=_reward_suffix(ach)
+        )
     lines = "\n".join(
         texts.ACH_UNLOCK_ROW.format(name=ach.name, reward=_reward_suffix(ach))
         for ach in newly
     )
-    return texts.ACH_UNLOCK_MANY.format(lines=lines)
+    return texts.ACH_UNLOCK_MANY.format(mention=user_mention, lines=lines)
 
 
 async def check_award_and_notify(

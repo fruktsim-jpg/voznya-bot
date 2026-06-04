@@ -16,9 +16,8 @@ def quick_actions() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="💊 Ферма", callback_data="quick:farm")
     builder.button(text="💰 Баланс", callback_data="quick:balance")
-    builder.button(text="👤 Профиль", callback_data="quick:profile")
     builder.button(text="🏅 Ачивки", callback_data="quick:achievements")
-    builder.adjust(2, 2)
+    builder.adjust(3)
     return builder.as_markup()
 
 
@@ -32,10 +31,13 @@ def duel_accept(pending_id: int) -> InlineKeyboardMarkup:
 
 
 def marriage_accept(pending_id: int) -> InlineKeyboardMarkup:
-    """Кнопка согласия на брак."""
+    """Кнопки согласия или отказа на брак."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💍 Согласиться", callback_data=f"marry:accept:{pending_id}")]
+            [
+                InlineKeyboardButton(text="💍 Согласиться", callback_data=f"marry:accept:{pending_id}"),
+                InlineKeyboardButton(text="❌ Отказать", callback_data=f"marry:decline:{pending_id}")
+            ]
         ]
     )
 
@@ -49,3 +51,28 @@ def casino_again(user_id: int, bet: int) -> InlineKeyboardMarkup:
     builder.button(text="🏅 Ачивки", callback_data="quick:achievements")
     builder.adjust(1, 3)
     return builder.as_markup()
+
+
+def top_pagination(page: int, total_pages: int, user_id: int) -> InlineKeyboardMarkup:
+    """Кнопки пагинации для топа."""
+    buttons = []
+    
+    # Кнопка "Назад"
+    if page > 1:
+        buttons.append(
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data=f"top:page:{page - 1}:{user_id}"
+            )
+        )
+    
+    # Кнопка "Вперёд"
+    if page < total_pages:
+        buttons.append(
+            InlineKeyboardButton(
+                text="▶️ Вперёд",
+                callback_data=f"top:page:{page + 1}:{user_id}"
+            )
+        )
+    
+    return InlineKeyboardMarkup(inline_keyboard=[buttons] if buttons else [])

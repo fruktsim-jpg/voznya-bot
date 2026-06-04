@@ -15,6 +15,7 @@ from app.features.achievements.service import get_unlocked_codes
 from app.models import User
 from app.repositories import marriages as marriages_repo
 from app.repositories import users as users_repo
+from app.services.deletion import get_deletion_service
 from app.settings import texts
 from app.settings.achievements import ACHIEVEMENTS
 from app.settings.titles import get_next_title, get_title
@@ -42,6 +43,21 @@ async def _marital_status(session: AsyncSession, user_id: int) -> str:
     )
 
 
+def _duels_block(user: User) -> str:
+    """Формирует строку дуэлей."""
+    total = user.duels_won + user.duels_lost
+    if total == 0:
+        return texts.PROFILE_DUELS_NONE
+    return texts.PROFILE_DUELS_COMPACT.format(wins=user.duels_won, losses=user.duels_lost)
+
+
+def _streak_block(user: User) -> str:
+    """Формирует строку серии фермы."""
+    if user.farm_streak == 0:
+        return ""  # Скрываем если нет серии
+    return texts.PROFILE_STREAK.format(days=user.farm_streak)
+
+
 def _progress_block(earned: int) -> str:
     """Формирует короткую строку прогресса до следующего титула (без бара)."""
     next_title = get_next_title(earned)
@@ -49,7 +65,7 @@ def _progress_block(earned: int) -> str:
         return texts.PROFILE_PROGRESS_MAX
     remaining = next_title.min_earned - earned
     return texts.PROFILE_PROGRESS.format(
-        next_title=next_title.label,
+        next_title=next_title.name,
         remaining=money(remaining),
     )
 
@@ -66,12 +82,12 @@ async def render_profile(session: AsyncSession, user: User) -> str:
         title=title.label,
         rank=rank,
         balance=money(user.balance),
-        wins=user.duels_won,
-        losses=user.duels_lost,
+        duels=_duels_block(user),
         treasures=user.treasures_found,
-        marital=marital,
         ach_opened=len(unlocked),
         ach_total=len(ACHIEVEMENTS),
+        streak=_streak_block(user),
+        marital=marital,
         progress=_progress_block(user.total_earned),
     )
 
@@ -89,4 +105,11 @@ async def cmd_profile(message: Message, session: AsyncSession, command_args: str
         await message.answer(texts.USER_NOT_FOUND)
         return
 
-    await message.answer(await render_profile(session, user), reply_markup=quick_actions())
+    deletion = get_deletion_service()
+    
+    # Удаляем команду пользователя через 5 сек
+    await deletion.schedule(session, message.chat.id, message.message_id, 5)
+    
+    # Отправляем профиль и удаляем через 5 минут
+    sent = await message.answer(await render_profile(session, user), reply_markup=quick_actions())
+    await deletion.schedule(session, sent.chat.id, sent.message_id, 300)

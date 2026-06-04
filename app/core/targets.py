@@ -35,7 +35,7 @@ async def resolve_target(
     if not args:
         return None
 
-    token = args.split()[0]
+    token = args.strip().split()[0]
     if token.startswith("@"):
         return await users_repo.get_user_by_username(session, token)
 

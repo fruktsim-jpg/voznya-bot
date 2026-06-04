@@ -53,14 +53,20 @@ async def q_balance(callback: CallbackQuery, session: AsyncSession) -> None:
     record = await users_repo.get_user(session, user.id)
     amount = record.balance if record else 0
     earned = record.total_earned if record else 0
+    
+    text = texts.BALANCE.format(
+        mention=mention(user.id, user.first_name, user.username),
+        balance=money(amount),
+        title=get_title(earned).label,
+    )
+    
     if callback.message is not None:
-        await callback.message.answer(
-            texts.BALANCE.format(
-                mention=mention(user.id, user.first_name, user.username),
-                balance=money(amount),
-                title=get_title(earned).label,
-            )
-        )
+        try:
+            # Пытаемся отредактировать существующее сообщение
+            await callback.message.edit_text(text)
+        except Exception:
+            # Если не удалось — создаём новое
+            await callback.message.answer(text)
     await callback.answer()
 
 
@@ -69,10 +75,15 @@ async def q_profile(callback: CallbackQuery, session: AsyncSession) -> None:
     """Быстрый профиль."""
     user = callback.from_user
     record = await users_repo.get_user(session, user.id)
+    
     if record is not None and callback.message is not None:
-        await callback.message.answer(
-            await render_profile(session, record), reply_markup=quick_actions()
-        )
+        text = await render_profile(session, record)
+        try:
+            # Пытаемся отредактировать существующее сообщение
+            await callback.message.edit_text(text, reply_markup=quick_actions())
+        except Exception:
+            # Если не удалось — создаём новое
+            await callback.message.answer(text, reply_markup=quick_actions())
     await callback.answer()
 
 
@@ -80,6 +91,13 @@ async def q_profile(callback: CallbackQuery, session: AsyncSession) -> None:
 async def q_achievements(callback: CallbackQuery, session: AsyncSession) -> None:
     """Быстрые достижения."""
     user = callback.from_user
+    
     if callback.message is not None:
-        await callback.message.answer(await render_achievements(session, user.id))
+        text = await render_achievements(session, user.id)
+        try:
+            # Пытаемся отредактировать существующее сообщение
+            await callback.message.edit_text(text)
+        except Exception:
+            # Если не удалось — создаём новое
+            await callback.message.answer(text)
     await callback.answer()
