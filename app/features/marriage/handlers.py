@@ -1,14 +1,16 @@
-"""Хендлеры браков: /жениться, /да, /брак, /развод, /подтвердить."""
+"""Хендлеры браков: /жениться, /да, /брак, /развод, /подтвердить + кнопка."""
 
 from __future__ import annotations
 
-from aiogram import Router
-from aiogram.types import Message
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
+from app.core.keyboards import marriage_accept
 from app.core.targets import resolve_target
 from app.core.utils import format_marriage_duration, mention
+from app.features.achievements.service import check_award_and_notify
 from app.features.marriage import service
 from app.models import User
 from app.settings import balance, texts
@@ -21,6 +23,22 @@ async def _mention_of(session: AsyncSession, user_id: int) -> str:
     if user is None:
         return "кто-то"
     return mention(user.user_id, user.first_name, user.username)
+
+
+async def _finish_marriage(
+    answerable, session: AsyncSession, initiator_id: int, target_id: int
+) -> None:
+    """Объявляет о браке и проверяет достижения у обоих супругов."""
+    await answerable.answer(
+        texts.MARRY_DONE.format(
+            first=await _mention_of(session, initiator_id),
+            second=await _mention_of(session, target_id),
+        )
+    )
+    for uid in (initiator_id, target_id):
+        u = await session.get(User, uid)
+        if u is not None:
+            await check_award_and_notify(answerable, session, u.user_id, u.first_name, u.username)
 
 
 @router.message(RuCommand("жениться", "marry"))
@@ -56,7 +74,8 @@ async def cmd_marry(message: Message, session: AsyncSession, command_args: str) 
             initiator=mention(user.id, user.first_name, user.username),
             target=mention(target.user_id, target.first_name, target.username),
             minutes=balance.MARRIAGE_PROPOSAL_EXPIRE_MINUTES,
-        )
+        ),
+        reply_markup=marriage_accept(result.pending_id),
     )
 
 
@@ -69,19 +88,46 @@ async def cmd_accept(message: Message, session: AsyncSession, command_args: str)
 
     result = await service.accept_proposal(session, user.id)
 
+    # При отсутствии предложения молчим (бытовое «да» не должно спамить чат).
     if result.status == "no_pending":
-        await message.answer(texts.MARRY_NO_PENDING)
         return
     if result.status in {"initiator_busy", "target_busy"}:
         await message.answer(texts.MARRY_INITIATOR_BUSY)
         return
 
-    await message.answer(
-        texts.MARRY_DONE.format(
-            first=await _mention_of(session, result.initiator_id),
-            second=await _mention_of(session, result.target_id),
+    await _finish_marriage(message, session, result.initiator_id, result.target_id)
+
+
+@router.callback_query(F.data.startswith("marry:accept:"))
+async def cb_marry_accept(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Согласие на брак кнопкой."""
+    parts = callback.data.split(":")
+    if len(parts) != 3 or not parts[2].isdigit():
+        await callback.answer()
+        return
+    pending_id = int(parts[2])
+
+    result = await service.accept_proposal(session, callback.from_user.id, pending_id=pending_id)
+
+    if result.status == "no_pending":
+        await callback.answer(texts.CB_EXPIRED, show_alert=True)
+        return
+    if result.status == "not_target":
+        await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
+        return
+    if result.status in {"initiator_busy", "target_busy"}:
+        await callback.answer(texts.MARRY_INITIATOR_BUSY, show_alert=True)
+        return
+
+    if callback.message is not None:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:  # noqa: BLE001
+            pass
+        await _finish_marriage(
+            callback.message, session, result.initiator_id, result.target_id
         )
-    )
+    await callback.answer()
 
 
 @router.message(RuCommand("брак", "marriage"))
@@ -146,8 +192,8 @@ async def cmd_confirm_divorce(
         return
 
     result = await service.confirm_divorce(session, user.id)
+    # При отсутствии запроса молчим.
     if result.status == "no_pending":
-        await message.answer(texts.DIVORCE_NO_PENDING)
         return
 
     await message.answer(

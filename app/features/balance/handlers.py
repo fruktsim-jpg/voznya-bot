@@ -7,9 +7,10 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
+from app.core.keyboards import quick_actions
+from app.core.money import money
 from app.core.utils import mention
 from app.services.economy import get_balance
-from app.settings import balance as balance_settings
 from app.settings import texts
 
 router = Router(name="balance")
@@ -26,7 +27,7 @@ async def cmd_balance(message: Message, session: AsyncSession, command_args: str
     await message.answer(
         texts.BALANCE.format(
             mention=mention(user.id, user.first_name, user.username),
-            balance=amount,
-            currency=balance_settings.CURRENCY_NAME,
-        )
+            balance=money(amount),
+        ),
+        reply_markup=quick_actions(),
     )

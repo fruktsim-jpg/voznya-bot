@@ -60,6 +60,7 @@ async def play_casino(session: AsyncSession, user_id: int, bet: int) -> CasinoRe
         reason="casino",
         meta={"bet": bet, "multiplier": multiplier, "payout": payout, "outcome": outcome["name"]},
     )
+    user.casino_games_count += 1
     await cooldowns.set_cooldown(session, user_id, "casino", balance.COOLDOWNS["casino"])
 
     return CasinoResult(

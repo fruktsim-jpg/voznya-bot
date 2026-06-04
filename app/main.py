@@ -37,12 +37,23 @@ logger = get_logger(__name__)
 # команд меню, поэтому здесь — латинские алиасы (русские команды работают
 # в чате благодаря собственному фильтру RuCommand).
 BOT_COMMANDS = [
-    BotCommand(command="help", description="Помощь и список команд"),
-    BotCommand(command="farm", description="Ферма — получить ешки"),
-    BotCommand(command="balance", description="Баланс"),
-    BotCommand(command="profile", description="Профиль"),
-    BotCommand(command="casino", description="Казино"),
-    BotCommand(command="top", description="Рейтинг богачей"),
+    BotCommand(command="farm", description="💊 Ферма — получить ешки"),
+    BotCommand(command="balance", description="💰 Баланс"),
+    BotCommand(command="profile", description="👤 Профиль игрока"),
+    BotCommand(command="achievements", description="🏅 Достижения"),
+    BotCommand(command="top", description="🏆 Рейтинг богачей"),
+    BotCommand(command="weekly", description="📅 Заработок за неделю"),
+    BotCommand(command="casino", description="🎰 Казино"),
+    BotCommand(command="duel", description="⚔️ Вызвать на дуэль"),
+    BotCommand(command="accept", description="⚔️ Принять дуэль"),
+    BotCommand(command="claim", description="📦 Забрать клад"),
+    BotCommand(command="pidor", description="🏳️‍🌈 Пидор дня"),
+    BotCommand(command="couple", description="💞 Пара дня"),
+    BotCommand(command="marry", description="💍 Сделать предложение"),
+    BotCommand(command="marriage", description="💍 Информация о браке"),
+    BotCommand(command="divorce", description="💔 Развод"),
+    BotCommand(command="families", description="💞 Рейтинг семей"),
+    BotCommand(command="help", description="❓ Помощь и список команд"),
 ]
 
 
@@ -58,6 +69,10 @@ def create_dispatcher() -> Dispatcher:
     dp.message.middleware(ChatFilterMiddleware())
     dp.message.middleware(UserTrackingMiddleware())
     dp.message.middleware(AntiFloodMiddleware())
+
+    # Нажатия на кнопки: тот же фильтр чата и трекинг активности.
+    dp.callback_query.middleware(ChatFilterMiddleware())
+    dp.callback_query.middleware(UserTrackingMiddleware())
 
     for router in get_feature_routers():
         dp.include_router(router)

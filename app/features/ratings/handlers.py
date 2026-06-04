@@ -1,4 +1,4 @@
-"""Хендлеры рейтингов: /топ и /семьи."""
+"""Хендлеры рейтингов: /топ, /топнеделя и /семьи."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
+from app.core.money import money
 from app.core.utils import format_marriage_duration, mention
 from app.models import User
+from app.repositories import economy as economy_repo
 from app.repositories import marriages as marriages_repo
 from app.repositories import users as users_repo
 from app.settings import balance, texts
@@ -16,24 +18,47 @@ from app.settings import balance, texts
 router = Router(name="ratings")
 
 
-@router.message(RuCommand("топ", "top"))
-async def cmd_top(message: Message, session: AsyncSession, command_args: str) -> None:
-    """Рейтинг богатства: /топ."""
+async def render_top(session: AsyncSession) -> str:
+    """Формирует текст рейтинга богачей (используется командой и кнопкой)."""
     top = await users_repo.top_by_balance(session, balance.TOP_RICH_LIMIT)
     if not top:
-        await message.answer(texts.TOP_RICH_EMPTY.format(currency=balance.CURRENCY_NAME))
-        return
-
+        return texts.TOP_RICH_EMPTY
     rows = "\n".join(
         texts.TOP_RICH_ROW.format(
             place=i + 1,
             mention=mention(u.user_id, u.first_name, u.username),
-            balance=u.balance,
-            currency=balance.CURRENCY_NAME,
+            balance=money(u.balance),
         )
         for i, u in enumerate(top)
     )
-    await message.answer(texts.TOP_RICH_HEADER.format(rows=rows))
+    return texts.TOP_RICH_HEADER.format(rows=rows)
+
+
+@router.message(RuCommand("топ", "top"))
+async def cmd_top(message: Message, session: AsyncSession, command_args: str) -> None:
+    """Рейтинг богатства: /топ."""
+    await message.answer(await render_top(session))
+
+
+@router.message(RuCommand("топнеделя", "weekly"))
+async def cmd_weekly(message: Message, session: AsyncSession, command_args: str) -> None:
+    """Топ по заработку за неделю: /топнеделя."""
+    top = await economy_repo.weekly_top_earners(
+        session, balance.WEEKLY_DAYS, balance.TOP_WEEKLY_LIMIT
+    )
+    if not top:
+        await message.answer(texts.WEEKLY_EMPTY)
+        return
+
+    rows = "\n".join(
+        texts.WEEKLY_ROW.format(
+            place=i + 1,
+            mention=mention(u.user_id, u.first_name, u.username),
+            amount=money(earned),
+        )
+        for i, (u, earned) in enumerate(top)
+    )
+    await message.answer(texts.WEEKLY_HEADER.format(rows=rows))
 
 
 @router.message(RuCommand("семьи", "families"))
