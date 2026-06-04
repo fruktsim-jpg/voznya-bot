@@ -20,6 +20,19 @@ When implementation lands, re-read `README.md`, lockfiles, and any `docker-compo
 
 The VM update script is a no-op (`true`) until dependency manifests exist. After adding e.g. `package.json` or `requirements.txt`, change the update script to the appropriate install command (`npm ci`, `pnpm install`, `uv sync`, etc.) via the Cloud Agent environment settings.
 
+### Available VM toolchain (verified 2026-06-04)
+
+Cloud Agent VMs have common runtimes preinstalled for when bot code lands:
+
+| Tool | Version (example VM) |
+|------|----------------------|
+| Node.js | v22.x (via nvm) |
+| npm / pnpm | available on PATH |
+| Python | 3.12.x |
+| git | 2.43+ |
+
+No project-specific install step runs until a lockfile is committed.
+
 ### Lint / test / build / run
 
 Not applicable until source code and tooling are added. Standard commands will appear in `README.md` or package scripts once the bot is implemented.
