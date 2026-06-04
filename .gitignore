@@ -1,0 +1,24 @@
+# Окружение и секреты
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.eggs/
+build/
+dist/
+
+# Логи и БД-дампы
+*.log
+backups/
+*.sql
+
+# IDE
+.idea/
+.vscode/
+.DS_Store
