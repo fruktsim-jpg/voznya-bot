@@ -66,8 +66,6 @@ async def render_profile(session: AsyncSession, user: User) -> str:
         title=title.label,
         rank=rank,
         balance=money(user.balance),
-        earned=money(user.total_earned),
-        streak=user.farm_streak,
         wins=user.duels_won,
         losses=user.duels_lost,
         treasures=user.treasures_found,

@@ -137,3 +137,4 @@ ADMIN_MAX_AMOUNT = 1_000_000_000
 
 WELCOME_DELETE_AFTER = 60        # приветствие новичка
 COOLDOWN_NOTICE_DELETE_AFTER = 5  # уведомление «ещё рано» и сообщение пользователя
+HELP_DELETE_AFTER = 180          # сообщение помощи (через сколько секунд удалить)

@@ -9,7 +9,6 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
-from app.core.keyboards import quick_actions
 from app.core.money import money
 from app.core.utils import mention
 from app.features.achievements.service import check_award_and_notify, notify_specific
@@ -36,8 +35,7 @@ async def cmd_claim(message: Message, session: AsyncSession, command_args: str) 
         random.choice(texts.TREASURE_CLAIM_VARIANTS).format(
             mention=mention(user.id, user.first_name, user.username),
             reward=money(result.reward),
-        ),
-        reply_markup=quick_actions(),
+        )
     )
     await check_award_and_notify(message, session, user.id, user.first_name, user.username)
     if result.fast:
