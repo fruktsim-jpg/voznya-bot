@@ -43,6 +43,10 @@ class User(Base):
     duels_lost: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     pidor_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Счётчики для достижений
+    farm_success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    casino_games_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     # Активность (для пула «активных за N дней»)
     last_active_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
