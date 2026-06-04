@@ -10,13 +10,7 @@ from app.core.filters import RuCommand
 from app.core.keyboards import quick_actions
 from app.core.money import money
 from app.core.targets import resolve_target
-from app.core.utils import (
-    format_marriage_duration,
-    mention,
-    now_local,
-    progress_bar,
-    to_local,
-)
+from app.core.utils import format_marriage_duration, mention
 from app.features.achievements.service import get_unlocked_codes
 from app.models import User
 from app.repositories import marriages as marriages_repo
@@ -49,21 +43,13 @@ async def _marital_status(session: AsyncSession, user_id: int) -> str:
 
 
 def _progress_block(earned: int) -> str:
-    """Формирует блок прогресса до следующего титула с прогресс-баром.
-
-    Прогрессия считается по сумме «всего заработано» (total_earned).
-    """
-    current_title = get_title(earned)
+    """Формирует короткую строку прогресса до следующего титула (без бара)."""
     next_title = get_next_title(earned)
     if next_title is None:
         return texts.PROFILE_PROGRESS_MAX
-    span = next_title.min_earned - current_title.min_earned
-    done = earned - current_title.min_earned
-    ratio = done / span if span > 0 else 0.0
     remaining = next_title.min_earned - earned
     return texts.PROFILE_PROGRESS.format(
         next_title=next_title.label,
-        bar=progress_bar(ratio),
         remaining=money(remaining),
     )
 
@@ -74,9 +60,6 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     rank = await users_repo.rank_by_balance(session, user.balance)
     unlocked = await get_unlocked_codes(session, user.user_id)
     marital = await _marital_status(session, user.user_id)
-
-    reg_local = to_local(user.created_at)
-    days_in_game = (now_local().date() - reg_local.date()).days
 
     return texts.PROFILE.format(
         name=mention(user.user_id, user.first_name, user.username),
@@ -91,7 +74,6 @@ async def render_profile(session: AsyncSession, user: User) -> str:
         marital=marital,
         ach_opened=len(unlocked),
         ach_total=len(ACHIEVEMENTS),
-        days_in_game=days_in_game,
         progress=_progress_block(user.total_earned),
     )
 

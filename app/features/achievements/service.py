@@ -21,8 +21,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import money
-from app.core.utils import mention as mention_html
-from app.core.utils import progress_bar
 from app.models import Marriage, User, UserAchievement
 from app.services.economy import change_balance
 from app.settings import texts
@@ -141,21 +139,24 @@ async def award_specific(
     return None
 
 
+def _reward_suffix(ach: Achievement) -> str:
+    return texts.ACH_REWARD.format(reward=money(ach.reward)) if ach.reward else ""
+
+
 def format_unlock_notification(
     user_id: int, name: str | None, username: str | None, newly: list[Achievement]
 ) -> str | None:
-    """Формирует карточку об открытых достижениях (или None, если их нет)."""
+    """Формирует короткое уведомление об открытых достижениях (2–3 строки)."""
     if not newly:
         return None
-    who = mention_html(user_id, name, username)
-    lines = [
-        texts.ACH_UNLOCK_ROW.format(
-            label=ach.label,
-            reward=texts.ACH_REWARD.format(reward=money(ach.reward)) if ach.reward else "",
-        )
+    if len(newly) == 1:
+        ach = newly[0]
+        return texts.ACH_UNLOCK_ONE.format(name=ach.name, reward=_reward_suffix(ach))
+    lines = "\n".join(
+        texts.ACH_UNLOCK_ROW.format(name=ach.name, reward=_reward_suffix(ach))
         for ach in newly
-    ]
-    return texts.ACH_UNLOCK.format(who=who, lines="\n".join(lines))
+    )
+    return texts.ACH_UNLOCK_MANY.format(lines=lines)
 
 
 async def check_award_and_notify(
@@ -195,25 +196,25 @@ async def render_achievements(session: AsyncSession, user_id: int) -> str:
     total = len(ACHIEVEMENTS)
     opened = sum(1 for a in ACHIEVEMENTS if a.code in unlocked)
 
-    parts = [texts.ACH_HEADER.format(opened=opened, total=total, bar=progress_bar(opened / total))]
+    parts = [texts.ACH_HEADER.format(opened=opened, total=total)]
 
     for category, label in CATEGORY_ORDER:
         items = [a for a in ACHIEVEMENTS if a.category == category]
         if not items:
             continue
-        parts.append(f"\n{texts.DIV}\n{label}")
+        parts.append(f"\n{label}")
         for a in items:
-            mark = "✅" if a.code in unlocked else "🔒"
-            parts.append(f"{mark} {a.label}")
+            row = texts.ACH_OPENED_ROW if a.code in unlocked else texts.ACH_LOCKED_ROW
+            parts.append(row.format(label=a.label))
 
     # Секретные: открытые показываем, закрытые — только счётчиком.
     secrets = [a for a in ACHIEVEMENTS if a.category == SECRET_CATEGORY]
     if secrets:
         opened_secrets = [a for a in secrets if a.code in unlocked]
         locked_count = len(secrets) - len(opened_secrets)
-        parts.append(f"\n{texts.DIV}\n🤫 Секретные")
+        parts.append("\n🤫 Секретные")
         for a in opened_secrets:
-            parts.append(f"✅ {a.label}")
+            parts.append(texts.ACH_OPENED_ROW.format(label=a.label))
         if locked_count:
             parts.append(f"🔒 ??? × {locked_count}")
 
