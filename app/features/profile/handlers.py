@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from aiogram import Router
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.keyboards import quick_actions
 from app.core.money import money
@@ -110,6 +111,17 @@ async def cmd_profile(message: Message, session: AsyncSession, command_args: str
     # Удаляем команду пользователя через 5 сек
     await deletion.schedule(session, message.chat.id, message.message_id, 5)
     
+    # Кнопка на сайт (только для своего профиля)
+    keyboard = quick_actions()
+    if user.user_id == sender.id:
+        settings = get_settings()
+        profile_url = f"{settings.website_url}/profile/{user.user_id}"
+        website_button = InlineKeyboardButton(text="🌐 Открыть на сайте", url=profile_url)
+        if keyboard.inline_keyboard:
+            keyboard.inline_keyboard.append([website_button])
+        else:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[website_button]])
+    
     # Отправляем профиль и удаляем через 5 минут
-    sent = await message.answer(await render_profile(session, user), reply_markup=quick_actions())
+    sent = await message.answer(await render_profile(session, user), reply_markup=keyboard)
     await deletion.schedule(session, sent.chat.id, sent.message_id, 300)

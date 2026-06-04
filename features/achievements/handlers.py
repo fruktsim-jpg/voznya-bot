@@ -39,14 +39,4 @@ async def achievements_command(message: Message, user: User, session: AsyncSessi
     else:
         text += "У тебя пока нет достижений.\nИграй и открывай новые!"
     
-    text += "\n📊 Все достижения и прогресс на сайте:"
-    
-    # Кнопка на сайт
-    achievements_url = f"{settings.website_url}/live"
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Все достижения", url=achievements_url)]
-        ]
-    )
-    
-    await message.answer(text, reply_markup=keyboard)
+    await message.answer(text)
