@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # База данных
     database_url: str
 
+    # Сайт
+    website_url: str = Field(default="https://voznya.vercel.app")
+
     # Время
     timezone: str = "Europe/Amsterdam"
     nomination_reset_hour: int = 12
