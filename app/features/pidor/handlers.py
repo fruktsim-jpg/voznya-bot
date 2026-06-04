@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 from app.core.money import money
-from app.core.utils import mention
+from app.core.utils import mention, place_marker
 from app.features.pidor.service import get_or_choose_pidor
 from app.models import User
 from app.repositories import users as users_repo
@@ -24,13 +24,13 @@ async def _build_top(session: AsyncSession) -> str:
         return ""
     rows = "\n".join(
         texts.PIDOR_TOP_ROW.format(
-            place=i + 1,
+            place=place_marker(i + 1),
             mention=mention(u.user_id, u.first_name, u.username),
             count=u.pidor_count,
         )
         for i, u in enumerate(top)
     )
-    return texts.PIDOR_TOP_HEADER.format(limit=balance.TOP_PIDOR_LIMIT, rows=rows)
+    return texts.PIDOR_TOP_HEADER.format(rows=rows)
 
 
 @router.message(RuCommand("пидор", "pidor"))

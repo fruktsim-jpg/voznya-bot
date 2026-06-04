@@ -16,14 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import money
 from app.core.utils import mention as mention_html
+from app.core.utils import progress_bar
 from app.models import Marriage, User, UserAchievement
 from app.services.economy import change_balance
-from app.settings.achievements import (
-    ACHIEVEMENTS,
-    ACHIEVEMENTS_BY_CODE,
-    METRIC_ALL,
-    Achievement,
-)
+from app.settings import texts
+from app.settings.achievements import ACHIEVEMENTS, METRIC_ALL, Achievement
 
 
 async def _gather_stats(session: AsyncSession, user: User) -> dict[str, int]:
@@ -133,30 +130,45 @@ async def check_award_and_notify(
 def format_unlock_notification(
     user_id: int, name: str | None, username: str | None, newly: list[Achievement]
 ) -> str | None:
-    """Формирует сообщение об открытых достижениях (или None, если их нет)."""
+    """Формирует карточку об открытых достижениях (или None, если их нет)."""
     if not newly:
         return None
     who = mention_html(user_id, name, username)
-    lines = [f"🎉 {who} открывает достижение:"]
-    for ach in newly:
-        suffix = f" (+{money(ach.reward)})" if ach.reward else ""
-        lines.append(f"{ach.label}{suffix}")
-    return "\n".join(lines)
+    lines = [
+        texts.ACH_UNLOCK_ROW.format(
+            label=ach.label,
+            reward=texts.ACH_REWARD.format(reward=money(ach.reward)) if ach.reward else "",
+        )
+        for ach in newly
+    ]
+    return texts.ACH_UNLOCK.format(who=who, lines="\n".join(lines))
 
 
 async def render_achievements(session: AsyncSession, user_id: int) -> str:
-    """Формирует текст для команды /ачивки."""
+    """Формирует карточку достижений для команды /ачивки.
+
+    Открытые и закрытые достижения визуально разнесены по секциям.
+    """
     unlocked = await get_unlocked_codes(session, user_id)
     total = len(ACHIEVEMENTS)
-    opened = len(unlocked & set(ACHIEVEMENTS_BY_CODE))
+    opened_list = [a for a in ACHIEVEMENTS if a.code in unlocked]
+    locked_list = [a for a in ACHIEVEMENTS if a.code not in unlocked]
 
-    lines = [f"🏅 <b>Достижения</b> — открыто {opened} из {total}\n"]
-    for ach in ACHIEVEMENTS:
-        if ach.code in unlocked:
-            mark = "✅"
-            reward = ""
-        else:
-            mark = "🔒"
-            reward = f" (награда +{money(ach.reward)})" if ach.reward else ""
-        lines.append(f"{mark} {ach.label} — {ach.description}{reward}")
-    return "\n".join(lines)
+    ratio = len(opened_list) / total if total else 0.0
+    parts = [texts.ACH_HEADER.format(opened=len(opened_list), total=total, bar=progress_bar(ratio))]
+
+    if opened_list:
+        parts.append(texts.ACH_OPENED_TITLE)
+        parts.extend(texts.ACH_OPENED_ROW.format(label=a.label) for a in opened_list)
+
+    if locked_list:
+        parts.append(texts.ACH_LOCKED_TITLE)
+        for a in locked_list:
+            reward = texts.ACH_REWARD.format(reward=money(a.reward)) if a.reward else ""
+            parts.append(
+                texts.ACH_LOCKED_ROW.format(
+                    label=a.label, description=a.description, reward=reward
+                )
+            )
+
+    return "\n".join(parts)

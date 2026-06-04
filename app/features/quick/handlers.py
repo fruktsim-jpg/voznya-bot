@@ -13,14 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.keyboards import quick_actions
 from app.core.money import money
 from app.core.utils import format_cooldown, mention
-from app.features.achievements.service import check_award_and_notify
+from app.features.achievements.service import check_award_and_notify, render_achievements
 from app.features.farm.handlers import render_farm_result
 from app.features.farm.service import do_farm
 from app.features.profile.handlers import render_profile
-from app.features.ratings.handlers import render_top
 from app.repositories import users as users_repo
 from app.services.economy import get_balance
 from app.settings import texts
+from app.settings.titles import get_title
 
 router = Router(name="quick")
 
@@ -57,6 +57,7 @@ async def q_balance(callback: CallbackQuery, session: AsyncSession) -> None:
             texts.BALANCE.format(
                 mention=mention(user.id, user.first_name, user.username),
                 balance=money(amount),
+                title=get_title(amount).label,
             )
         )
     await callback.answer()
@@ -74,9 +75,12 @@ async def q_profile(callback: CallbackQuery, session: AsyncSession) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data == "quick:top")
-async def q_top(callback: CallbackQuery, session: AsyncSession) -> None:
-    """Быстрый топ."""
+@router.callback_query(F.data == "quick:achievements")
+async def q_achievements(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Быстрые достижения."""
+    user = callback.from_user
     if callback.message is not None:
-        await callback.message.answer(await render_top(session))
+        await callback.message.answer(
+            await render_achievements(session, user.id), reply_markup=quick_actions()
+        )
     await callback.answer()
