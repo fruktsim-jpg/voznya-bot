@@ -92,7 +92,7 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     )
 
 
-@router.message(RuCommand("профиль", "profile"))
+@router.message(RuCommand("профиль", "profile", "проф", "стата"))
 async def cmd_profile(message: Message, session: AsyncSession, command_args: str) -> None:
     """Показывает карточку игрока (свою или указанного пользователя)."""
     sender = message.from_user

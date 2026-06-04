@@ -47,7 +47,7 @@ async def _finish_marriage(
             await check_award_and_notify(answerable, session, u.user_id, u.first_name, u.username)
 
 
-@router.message(RuCommand("жениться", "marry"))
+@router.message(RuCommand("жениться", "marry", "брак", "свадьба", "предложение"))
 async def cmd_marry(message: Message, session: AsyncSession, command_args: str) -> None:
     """Предложение руки и сердца: /жениться @username."""
     user = message.from_user
@@ -201,7 +201,7 @@ async def cmd_marriage_info(
         await award_specific(session, partner_id, "love_grave")
 
 
-@router.message(RuCommand("развод", "divorce"))
+@router.message(RuCommand("развод", "divorce", "развестись", "разрыв"))
 async def cmd_divorce(message: Message, session: AsyncSession, command_args: str) -> None:
     """Развод (мгновенный, без подтверждения): /развод."""
     user = message.from_user

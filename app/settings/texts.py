@@ -276,7 +276,7 @@ TOP_FAMILIES_EMPTY = "💞 Семей пока нет. Создай первую
 
 # --- Достижения --------------------------------------------------------------
 
-ACH_HEADER = "🏅 <b>Достижения</b> · {opened}/{total}"
+ACH_HEADER = "🏅 {mention} · {opened}/{total}"
 ACH_OPENED_ROW = "✅ {label}"
 ACH_LOCKED_ROW = "🔒 {label}"
 ACH_REWARD = " · +{reward}"

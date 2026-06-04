@@ -40,7 +40,7 @@ async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) ->
     )
 
 
-@router.message(RuCommand("бой", "duel"))
+@router.message(RuCommand("бой", "duel", "дуэль", "дуэлька"))
 async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -> None:
     """Обрабатывает вызов на дуэль: /бой @username ставка."""
     user = message.from_user

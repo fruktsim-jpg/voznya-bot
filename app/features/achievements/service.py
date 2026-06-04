@@ -198,13 +198,48 @@ async def notify_specific(
             await answerable.answer(text)
 
 
-async def render_achievements(session: AsyncSession, user_id: int) -> str:
-    """Формирует компактную карточку достижений, сгруппированную по категориям."""
+async def render_achievements_compact(
+    session: AsyncSession, user_id: int, first_name: str, username: str | None = None
+) -> str:
+    """Формирует компактный список ТОЛЬКО открытых достижений."""
+    from app.core.utils import mention
+    
     unlocked = await get_unlocked_codes(session, user_id)
     total = len(ACHIEVEMENTS)
     opened = sum(1 for a in ACHIEVEMENTS if a.code in unlocked)
 
-    parts = [texts.ACH_HEADER.format(opened=opened, total=total)]
+    parts = [texts.ACH_HEADER.format(
+        mention=mention(user_id, first_name, username),
+        opened=opened,
+        total=total
+    )]
+    
+    if opened == 0:
+        parts.append("\nПока ничего не открыто.")
+    else:
+        # Только открытые достижения (без категорий, без секретных)
+        for a in ACHIEVEMENTS:
+            if a.code in unlocked and a.category != SECRET_CATEGORY:
+                parts.append(texts.ACH_OPENED_ROW.format(label=a.label))
+
+    return "\n".join(parts)
+
+
+async def render_achievements_full(
+    session: AsyncSession, user_id: int, first_name: str, username: str | None = None
+) -> str:
+    """Формирует полный список достижений с категориями и замками."""
+    from app.core.utils import mention
+    
+    unlocked = await get_unlocked_codes(session, user_id)
+    total = len(ACHIEVEMENTS)
+    opened = sum(1 for a in ACHIEVEMENTS if a.code in unlocked)
+
+    parts = [texts.ACH_HEADER.format(
+        mention=mention(user_id, first_name, username),
+        opened=opened,
+        total=total
+    )]
 
     for category, label in CATEGORY_ORDER:
         items = [a for a in ACHIEVEMENTS if a.category == category]
@@ -227,3 +262,9 @@ async def render_achievements(session: AsyncSession, user_id: int) -> str:
             parts.append(f"🔒 ??? × {locked_count}")
 
     return "\n".join(parts)
+
+
+# Алиас для обратной совместимости
+async def render_achievements(session: AsyncSession, user_id: int) -> str:
+    """Формирует компактный список достижений (по умолчанию)."""
+    return await render_achievements_compact(session, user_id)

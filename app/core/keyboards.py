@@ -76,3 +76,12 @@ def top_pagination(page: int, total_pages: int, user_id: int) -> InlineKeyboardM
         )
     
     return InlineKeyboardMarkup(inline_keyboard=[buttons] if buttons else [])
+
+
+def achievements_full_button(user_id: int) -> InlineKeyboardMarkup:
+    """Кнопка для показа всех достижений."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📖 Все достижения", callback_data=f"ach:full:{user_id}")]
+        ]
+    )

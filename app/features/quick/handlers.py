@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.keyboards import quick_actions
 from app.core.money import money
 from app.core.utils import format_cooldown, mention
-from app.features.achievements.service import check_award_and_notify, render_achievements
+from app.features.achievements.service import check_award_and_notify, render_achievements_compact
 from app.features.farm.handlers import render_farm_result
 from app.features.farm.service import do_farm
 from app.features.profile.handlers import render_profile
@@ -93,7 +93,9 @@ async def q_achievements(callback: CallbackQuery, session: AsyncSession) -> None
     user = callback.from_user
     
     if callback.message is not None:
-        text = await render_achievements(session, user.id)
+        text = await render_achievements_compact(
+            session, user.id, user.first_name, user.username
+        )
         try:
             # Пытаемся отредактировать существующее сообщение
             await callback.message.edit_text(text)

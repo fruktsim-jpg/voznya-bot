@@ -39,7 +39,7 @@ def render_farm_result(result, who: str = "") -> str:
     return line + texts.FARM_BALANCE.format(balance=money(result.balance))
 
 
-@router.message(RuCommand("ферма", "farm"))
+@router.message(RuCommand("ферма", "farm", "фарм"))
 async def cmd_farm(message: Message, session: AsyncSession, command_args: str) -> None:
     """Обрабатывает команду /ферма."""
     user = message.from_user
