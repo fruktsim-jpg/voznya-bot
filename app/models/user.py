@@ -56,6 +56,10 @@ class User(Base):
         DateTime(timezone=True), nullable=True, index=True
     )
 
+    # Счётчик сообщений (для сайта). Считается с момента деплоя —
+    # Telegram историю не отдаёт.
+    messages_count: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
