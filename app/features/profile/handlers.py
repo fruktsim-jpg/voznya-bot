@@ -17,6 +17,11 @@ router = Router(name="profile")
 
 async def render_profile(session: AsyncSession, user: User) -> str:
     """Формирует текст профиля игрока."""
+    from app.features.achievements.service import get_unlocked_codes
+    from app.repositories.marriages import get_active_marriage
+    from app.repositories.users import get_user
+    from app.settings.achievements import ACHIEVEMENTS
+    
     settings = get_settings()
     title = get_title(user.total_earned)
     next_title = get_next_title(user.total_earned)
@@ -34,6 +39,21 @@ async def render_profile(session: AsyncSession, user: User) -> str:
         needed = next_title.min_earned - title.min_earned
         percent = int((progress / needed) * 100) if needed > 0 else 100
         text += f"📊 Прогресс: {percent}% до {next_title.emoji} {next_title.name}\n"
+    
+    # Достижения
+    unlocked = await get_unlocked_codes(session, user.user_id)
+    total_achievements = len(ACHIEVEMENTS)
+    opened_achievements = len(unlocked)
+    text += f"🏅 Достижения: {opened_achievements}/{total_achievements}\n"
+    
+    # Брак
+    marriage = await get_active_marriage(session, user.user_id)
+    if marriage:
+        partner_id = marriage.user_id_2 if marriage.user_id_1 == user.user_id else marriage.user_id_1
+        partner = await get_user(session, partner_id)
+        if partner:
+            partner_name = partner.display_name()
+            text += f"💍 В браке с {partner_name}\n"
     
     text += (
         f"\n⚔️ Дуэли: {user.duels_won} побед / {user.duels_lost} поражений\n"
