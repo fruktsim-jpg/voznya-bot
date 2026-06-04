@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 from aiogram import Router
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +33,7 @@ async def cmd_claim(message: Message, session: AsyncSession, command_args: str) 
         return
 
     await message.answer(
-        texts.TREASURE_CLAIMED.format(
+        random.choice(texts.TREASURE_CLAIM_VARIANTS).format(
             mention=mention(user.id, user.first_name, user.username),
             reward=money(result.reward),
         ),
