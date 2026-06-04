@@ -30,7 +30,7 @@ NOMINATION_TYPE = "pidor"
 class PidorResult:
     """Результат вызова команды /пидор."""
 
-    status: str  # "no_active" / "chosen" / "existing"
+    status: str  # "not_enough" / "chosen" / "existing"
     winner_id: int = 0
     count: int = 0
     opener_bonus: int = 0
@@ -54,8 +54,8 @@ async def get_or_choose_pidor(
     active_ids = await users_repo.get_active_user_ids(
         session, balance.NOMINATION_ACTIVE_DAYS
     )
-    if not active_ids:
-        return PidorResult(status="no_active")
+    if len(active_ids) < balance.NOMINATION_MIN_CANDIDATES:
+        return PidorResult(status="not_enough")
 
     winner_id = random.choice(active_ids)
 

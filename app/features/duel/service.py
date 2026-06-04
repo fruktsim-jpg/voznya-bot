@@ -38,13 +38,14 @@ class ChallengeResult:
     status: str  # "cooldown" / "poor" / "ok"
     remaining: float = 0.0
     balance: int = 0
+    pending_id: int = 0
 
 
 @dataclass
 class DuelResult:
     """Результат проведённой дуэли."""
 
-    status: str  # "no_pending" / "target_poor" / "initiator_poor" / "done"
+    status: str  # "no_pending"/"not_target"/"target_poor"/"initiator_poor"/"done"
     balance: int = 0
     winner_id: int = 0
     loser_id: int = 0
@@ -71,37 +72,50 @@ async def create_challenge(
         )
 
     expires_at = now_utc() + timedelta(minutes=balance.DUEL_EXPIRE_MINUTES)
-    session.add(
-        PendingAction(
-            action_type=TYPE_DUEL,
-            initiator_id=initiator_id,
-            target_id=target_id,
-            amount=amount,
-            chat_id=chat_id,
-            status=STATUS_PENDING,
-            expires_at=expires_at,
-        )
+    pending = PendingAction(
+        action_type=TYPE_DUEL,
+        initiator_id=initiator_id,
+        target_id=target_id,
+        amount=amount,
+        chat_id=chat_id,
+        status=STATUS_PENDING,
+        expires_at=expires_at,
     )
+    session.add(pending)
+    await session.flush()
     await cooldowns.set_cooldown(session, initiator_id, "duel", balance.COOLDOWNS["duel"])
-    return ChallengeResult(status="ok")
+    return ChallengeResult(status="ok", pending_id=pending.id)
 
 
-async def accept_challenge(session: AsyncSession, confirmer_id: int) -> DuelResult:
-    """Принимает вызов на дуэль и проводит бой."""
+async def accept_challenge(
+    session: AsyncSession, confirmer_id: int, pending_id: int | None = None
+) -> DuelResult:
+    """Принимает вызов на дуэль и проводит бой.
+
+    Если ``pending_id`` указан (приём через кнопку), берётся конкретный вызов
+    и проверяется, что нажавший — именно тот, кого вызвали.
+    """
     now = now_utc()
-    result = await session.execute(
-        select(PendingAction)
-        .where(
-            PendingAction.action_type == TYPE_DUEL,
-            PendingAction.target_id == confirmer_id,
-            PendingAction.status == STATUS_PENDING,
+    if pending_id is not None:
+        pending = await session.get(PendingAction, pending_id, with_for_update=True)
+        if pending is None or pending.action_type != TYPE_DUEL or pending.status != STATUS_PENDING:
+            return DuelResult(status="no_pending")
+        if pending.target_id != confirmer_id:
+            return DuelResult(status="not_target")
+    else:
+        result = await session.execute(
+            select(PendingAction)
+            .where(
+                PendingAction.action_type == TYPE_DUEL,
+                PendingAction.target_id == confirmer_id,
+                PendingAction.status == STATUS_PENDING,
+            )
+            .order_by(PendingAction.created_at.desc())
+            .with_for_update()
         )
-        .order_by(PendingAction.created_at.desc())
-        .with_for_update()
-    )
-    pending = result.scalars().first()
-    if pending is None:
-        return DuelResult(status="no_pending")
+        pending = result.scalars().first()
+        if pending is None:
+            return DuelResult(status="no_pending")
     if pending.expires_at <= now:
         pending.status = STATUS_EXPIRED
         return DuelResult(status="no_pending")

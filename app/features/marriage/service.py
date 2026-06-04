@@ -32,11 +32,12 @@ from app.settings import balance
 class MarrySimpleResult:
     status: str
     partner_id: int = 0
+    pending_id: int = 0
 
 
 @dataclass
 class AcceptResult:
-    status: str  # "no_pending" / "initiator_busy" / "target_busy" / "done"
+    status: str  # "no_pending"/"not_target"/"initiator_busy"/"target_busy"/"done"
     initiator_id: int = 0
     target_id: int = 0
 
@@ -51,36 +52,46 @@ async def propose(
         return MarrySimpleResult(status="target_busy", partner_id=target_id)
 
     expires_at = now_utc() + timedelta(minutes=balance.MARRIAGE_PROPOSAL_EXPIRE_MINUTES)
-    session.add(
-        PendingAction(
-            action_type=TYPE_MARRY,
-            initiator_id=initiator_id,
-            target_id=target_id,
-            chat_id=chat_id,
-            status=STATUS_PENDING,
-            expires_at=expires_at,
-        )
+    pending = PendingAction(
+        action_type=TYPE_MARRY,
+        initiator_id=initiator_id,
+        target_id=target_id,
+        chat_id=chat_id,
+        status=STATUS_PENDING,
+        expires_at=expires_at,
     )
-    return MarrySimpleResult(status="ok", partner_id=target_id)
+    session.add(pending)
+    await session.flush()
+    return MarrySimpleResult(status="ok", partner_id=target_id, pending_id=pending.id)
 
 
-async def accept_proposal(session: AsyncSession, confirmer_id: int) -> AcceptResult:
+async def accept_proposal(
+    session: AsyncSession, confirmer_id: int, pending_id: int | None = None
+) -> AcceptResult:
     """Подтверждает предложение и создаёт брак."""
     now = now_utc()
-    result = await session.execute(
-        select(PendingAction)
-        .where(
-            PendingAction.action_type == TYPE_MARRY,
-            PendingAction.target_id == confirmer_id,
-            PendingAction.status == STATUS_PENDING,
+    if pending_id is not None:
+        pending = await session.get(PendingAction, pending_id, with_for_update=True)
+        if pending is None or pending.action_type != TYPE_MARRY or pending.status != STATUS_PENDING:
+            return AcceptResult(status="no_pending")
+        if pending.target_id != confirmer_id:
+            return AcceptResult(status="not_target")
+    else:
+        result = await session.execute(
+            select(PendingAction)
+            .where(
+                PendingAction.action_type == TYPE_MARRY,
+                PendingAction.target_id == confirmer_id,
+                PendingAction.status == STATUS_PENDING,
+            )
+            .order_by(PendingAction.created_at.desc())
+            .with_for_update()
         )
-        .order_by(PendingAction.created_at.desc())
-        .with_for_update()
-    )
-    pending = result.scalars().first()
-    if pending is None or pending.expires_at <= now:
-        if pending is not None:
-            pending.status = STATUS_EXPIRED
+        pending = result.scalars().first()
+        if pending is None:
+            return AcceptResult(status="no_pending")
+    if pending.expires_at <= now:
+        pending.status = STATUS_EXPIRED
         return AcceptResult(status="no_pending")
 
     initiator_id = pending.initiator_id

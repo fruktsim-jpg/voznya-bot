@@ -27,7 +27,7 @@ NOMINATION_TYPE = "para"
 class ParaResult:
     """Результат вызова команды /пара."""
 
-    status: str  # "no_active" / "chosen" / "existing"
+    status: str  # "not_enough" / "chosen" / "existing"
     first_id: int = 0
     second_id: int = 0
     opener_bonus: int = 0
@@ -51,9 +51,10 @@ async def get_or_choose_para(session: AsyncSession, opener_id: int) -> ParaResul
     active_ids = await users_repo.get_active_user_ids(
         session, balance.NOMINATION_ACTIVE_DAYS, exclude=married
     )
-    if len(active_ids) < 2:
-        return ParaResult(status="no_active")
+    if len(active_ids) < balance.NOMINATION_MIN_CANDIDATES:
+        return ParaResult(status="not_enough")
 
+    # Гарантированно два разных человека (один не может попасть дважды).
     first_id, second_id = random.sample(active_ids, 2)
 
     stmt = (
