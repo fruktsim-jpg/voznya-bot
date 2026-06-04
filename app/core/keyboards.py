@@ -17,7 +17,7 @@ def quick_actions() -> InlineKeyboardMarkup:
     builder.button(text="💊 Ферма", callback_data="quick:farm")
     builder.button(text="💰 Баланс", callback_data="quick:balance")
     builder.button(text="👤 Профиль", callback_data="quick:profile")
-    builder.button(text="🏆 Топ", callback_data="quick:top")
+    builder.button(text="🏅 Ачивки", callback_data="quick:achievements")
     builder.adjust(2, 2)
     return builder.as_markup()
 
@@ -46,5 +46,6 @@ def casino_again(user_id: int, bet: int) -> InlineKeyboardMarkup:
     builder.button(text="🎰 Повторить ставку", callback_data=f"casino:repeat:{user_id}:{bet}")
     builder.button(text="💰 Баланс", callback_data="quick:balance")
     builder.button(text="👤 Профиль", callback_data="quick:profile")
-    builder.adjust(1, 2)
+    builder.button(text="🏅 Ачивки", callback_data="quick:achievements")
+    builder.adjust(1, 3)
     return builder.as_markup()

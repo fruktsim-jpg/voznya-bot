@@ -97,6 +97,21 @@ def escape(text: str | None) -> str:
     return html.escape(text, quote=False)
 
 
+_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+
+def place_marker(place: int) -> str:
+    """Возвращает медаль для топ-3 или «N.» для остальных мест."""
+    return _MEDALS.get(place, f"{place}.")
+
+
+def progress_bar(ratio: float, width: int = 12) -> str:
+    """Рисует текстовый прогресс-бар из закрашенных/пустых блоков."""
+    ratio = max(0.0, min(1.0, ratio))
+    filled = round(ratio * width)
+    return "▰" * filled + "▱" * (width - filled)
+
+
 def mention(user_id: int, name: str | None, username: str | None = None) -> str:
     """Создаёт HTML-упоминание пользователя.
 

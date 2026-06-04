@@ -12,6 +12,7 @@ from app.core.money import money
 from app.core.utils import mention
 from app.services.economy import get_balance
 from app.settings import texts
+from app.settings.titles import get_title
 
 router = Router(name="balance")
 
@@ -28,6 +29,7 @@ async def cmd_balance(message: Message, session: AsyncSession, command_args: str
         texts.BALANCE.format(
             mention=mention(user.id, user.first_name, user.username),
             balance=money(amount),
+            title=get_title(amount).label,
         ),
         reply_markup=quick_actions(),
     )

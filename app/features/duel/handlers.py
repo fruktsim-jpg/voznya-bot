@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
-from app.core.keyboards import duel_accept
+from app.core.keyboards import duel_accept, quick_actions
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
 from app.core.targets import extract_amount_after_target, resolve_target
@@ -31,7 +31,8 @@ async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) ->
             winner=mention(winner.user_id, winner.first_name, winner.username),
             loser=mention(loser.user_id, loser.first_name, loser.username),
             bank=money(result.bank),
-        )
+        ),
+        reply_markup=quick_actions(),
     )
     await check_award_and_notify(
         answerable, session, winner.user_id, winner.first_name, winner.username

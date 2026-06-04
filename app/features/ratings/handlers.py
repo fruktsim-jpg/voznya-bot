@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 from app.core.money import money
-from app.core.utils import format_marriage_duration, mention
+from app.core.utils import format_marriage_duration, mention, place_marker
 from app.models import User
 from app.repositories import economy as economy_repo
 from app.repositories import marriages as marriages_repo
@@ -25,7 +25,7 @@ async def render_top(session: AsyncSession) -> str:
         return texts.TOP_RICH_EMPTY
     rows = "\n".join(
         texts.TOP_RICH_ROW.format(
-            place=i + 1,
+            place=place_marker(i + 1),
             mention=mention(u.user_id, u.first_name, u.username),
             balance=money(u.balance),
         )
@@ -52,7 +52,7 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
 
     rows = "\n".join(
         texts.WEEKLY_ROW.format(
-            place=i + 1,
+            place=place_marker(i + 1),
             mention=mention(u.user_id, u.first_name, u.username),
             amount=money(earned),
         )
@@ -77,7 +77,7 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
         u2 = await session.get(User, m.user_id_2)
         lines.append(
             texts.TOP_FAMILIES_ROW.format(
-                place=i + 1,
+                place=place_marker(i + 1),
                 first=mention(u1.user_id, u1.first_name, u1.username) if u1 else "?",
                 second=mention(u2.user_id, u2.first_name, u2.username) if u2 else "?",
                 duration=format_marriage_duration(m.married_at),

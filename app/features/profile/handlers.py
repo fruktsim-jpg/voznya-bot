@@ -10,7 +10,13 @@ from app.core.filters import RuCommand
 from app.core.keyboards import quick_actions
 from app.core.money import money
 from app.core.targets import resolve_target
-from app.core.utils import format_marriage_duration, mention, now_local, to_local
+from app.core.utils import (
+    format_marriage_duration,
+    mention,
+    now_local,
+    progress_bar,
+    to_local,
+)
 from app.features.achievements.service import get_unlocked_codes
 from app.models import User
 from app.repositories import marriages as marriages_repo
@@ -43,16 +49,19 @@ async def _marital_status(session: AsyncSession, user_id: int) -> str:
 
 
 def _progress_block(balance: int) -> str:
-    """Формирует блок прогресса до следующего титула."""
+    """Формирует блок прогресса до следующего титула с прогресс-баром."""
+    current_title = get_title(balance)
     next_title = get_next_title(balance)
     if next_title is None:
         return texts.PROFILE_PROGRESS_MAX
+    span = next_title.min_balance - current_title.min_balance
+    done = balance - current_title.min_balance
+    ratio = done / span if span > 0 else 0.0
     remaining = next_title.min_balance - balance
     return texts.PROFILE_PROGRESS.format(
         next_title=next_title.label,
+        bar=progress_bar(ratio),
         remaining=money(remaining),
-        current=balance,
-        next_min=next_title.min_balance,
     )
 
 
@@ -67,20 +76,18 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     days_in_game = (now_local().date() - reg_local.date()).days
 
     return texts.PROFILE.format(
-        mention=mention(user.user_id, user.first_name, user.username),
+        name=mention(user.user_id, user.first_name, user.username),
         title=title.label,
         rank=rank,
         balance=money(user.balance),
         earned=money(user.total_earned),
         streak=user.farm_streak,
-        max_streak=user.max_farm_streak,
         wins=user.duels_won,
         losses=user.duels_lost,
         treasures=user.treasures_found,
         marital=marital,
         ach_opened=len(unlocked),
         ach_total=len(ACHIEVEMENTS),
-        reg_date=reg_local.strftime("%d.%m.%Y"),
         days_in_game=days_in_game,
         progress=_progress_block(user.balance),
     )
