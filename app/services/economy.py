@@ -18,6 +18,12 @@ from app.models import Transaction, User
 
 logger = get_logger(__name__)
 
+# «Продуктивные» источники дохода формируют прогрессию (total_earned/spent
+# и, как следствие, титулы). Азартные игры (казино, дуэли) перераспределяют
+# валюту и НЕ должны раздувать прогрессию — они влияют только на баланс
+# и недельный рейтинг. Это сознательное экономическое решение (см. ECONOMY.md).
+PRODUCTIVE_REASONS = {"farm", "treasure", "achievement", "nomination", "admin"}
+
 
 class InsufficientFunds(Exception):
     """Бросается при попытке списать больше, чем есть на балансе."""
@@ -60,10 +66,13 @@ async def change_balance(
         raise InsufficientFunds(user.balance, -amount)
 
     user.balance = new_balance
-    if amount > 0:
-        user.total_earned += amount
-    elif amount < 0:
-        user.total_spent += -amount
+    # В прогрессию (total_earned/total_spent) попадают только продуктивные
+    # источники; азартные игры меняют лишь баланс.
+    if reason in PRODUCTIVE_REASONS:
+        if amount > 0:
+            user.total_earned += amount
+        elif amount < 0:
+            user.total_spent += -amount
 
     session.add(
         Transaction(user_id=user_id, amount=amount, reason=reason, meta=meta)

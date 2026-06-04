@@ -33,6 +33,7 @@ class ClaimResult:
     status: str  # "none" / "claimed"
     reward: int = 0
     balance: int = 0
+    fast: bool = False
 
 
 async def claim_treasure(
@@ -54,16 +55,24 @@ async def claim_treasure(
     if treasure is None:
         return ClaimResult(status="none")
 
+    claimed_at = now_utc()
     treasure.status = TREASURE_CLAIMED
     treasure.claimed_by = user_id
-    treasure.claimed_at = now_utc()
+    treasure.claimed_at = claimed_at
+
+    # Был ли клад забран почти мгновенно (для секретного достижения).
+    # spawned_at хранится как timezone-aware (UTC), claimed_at — тоже.
+    delta = (claimed_at - treasure.spawned_at).total_seconds()
+    fast = 0 <= delta <= balance.TREASURE_FAST_SECONDS
 
     user = await change_balance(
         session, user_id, treasure.reward, "treasure", {"treasure_id": treasure.id}
     )
     user.treasures_found += 1
 
-    return ClaimResult(status="claimed", reward=treasure.reward, balance=user.balance)
+    return ClaimResult(
+        status="claimed", reward=treasure.reward, balance=user.balance, fast=fast
+    )
 
 
 async def spawn_treasure(
