@@ -11,11 +11,21 @@ from app.core.keyboards import casino_again
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
 from app.core.utils import format_cooldown, mention
-from app.features.achievements.service import check_award_and_notify
+from app.features.achievements.service import check_award_and_notify, notify_specific
 from app.features.casino.service import CasinoResult, play_casino
 from app.settings import balance, texts
 
 router = Router(name="casino")
+
+
+async def _award_casino_events(
+    answerable, session, user, result: CasinoResult
+) -> None:
+    """Выдаёт событийные достижения казино (джекпот, ва-банк)."""
+    if result.jackpot:
+        await notify_specific(answerable, session, user.id, user.first_name, user.username, "catushka")
+    if result.all_in and result.outcome == "loss":
+        await notify_specific(answerable, session, user.id, user.first_name, user.username, "last_dep")
 
 
 def _format_multiplier(value: float) -> str:
@@ -94,6 +104,7 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
         _render_result(result, who), reply_markup=casino_again(user.id, bet)
     )
     await check_award_and_notify(message, session, user.id, user.first_name, user.username)
+    await _award_casino_events(message, session, user, result)
 
 
 @router.callback_query(F.data.startswith("casino:repeat:"))
@@ -137,4 +148,5 @@ async def cb_casino_repeat(callback: CallbackQuery, session: AsyncSession) -> No
             callback.from_user.first_name,
             callback.from_user.username,
         )
+        await _award_casino_events(callback.message, session, callback.from_user, result)
     await callback.answer()

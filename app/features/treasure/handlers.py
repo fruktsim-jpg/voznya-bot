@@ -10,7 +10,7 @@ from app.core.filters import RuCommand
 from app.core.keyboards import quick_actions
 from app.core.money import money
 from app.core.utils import mention
-from app.features.achievements.service import check_award_and_notify
+from app.features.achievements.service import check_award_and_notify, notify_specific
 from app.features.treasure.service import claim_treasure
 from app.settings import texts
 
@@ -38,3 +38,5 @@ async def cmd_claim(message: Message, session: AsyncSession, command_args: str) 
         reply_markup=quick_actions(),
     )
     await check_award_and_notify(message, session, user.id, user.first_name, user.username)
+    if result.fast:
+        await notify_specific(message, session, user.id, user.first_name, user.username, "kladmen")

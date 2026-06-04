@@ -6,11 +6,17 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import timedelta
+
 from app.core.filters import RuCommand
 from app.core.keyboards import marriage_accept, quick_actions
 from app.core.targets import resolve_target
-from app.core.utils import format_marriage_duration, mention
-from app.features.achievements.service import check_award_and_notify
+from app.core.utils import format_marriage_duration, mention, now_utc
+from app.features.achievements.service import (
+    award_specific,
+    check_award_and_notify,
+    notify_specific,
+)
 from app.features.marriage import service
 from app.models import User
 from app.settings import balance, texts
@@ -156,6 +162,14 @@ async def cmd_marriage_info(
             duration=format_marriage_duration(marriage.married_at),
         )
     )
+
+    # Легендарка «Любовь до гроба»: 30 дней в браке.
+    if now_utc() - marriage.married_at >= timedelta(days=30):
+        partner_id = (
+            marriage.user_id_2 if marriage.user_id_1 == user.id else marriage.user_id_1
+        )
+        await notify_specific(message, session, user.id, user.first_name, user.username, "love_grave")
+        await award_specific(session, partner_id, "love_grave")
 
 
 @router.message(RuCommand("развод", "divorce"))
