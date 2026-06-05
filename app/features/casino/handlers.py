@@ -100,9 +100,7 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
         )
         return
 
-    await message.answer(
-        _render_result(result, who), reply_markup=casino_again(user.id, bet)
-    )
+    await message.answer(_render_result(result, who))
     await check_award_and_notify(message, session, user.id, user.first_name, user.username)
     await _award_casino_events(message, session, user, result)
 

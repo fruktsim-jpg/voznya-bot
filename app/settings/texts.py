@@ -187,7 +187,7 @@ DUEL_CHALLENGE = (
     "{target}, жми 👇 или «го» ({minutes} мин)"
 )
 DUEL_NO_PENDING = "⚔️ Тебя никто не звал (или уже поздно)."
-DUEL_TARGET_POOR = "⚔️ Не хватает на ставку: <b>{balance}</b>."
+DUEL_TARGET_POOR = "⚔️ {mention} нищий, у него только <b>{balance}</b>."
 DUEL_INITIATOR_POOR_NOW = "⚔️ У соперника пусто. Замес отменён."
 DUEL_RESULT_VARIANTS = [
     "⚔️ {winner} уложил {loser}. Банк <b>{bank}</b> 🏆",
@@ -225,7 +225,7 @@ TREASURE_SPAWN_VARIANTS = [
     "📦 Пакет с ешками! Первый на «снять» — победил 🏃",
     "📦 Кто-то оставил лут. Хватай: «снять» 🏃",
 ]
-TREASURE_NONE = "📦 Чемодана нет. Жди следующего."
+TREASURE_NONE = "📦 Закладки нет. Жди следующую."
 TREASURE_CLAIM_VARIANTS = [
     "📦 {mention} раскопал клад: +{reward}",
     "📦 {mention} нашёл чемодан: +{reward}",
