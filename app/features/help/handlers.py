@@ -13,7 +13,8 @@ from app.settings import texts
 router = Router(name="help")
 
 
-@router.message(RuCommand("помощь", "help", "старт", "start"))
+@router.message(RuCommand("помощь", "help", "старт", "start", "команды", "меню"))
+
 async def cmd_help(message: Message, session: AsyncSession, command_args: str) -> None:
     """Показывает список команд."""
     user = message.from_user

@@ -65,7 +65,8 @@ async def render_top(session: AsyncSession, page: int, user_id: int | None) -> t
     return ("\n\n".join(parts), total_pages)
 
 
-@router.message(RuCommand("топ", "top", "рейтинг", "лидеры"))
+@router.message(RuCommand("топ", "top", "рейтинг", "лидеры", "богачи", "богатые"))
+
 async def cmd_top(message: Message, session: AsyncSession, command_args: str) -> None:
     """Рейтинг богатства: /топ."""
     sender = message.from_user
@@ -151,7 +152,8 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
         )
 
 
-@router.message(RuCommand("семьи", "families", "браки"))
+@router.message(RuCommand("семьи", "families", "браки", "свадьбы"))
+
 async def cmd_families(message: Message, session: AsyncSession, command_args: str) -> None:
     """Рейтинг самых долгих семей: /семьи."""
     sender = message.from_user

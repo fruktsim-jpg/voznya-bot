@@ -9,8 +9,8 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
-from app.core.keyboards import quick_actions
 from app.core.money import money
+
 from app.core.responses import notify_and_cleanup
 from app.core.utils import format_cooldown, mention
 from app.features.achievements.service import check_award_and_notify
@@ -57,5 +57,7 @@ async def cmd_farm(message: Message, session: AsyncSession, command_args: str) -
         return
 
     who = mention(user.id, user.first_name, user.username)
-    await message.answer(render_farm_result(result, who), reply_markup=quick_actions())
+    await message.answer(render_farm_result(result, who))
     await check_award_and_notify(message, session, user.id, user.first_name, user.username)
+
+

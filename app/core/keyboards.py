@@ -8,20 +8,24 @@ Callback-данные имеют единый формат ``<feature>:<action>:
 from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def quick_actions() -> InlineKeyboardMarkup:
-    """Быстрые кнопки для частых действий."""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="💊 Ферма", callback_data="quick:farm")
-    builder.button(text="💰 Баланс", callback_data="quick:balance")
-    builder.button(text="🏅 Ачивки", callback_data="quick:achievements")
-    builder.adjust(3)
-    return builder.as_markup()
+
+def treasure_claim() -> InlineKeyboardMarkup:
+    """Кнопка «Забрать клад» для сообщения о появлении клада.
+
+    Кнопку видит весь чат; клад достаётся тому, кто нажмёт первым —
+    логика гонки уже обеспечена блокировкой строки в claim_treasure().
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Забрать клад", callback_data="treasure:claim")]
+        ]
+    )
 
 
 def duel_accept(pending_id: int) -> InlineKeyboardMarkup:
+
     """Кнопка принятия дуэли."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -42,18 +46,8 @@ def marriage_accept(pending_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def casino_again(user_id: int, bet: int) -> InlineKeyboardMarkup:
-    """Кнопка повтора ставки в казино + быстрые действия."""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🎰 Повторить ставку", callback_data=f"casino:repeat:{user_id}:{bet}")
-    builder.button(text="💰 Баланс", callback_data="quick:balance")
-    builder.button(text="👤 Профиль", callback_data="quick:profile")
-    builder.button(text="🏅 Ачивки", callback_data="quick:achievements")
-    builder.adjust(1, 3)
-    return builder.as_markup()
-
-
 def top_pagination(page: int, total_pages: int, user_id: int) -> InlineKeyboardMarkup:
+
     """Кнопки пагинации для топа."""
     buttons = []
     
@@ -78,16 +72,8 @@ def top_pagination(page: int, total_pages: int, user_id: int) -> InlineKeyboardM
     return InlineKeyboardMarkup(inline_keyboard=[buttons] if buttons else [])
 
 
-def achievements_full_button(user_id: int) -> InlineKeyboardMarkup:
-    """Кнопка для показа всех достижений."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📖 Все достижения", callback_data=f"ach:full:{user_id}")]
-        ]
-    )
-
-
 def divorce_confirm(user_id: int, partner_id: int) -> InlineKeyboardMarkup:
+
     """Кнопки подтверждения развода."""
     return InlineKeyboardMarkup(
         inline_keyboard=[

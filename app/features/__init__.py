@@ -27,8 +27,8 @@ def get_feature_routers() -> list[Router]:
     from app.features.para.handlers import router as para_router
     from app.features.pidor.handlers import router as pidor_router
     from app.features.profile.handlers import router as profile_router
-    from app.features.quick.handlers import router as quick_router
     from app.features.ratings.handlers import router as ratings_router
+
     from app.features.treasure.handlers import router as treasure_router
     from app.features.welcome.handlers import router as welcome_router
 
@@ -47,5 +47,6 @@ def get_feature_routers() -> list[Router]:
         achievements_router,
         help_router,
         admin_router,
-        quick_router,
     ]
+
+

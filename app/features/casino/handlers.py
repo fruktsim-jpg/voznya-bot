@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import random
 
-from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram import Router
+from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
-from app.core.keyboards import casino_again
 from app.core.money import money
+
 from app.core.responses import notify_and_cleanup
 from app.core.utils import format_cooldown, mention
 from app.features.achievements.service import check_award_and_notify, notify_specific
@@ -105,46 +105,3 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
     await _award_casino_events(message, session, user, result)
 
 
-@router.callback_query(F.data.startswith("casino:repeat:"))
-async def cb_casino_repeat(callback: CallbackQuery, session: AsyncSession) -> None:
-    """Повторяет ставку из кнопки (только для владельца кнопки)."""
-    parts = callback.data.split(":")
-    if len(parts) != 4:
-        await callback.answer()
-        return
-    owner_id, bet = int(parts[2]), int(parts[3])
-
-    if callback.from_user.id != owner_id:
-        await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
-        return
-
-    result = await play_casino(session, owner_id, bet)
-    who = mention(
-        callback.from_user.id, callback.from_user.first_name, callback.from_user.username
-    )
-
-    if result.status == "cooldown":
-        await callback.answer(
-            texts.COOLDOWN_NOTICE.format(time=format_cooldown(result.remaining)),
-            show_alert=True,
-        )
-        return
-    if result.status == "not_enough":
-        await callback.answer(
-            texts.CASINO_NOT_ENOUGH.format(balance=money(result.balance)), show_alert=True
-        )
-        return
-
-    if callback.message is not None:
-        await callback.message.answer(
-            _render_result(result, who), reply_markup=casino_again(owner_id, bet)
-        )
-        await check_award_and_notify(
-            callback.message,
-            session,
-            owner_id,
-            callback.from_user.first_name,
-            callback.from_user.username,
-        )
-        await _award_casino_events(callback.message, session, callback.from_user, result)
-    await callback.answer()

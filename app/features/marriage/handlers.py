@@ -47,8 +47,9 @@ async def _finish_marriage(
             await check_award_and_notify(answerable, session, u.user_id, u.first_name, u.username)
 
 
-@router.message(RuCommand("жениться", "marry", "брак", "свадьба", "предложение"))
+@router.message(RuCommand("жениться", "marry", "свадьба", "предложение"))
 async def cmd_marry(message: Message, session: AsyncSession, command_args: str) -> None:
+
     """Предложение руки и сердца: /жениться @username."""
     user = message.from_user
     if user is None:
@@ -166,8 +167,9 @@ async def cb_marry_decline(callback: CallbackQuery, session: AsyncSession) -> No
     await callback.answer()
 
 
-@router.message(RuCommand("брак", "marriage"))
+@router.message(RuCommand("брак", "marriage", "жена", "муж"))
 async def cmd_marriage_info(
+
     message: Message, session: AsyncSession, command_args: str
 ) -> None:
     """Информация о браке: /брак."""

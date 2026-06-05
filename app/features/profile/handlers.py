@@ -57,15 +57,16 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     text += (
         f"\n⚔️ Дуэли: {user.duels_won} побед / {user.duels_lost} поражений\n"
         f"🌾 Серия фермы: {user.farm_streak} (рекорд: {user.max_farm_streak})\n"
-        f"📦 Кладов найдено: {user.treasures_found}\n\n"
-        f"Полная статистика на сайте: {settings.website_url}/profile/{user.user_id}"
+        f"📦 Кладов найдено: {user.treasures_found}"
     )
     
     return text
 
 
-@router.message(RuCommand("профиль", "profile", "проф"))
+
+@router.message(RuCommand("профиль", "profile", "проф", "я", "мой профиль", "кто я"))
 async def profile_command(message: Message, session: AsyncSession, command_args: str) -> None:
+
     """Показывает профиль игрока с кнопкой на сайт."""
     
     from app.repositories.users import get_user

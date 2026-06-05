@@ -17,7 +17,8 @@ from app.settings.titles import get_title
 router = Router(name="balance")
 
 
-@router.message(RuCommand("баланс", "balance", "бал", "деньги", "бабки"))
+@router.message(RuCommand("баланс", "balance", "бал", "деньги", "мои деньги", "кошелёк", "кошелек", "бабки"))
+
 async def cmd_balance(message: Message, session: AsyncSession, command_args: str) -> None:
     """Показывает баланс ешек пользователя."""
     user = message.from_user

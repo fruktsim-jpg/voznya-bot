@@ -1,105 +1,12 @@
-"""Обработчики быстрых кнопок (💊 Ферма, 💰 Баланс, 👤 Профиль, 🏆 Топ).
+"""Модуль быстрых кнопок отключён.
 
-Каждое нажатие выполняет действие для нажавшего и отправляет новый ответ,
-чтобы кнопки могли использовать разные пользователи независимо.
+Навигационные inline-кнопки (💊 Ферма / 💰 Баланс / 👤 Профиль / 🏅 Ачивки)
+убраны в пользу чатовых команд и алиасов. Роутер оставлен пустым, чтобы не
+ломать возможные внешние импорты; в диспетчере он больше не регистрируется.
 """
 
 from __future__ import annotations
 
-from aiogram import F, Router
-from aiogram.types import CallbackQuery
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.keyboards import quick_actions
-from app.core.money import money
-from app.core.utils import format_cooldown, mention
-from app.features.achievements.service import check_award_and_notify, render_achievements_compact
-from app.features.farm.handlers import render_farm_result
-from app.features.farm.service import do_farm
-from app.features.profile.handlers import render_profile
-from app.repositories import users as users_repo
-from app.settings import texts
-from app.settings.titles import get_title
+from aiogram import Router
 
 router = Router(name="quick")
-
-
-@router.callback_query(F.data == "quick:farm")
-async def q_farm(callback: CallbackQuery, session: AsyncSession) -> None:
-    """Быстрая ферма."""
-    user = callback.from_user
-    result = await do_farm(session, user.id)
-    if result.on_cooldown:
-        await callback.answer(
-            texts.COOLDOWN_NOTICE.format(time=format_cooldown(result.remaining)),
-            show_alert=True,
-        )
-        return
-    who = mention(user.id, user.first_name, user.username)
-    if callback.message is not None:
-        await callback.message.answer(
-            render_farm_result(result, who), reply_markup=quick_actions()
-        )
-        await check_award_and_notify(
-            callback.message, session, user.id, user.first_name, user.username
-        )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "quick:balance")
-async def q_balance(callback: CallbackQuery, session: AsyncSession) -> None:
-    """Быстрый баланс."""
-    user = callback.from_user
-    record = await users_repo.get_user(session, user.id)
-    amount = record.balance if record else 0
-    earned = record.total_earned if record else 0
-    
-    text = texts.BALANCE.format(
-        mention=mention(user.id, user.first_name, user.username),
-        balance=money(amount),
-        title=get_title(earned).label,
-    )
-    
-    if callback.message is not None:
-        try:
-            # Пытаемся отредактировать существующее сообщение
-            await callback.message.edit_text(text)
-        except Exception:
-            # Если не удалось — создаём новое
-            await callback.message.answer(text)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "quick:profile")
-async def q_profile(callback: CallbackQuery, session: AsyncSession) -> None:
-    """Быстрый профиль."""
-    user = callback.from_user
-    record = await users_repo.get_user(session, user.id)
-    
-    if record is not None and callback.message is not None:
-        text = await render_profile(session, record)
-        try:
-            # Пытаемся отредактировать существующее сообщение
-            await callback.message.edit_text(text, reply_markup=quick_actions())
-        except Exception:
-            # Если не удалось — создаём новое
-            await callback.message.answer(text, reply_markup=quick_actions())
-    await callback.answer()
-
-
-@router.callback_query(F.data == "quick:achievements")
-async def q_achievements(callback: CallbackQuery, session: AsyncSession) -> None:
-    """Быстрые достижения."""
-    user = callback.from_user
-    
-    if callback.message is not None:
-        text = await render_achievements_compact(
-            session, user.id, user.first_name, user.username
-        )
-        try:
-            # Пытаемся отредактировать существующее сообщение
-            await callback.message.edit_text(text)
-        except Exception:
-            # Если не удалось — создаём новое
-            await callback.message.answer(text)
-    await callback.answer()

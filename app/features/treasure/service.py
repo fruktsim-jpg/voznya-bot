@@ -97,7 +97,14 @@ async def spawn_treasure(
         session.add(treasure)
         await session.flush()
 
-        sent = await bot.send_message(chat_id, random.choice(texts.TREASURE_SPAWN_VARIANTS))
+        from app.core.keyboards import treasure_claim
+
+        sent = await bot.send_message(
+            chat_id,
+            random.choice(texts.TREASURE_SPAWN_VARIANTS),
+            reply_markup=treasure_claim(),
+        )
+
         treasure.message_id = sent.message_id
         await session.commit()
     logger.info("Клад создан в чате %s (награда %s)", chat_id, reward)
