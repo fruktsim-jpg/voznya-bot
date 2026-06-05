@@ -23,6 +23,7 @@ def get_feature_routers() -> list[Router]:
     from app.features.duel.handlers import router as duel_router
     from app.features.farm.handlers import router as farm_router
     from app.features.help.handlers import router as help_router
+    from app.features.linking.handlers import router as linking_router
     from app.features.marriage.handlers import router as marriage_router
     from app.features.para.handlers import router as para_router
     from app.features.pidor.handlers import router as pidor_router
@@ -33,6 +34,9 @@ def get_feature_routers() -> list[Router]:
     from app.features.welcome.handlers import router as welcome_router
 
     return [
+        # Привязка сайта (/start link_<token>) — ДО help_router, который
+        # перехватывает любой /start.
+        linking_router,
         welcome_router,
         farm_router,
         casino_router,

@@ -4,11 +4,13 @@
 ``Base.metadata`` (нужно для Alembic и создания схемы).
 """
 
+from app.models.account_link import AccountLink
 from app.models.base import Base
 from app.models.cooldown import Cooldown
 from app.models.marriage import Marriage
 from app.models.message_daily import MessageDaily
 from app.models.nomination import DailyNomination
+from app.models.oidc_link_request import OidcLinkRequest
 from app.models.pending_action import PendingAction
 from app.models.scheduled_deletion import ScheduledDeletion
 from app.models.transaction import Transaction
@@ -28,4 +30,6 @@ __all__ = [
     "ScheduledDeletion",
     "UserAchievement",
     "MessageDaily",
+    "AccountLink",
+    "OidcLinkRequest",
 ]

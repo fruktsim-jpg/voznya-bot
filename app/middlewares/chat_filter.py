@@ -52,5 +52,28 @@ class ChatFilterMiddleware(BaseMiddleware):
         if is_private and user_id is not None and settings.is_admin(user_id):
             return await handler(event, data)
 
+        # Узкое исключение: deep-link привязки аккаунта сайта в личке.
+        # Пропускаем ТОЛЬКО стартовый payload «/start link_…», ничего больше —
+        # бот не открывается для произвольного общения в личных сообщениях.
+        if is_private and isinstance(event, Message) and _is_start_link(event.text):
+            return await handler(event, data)
+
         # Остальное игнорируем.
         return None
+
+
+def _is_start_link(text: str | None) -> bool:
+    """True для сообщения вида ``/start link_<token>`` (deep-link привязки)."""
+    if not text:
+        return False
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) != 2:
+        return False
+    command = parts[0]
+    if command.startswith("/"):
+        command = command[1:]
+    if "@" in command:
+        command = command.split("@", 1)[0]
+    return command.lower() == "start" and parts[1].strip().startswith("link_")
+
+
