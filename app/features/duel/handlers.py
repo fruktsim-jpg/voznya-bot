@@ -65,6 +65,16 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
             texts.DUEL_BAD_AMOUNT.format(min=balance.DUEL_MIN_BET, max=balance.DUEL_MAX_BET)
         )
         return
+    
+    # Проверка баланса цели ПЕРЕД отправкой вызова
+    if target.balance < amount:
+        await message.answer(
+            texts.DUEL_TARGET_POOR.format(
+                mention=mention(target.user_id, target.first_name, target.username),
+                balance=money(target.balance)
+            )
+        )
+        return
 
     result = await create_challenge(
         session, user.id, target.user_id, amount, message.chat.id
