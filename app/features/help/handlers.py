@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 from app.services.deletion import get_deletion_service
-from app.settings import balance, texts
+from app.settings import texts
 
 router = Router(name="help")
 
