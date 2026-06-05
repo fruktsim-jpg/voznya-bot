@@ -37,7 +37,11 @@ class Settings(BaseSettings):
 
     # Время
     timezone: str = "Europe/Amsterdam"
-    nomination_reset_hour: int = 12
+    # Час сброса номинаций (Пидор/Пара дня). 0 = смена в 00:00.
+    # Сам выбор остаётся «ленивым»: новый победитель определяется при первом
+    # вызове команды после полуночи, а не автоматически в 00:00.
+    nomination_reset_hour: int = 0
+
 
     # Логирование
     log_level: str = "INFO"

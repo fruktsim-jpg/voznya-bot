@@ -28,13 +28,21 @@ async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) ->
     loser = await session.get(User, result.loser_id)
     if winner is None or loser is None:
         return
+    winner_mention = mention(winner.user_id, winner.first_name, winner.username)
+    loser_mention = mention(loser.user_id, loser.first_name, loser.username)
+    # Шапка (кто кого + банк) фиксирована, последняя строка — случайная живая фраза.
+    phrase = random.choice(texts.DUEL_PHRASE_VARIANTS).format(
+        winner=winner_mention, loser=loser_mention
+    )
     await answerable.answer(
-        random.choice(texts.DUEL_RESULT_VARIANTS).format(
-            winner=mention(winner.user_id, winner.first_name, winner.username),
-            loser=mention(loser.user_id, loser.first_name, loser.username),
+        texts.DUEL_RESULT.format(
+            winner=winner_mention,
+            loser=loser_mention,
             bank=money(result.bank),
+            phrase=phrase,
         )
     )
+
     await check_award_and_notify(
         answerable, session, winner.user_id, winner.first_name, winner.username
     )
