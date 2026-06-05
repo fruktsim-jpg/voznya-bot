@@ -42,15 +42,55 @@ async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) ->
 
 @router.message(RuCommand("бой", "duel", "дуэль", "дуэлька"))
 async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -> None:
-    """Обрабатывает вызов на дуэль: /бой @username ставка."""
+    """Обрабатывает вызов на дуэль: /бой @username ставка ИЛИ /бой ставка (открытый)."""
     user = message.from_user
     if user is None:
         return
 
+    # Пробуем распарсить как "/бой @ник ставка"
     target = await resolve_target(session, message, command_args)
+    
+    # Если цель не найдена, проверяем формат "/бой ставка" (открытый вызов)
     if target is None:
-        await message.answer(texts.DUEL_USAGE)
+        # Пробуем распарсить как число
+        arg = command_args.split()[0] if command_args else ""
+        if not arg or len(arg) > 12 or not arg.lstrip("-").isdigit():
+            await message.answer(texts.DUEL_USAGE)
+            return
+        amount = int(arg)
+        if amount < balance.DUEL_MIN_BET or amount > balance.DUEL_MAX_BET:
+            await message.answer(
+                texts.DUEL_BAD_AMOUNT.format(min=balance.DUEL_MIN_BET, max=balance.DUEL_MAX_BET)
+            )
+            return
+        
+        # Открытый вызов (target_id = None)
+        result = await create_challenge(
+            session, user.id, None, amount, message.chat.id
+        )
+        
+        if result.status == "cooldown":
+            await notify_and_cleanup(
+                session,
+                message,
+                texts.COOLDOWN_NOTICE.format(time=format_cooldown(result.remaining)),
+            )
+            return
+        if result.status == "poor":
+            await message.answer(texts.DUEL_INITIATOR_POOR.format(balance=money(result.balance)))
+            return
+        
+        await message.answer(
+            texts.DUEL_OPEN_CHALLENGE.format(
+                initiator=mention(user.id, user.first_name, user.username),
+                amount=money(amount),
+                minutes=balance.DUEL_EXPIRE_MINUTES,
+            ),
+            reply_markup=duel_accept(result.pending_id),
+        )
         return
+    
+    # Вызов конкретному игроку
     if target.user_id == user.id:
         await message.answer(texts.DUEL_SELF)
         return

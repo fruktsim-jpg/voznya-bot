@@ -186,6 +186,10 @@ DUEL_CHALLENGE = (
     "⚔️ {initiator} зовёт {target} на замес. Ставка <b>{amount}</b>\n"
     "{target}, жми 👇 или «го» ({minutes} мин)"
 )
+DUEL_OPEN_CHALLENGE = (
+    "⚔️ {initiator} бросает вызов! Ставка <b>{amount}</b>\n"
+    "Любой может принять бой 👇 или «го» ({minutes} мин)"
+)
 DUEL_NO_PENDING = "⚔️ Тебя никто не звал (или уже поздно)."
 DUEL_TARGET_POOR = "⚔️ {mention} нищий, у него только <b>{balance}</b>."
 DUEL_INITIATOR_POOR_NOW = "⚔️ У соперника пусто. Замес отменён."
