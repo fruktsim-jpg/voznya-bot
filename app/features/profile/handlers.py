@@ -64,7 +64,7 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     return text
 
 
-@router.message(RuCommand("профиль", "profile"))
+@router.message(RuCommand("профиль", "profile", "проф"))
 async def profile_command(message: Message, session: AsyncSession, command_args: str) -> None:
     """Показывает профиль игрока с кнопкой на сайт."""
     
@@ -99,6 +99,6 @@ async def profile_command(message: Message, session: AsyncSession, command_args:
         session,
         user_id=user_tg.id,
         chat_id=message.chat.id,
-        message_id=sent.message_id,
-        delay_seconds=180
+        user_command_id=message.message_id,
+        bot_message_id=sent.message_id,
     )

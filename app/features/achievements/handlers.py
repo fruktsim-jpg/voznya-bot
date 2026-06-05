@@ -42,19 +42,18 @@ async def cmd_achievements(
 
     deletion = get_deletion_service()
     
-    # Отправляем компактные ачивки с кнопкой
+    # Отправляем компактные ачивки (без кнопки)
     sent = await message.answer(
-        await render_achievements_compact(session, user_id, first_name, username),
-        reply_markup=achievements_full_button(user_id)
+        await render_achievements_compact(session, user_id, first_name, username)
     )
     
-    # Автоудаление информационного сообщения через 3 минуты
+    # Автоудаление информационного сообщения
     await deletion.schedule_info_message(
         session,
         user_id=sender.id,
         chat_id=message.chat.id,
-        message_id=sent.message_id,
-        delay_seconds=180
+        user_command_id=message.message_id,
+        bot_message_id=sent.message_id,
     )
 
 

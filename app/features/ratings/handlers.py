@@ -81,14 +81,14 @@ async def cmd_top(message: Message, session: AsyncSession, command_args: str) ->
     else:
         sent = await message.answer(text)
     
-    # Автоудаление информационного сообщения через 3 минуты
+    # Автоудаление информационного сообщения
     if user_id:
         await deletion.schedule_info_message(
             session,
             user_id=user_id,
             chat_id=message.chat.id,
-            message_id=sent.message_id,
-            delay_seconds=180
+            user_command_id=message.message_id,
+            bot_message_id=sent.message_id,
         )
 
 
@@ -140,14 +140,14 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
     )
     sent = await message.answer(texts.WEEKLY_HEADER.format(rows=rows))
     
-    # Автоудаление информационного сообщения через 3 минуты
+    # Автоудаление информационного сообщения
     if user_id:
         await deletion.schedule_info_message(
             session,
             user_id=user_id,
             chat_id=message.chat.id,
-            message_id=sent.message_id,
-            delay_seconds=180
+            user_command_id=message.message_id,
+            bot_message_id=sent.message_id,
         )
 
 
@@ -181,12 +181,12 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
         )
     sent = await message.answer(texts.TOP_FAMILIES_HEADER.format(rows="\n".join(lines)))
     
-    # Автоудаление информационного сообщения через 3 минуты
+    # Автоудаление информационного сообщения
     if user_id:
         await deletion.schedule_info_message(
             session,
             user_id=user_id,
             chat_id=message.chat.id,
-            message_id=sent.message_id,
-            delay_seconds=180
+            user_command_id=message.message_id,
+            bot_message_id=sent.message_id,
         )

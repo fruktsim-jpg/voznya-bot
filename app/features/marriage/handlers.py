@@ -199,8 +199,8 @@ async def cmd_marriage_info(
         session,
         user_id=user.id,
         chat_id=message.chat.id,
-        message_id=sent.message_id,
-        delay_seconds=180
+        user_command_id=message.message_id,
+        bot_message_id=sent.message_id,
     )
 
     # Легендарка «Любовь до гроба»: 30 дней в браке.
@@ -212,9 +212,9 @@ async def cmd_marriage_info(
         await award_specific(session, partner_id, "love_grave")
 
 
-@router.message(RuCommand("развод", "divorce", "развестись", "разрыв"))
+@router.message(RuCommand("развод", "divorce", "развестись", "разрыв", "расстаться"))
 async def cmd_divorce(message: Message, session: AsyncSession, command_args: str) -> None:
-    """Развод (мгновенный, без подтверждения): /развод."""
+    """Развод с подтверждением: /развод."""
     user = message.from_user
     if user is None:
         return
@@ -232,13 +232,72 @@ async def cmd_divorce(message: Message, session: AsyncSession, command_args: str
     partner_id = (
         marriage.user_id_2 if marriage.user_id_1 == user.id else marriage.user_id_1
     )
+    partner = await session.get(User, partner_id)
+    partner_name = partner.display_name() if partner else "партнёр"
 
-    # Разводим сразу
-    marriage.divorced_at = now_utc()
-
+    # Показываем подтверждение
+    from app.core.keyboards import divorce_confirm
     await message.answer(
-        texts.DIVORCE_DONE.format(
-            first=mention(user.id, user.first_name, user.username),
-            second=await _mention_of(session, partner_id),
-        )
+        texts.DIVORCE_CONFIRM.format(partner=partner_name),
+        reply_markup=divorce_confirm(user.id, partner_id)
     )
+
+
+@router.callback_query(F.data.startswith("divorce:confirm:"))
+async def cb_divorce_confirm(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Подтверждение развода."""
+    parts = callback.data.split(":")
+    if len(parts) != 4:
+        await callback.answer()
+        return
+    
+    user_id = int(parts[2])
+    partner_id = int(parts[3])
+    
+    # Защита: только инициатор
+    if callback.from_user.id != user_id:
+        await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
+        return
+    
+    marriage = await service.get_marriage(session, user_id)
+    if marriage is None:
+        await callback.answer("Брак уже расторгнут", show_alert=True)
+        return
+    
+    # Разводим
+    marriage.divorced_at = now_utc()
+    
+    if callback.message:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:  # noqa: BLE001
+            pass
+        await callback.message.answer(
+            texts.DIVORCE_DONE.format(
+                first=mention(user_id, callback.from_user.first_name, callback.from_user.username),
+                second=await _mention_of(session, partner_id),
+            )
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("divorce:cancel:"))
+async def cb_divorce_cancel(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Отмена развода."""
+    parts = callback.data.split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    
+    user_id = int(parts[2])
+    
+    if callback.from_user.id != user_id:
+        await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
+        return
+    
+    if callback.message:
+        try:
+            await callback.message.edit_text("❌ Развод отменён")
+        except Exception:  # noqa: BLE001
+            pass
+    await callback.answer()

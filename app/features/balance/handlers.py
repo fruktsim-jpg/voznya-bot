@@ -45,11 +45,11 @@ async def cmd_balance(message: Message, session: AsyncSession, command_args: str
     # Отправляем баланс
     sent = await message.answer(balance_text)
     
-    # Автоудаление информационного сообщения через 3 минуты
+    # Автоудаление информационного сообщения
     await deletion.schedule_info_message(
         session,
         user_id=user.id,
         chat_id=message.chat.id,
-        message_id=sent.message_id,
-        delay_seconds=180
+        user_command_id=message.message_id,
+        bot_message_id=sent.message_id,
     )

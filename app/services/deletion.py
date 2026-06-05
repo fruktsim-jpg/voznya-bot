@@ -36,8 +36,8 @@ class DeletionService:
         self.bot = bot
         self.sessionmaker = sessionmaker
         self.scheduler = scheduler
-        # Кэш последних информационных сообщений: {(user_id, chat_id): message_id}
-        self._last_info_messages: dict[tuple[int, int], int] = {}
+        # Кэш последних информационных сообщений: {(user_id, chat_id): (user_cmd_id, bot_msg_id)}
+        self._last_info_messages: dict[tuple[int, int], tuple[int, int]] = {}
 
     async def schedule(
         self,
@@ -97,30 +97,33 @@ class DeletionService:
         session: AsyncSession,
         user_id: int,
         chat_id: int,
-        message_id: int,
-        delay_seconds: float = 180,
+        user_command_id: int,
+        bot_message_id: int,
     ) -> None:
         """Планирует удаление информационного сообщения.
         
-        Автоматически удаляет предыдущее информационное сообщение
-        этого пользователя в этом чате.
+        Автоматически удаляет предыдущую пару (команда + ответ)
+        этого пользователя в этом чате. Удаление только по замещению,
+        НЕ по таймеру.
         """
-        # Удаляем предыдущее сообщение пользователя
         key = (user_id, chat_id)
-        prev_message_id = self._last_info_messages.get(key)
+        prev_pair = self._last_info_messages.get(key)
         
-        if prev_message_id and prev_message_id != message_id:
+        if prev_pair:
+            prev_user_cmd, prev_bot_msg = prev_pair
+            # Удаляем предыдущую команду пользователя
             try:
-                await self.bot.delete_message(chat_id=chat_id, message_id=prev_message_id)
+                await self.bot.delete_message(chat_id=chat_id, message_id=prev_user_cmd)
             except Exception:  # noqa: BLE001
-                # Сообщение уже удалено или недоступно
+                pass
+            # Удаляем предыдущий ответ бота
+            try:
+                await self.bot.delete_message(chat_id=chat_id, message_id=prev_bot_msg)
+            except Exception:  # noqa: BLE001
                 pass
         
-        # Сохраняем новое сообщение
-        self._last_info_messages[key] = message_id
-        
-        # Планируем удаление через delay_seconds
-        await self.schedule(session, chat_id, message_id, delay_seconds)
+        # Сохраняем новую пару
+        self._last_info_messages[key] = (user_command_id, bot_message_id)
 
     async def restore_pending(self) -> None:
         """Восстанавливает незавершённые удаления после рестарта бота."""

@@ -18,7 +18,7 @@ from app.settings import texts
 router = Router(name="treasure")
 
 
-@router.message(RuCommand("снять", "claim"))
+@router.message(RuCommand("снять", "claim", "клад", "забрать", "открыть"))
 async def cmd_claim(message: Message, session: AsyncSession, command_args: str) -> None:
     """Обрабатывает команду /снять."""
     user = message.from_user

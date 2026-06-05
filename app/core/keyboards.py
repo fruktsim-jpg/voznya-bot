@@ -85,3 +85,21 @@ def achievements_full_button(user_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="📖 Все достижения", callback_data=f"ach:full:{user_id}")]
         ]
     )
+
+
+def divorce_confirm(user_id: int, partner_id: int) -> InlineKeyboardMarkup:
+    """Кнопки подтверждения развода."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💔 Да, расстаться",
+                    callback_data=f"divorce:confirm:{user_id}:{partner_id}"
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отмена",
+                    callback_data=f"divorce:cancel:{user_id}"
+                )
+            ]
+        ]
+    )
