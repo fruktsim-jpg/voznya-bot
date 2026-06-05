@@ -30,6 +30,8 @@ from app.middlewares import (
     UserTrackingMiddleware,
 )
 from app.services.deletion import init_deletion_service
+from app.services.link_maintenance import setup_link_maintenance
+
 
 logger = get_logger(__name__)
 
@@ -94,6 +96,10 @@ async def on_startup(bot: Bot) -> None:
 
     # Планируем появления кладов.
     setup_treasure_scheduler(scheduler, bot, sessionmaker, settings.chat_id)
+
+    # Периодически подчищаем протухшие запросы привязки сайта (OIDC).
+    setup_link_maintenance(scheduler, sessionmaker)
+
 
     try:
         await bot.set_my_commands(BOT_COMMANDS)
