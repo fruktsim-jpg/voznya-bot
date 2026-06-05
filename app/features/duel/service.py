@@ -56,11 +56,11 @@ class DuelResult:
 async def create_challenge(
     session: AsyncSession,
     initiator_id: int,
-    target_id: int,
+    target_id: int | None,
     amount: int,
     chat_id: int,
 ) -> ChallengeResult:
-    """Создаёт вызов на дуэль от инициатора к цели."""
+    """Создаёт вызов на дуэль от инициатора к цели (или открытый вызов, если target_id=None)."""
     remaining = await cooldowns.get_remaining(session, initiator_id, "duel")
     if remaining > 0:
         return ChallengeResult(status="cooldown", remaining=remaining)
@@ -92,17 +92,24 @@ async def accept_challenge(
 ) -> DuelResult:
     """Принимает вызов на дуэль и проводит бой.
 
-    Если ``pending_id`` указан (приём через кнопку), берётся конкретный вызов
-    и проверяется, что нажавший — именно тот, кого вызвали.
+    Если ``pending_id`` указан (приём через кнопку), берётся конкретный вызов.
+    Для открытых вызовов (target_id=NULL) принять может любой, кроме инициатора.
+    Для персональных вызовов проверяется, что нажавший — именно тот, кого вызвали.
     """
     now = now_utc()
     if pending_id is not None:
         pending = await session.get(PendingAction, pending_id, with_for_update=True)
         if pending is None or pending.action_type != TYPE_DUEL or pending.status != STATUS_PENDING:
             return DuelResult(status="no_pending")
-        if pending.target_id != confirmer_id:
+        # Для открытых вызовов (target_id=NULL) проверяем, что принимающий не инициатор
+        if pending.target_id is None:
+            if pending.initiator_id == confirmer_id:
+                return DuelResult(status="not_target")
+        # Для персональных вызовов проверяем, что принимающий — именно цель
+        elif pending.target_id != confirmer_id:
             return DuelResult(status="not_target")
     else:
+        # Команда /го ищет последний вызов для этого пользователя
         result = await session.execute(
             select(PendingAction)
             .where(

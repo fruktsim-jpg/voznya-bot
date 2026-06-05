@@ -38,7 +38,8 @@ class PendingAction(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     action_type: Mapped[str] = mapped_column(String(16), nullable=False)
     initiator_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
-    target_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    # target_id может быть NULL для открытых вызовов на дуэль (любой может принять)
+    target_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     # Сумма ставки (для дуэли); для остальных — NULL.
     amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
