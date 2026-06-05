@@ -36,6 +36,8 @@ class DeletionService:
         self.bot = bot
         self.sessionmaker = sessionmaker
         self.scheduler = scheduler
+        # Кэш последних информационных сообщений: {(user_id, chat_id): message_id}
+        self._last_info_messages: dict[tuple[int, int], int] = {}
 
     async def schedule(
         self,
@@ -89,6 +91,36 @@ class DeletionService:
             if record is not None:
                 record.done = True
                 await session.commit()
+
+    async def schedule_info_message(
+        self,
+        session: AsyncSession,
+        user_id: int,
+        chat_id: int,
+        message_id: int,
+        delay_seconds: float = 180,
+    ) -> None:
+        """Планирует удаление информационного сообщения.
+        
+        Автоматически удаляет предыдущее информационное сообщение
+        этого пользователя в этом чате.
+        """
+        # Удаляем предыдущее сообщение пользователя
+        key = (user_id, chat_id)
+        prev_message_id = self._last_info_messages.get(key)
+        
+        if prev_message_id and prev_message_id != message_id:
+            try:
+                await self.bot.delete_message(chat_id=chat_id, message_id=prev_message_id)
+            except Exception:  # noqa: BLE001
+                # Сообщение уже удалено или недоступно
+                pass
+        
+        # Сохраняем новое сообщение
+        self._last_info_messages[key] = message_id
+        
+        # Планируем удаление через delay_seconds
+        await self.schedule(session, chat_id, message_id, delay_seconds)
 
     async def restore_pending(self) -> None:
         """Восстанавливает незавершённые удаления после рестарта бота."""

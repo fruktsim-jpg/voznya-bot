@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.filters import RuCommand
 from app.core.keyboards import top_pagination
 from app.core.money import money
-from app.core.utils import format_marriage_duration, mention, place_marker
+from app.core.utils import format_marriage_duration_days, mention, place_marker
 from app.models import User
 from app.repositories import economy as economy_repo
 from app.repositories import marriages as marriages_repo
@@ -75,17 +75,21 @@ async def cmd_top(message: Message, session: AsyncSession, command_args: str) ->
     
     deletion = get_deletion_service()
     
-    # Удаляем команду пользователя через 5 сек
-    await deletion.schedule(session, message.chat.id, message.message_id, 5)
-    
     # Добавить кнопки только если больше 1 страницы
     if total_pages > 1 and user_id:
         sent = await message.answer(text, reply_markup=top_pagination(1, total_pages, user_id))
     else:
         sent = await message.answer(text)
     
-    # Удаляем топ через 5 минут
-    await deletion.schedule(session, sent.chat.id, sent.message_id, 300)
+    # Автоудаление информационного сообщения через 3 минуты
+    if user_id:
+        await deletion.schedule_info_message(
+            session,
+            user_id=user_id,
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            delay_seconds=180
+        )
 
 
 @router.callback_query(F.data.startswith("top:page:"))
@@ -113,14 +117,14 @@ async def cb_top_page(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.message(RuCommand("топнеделя", "weekly"))
 async def cmd_weekly(message: Message, session: AsyncSession, command_args: str) -> None:
     """Топ по заработку за неделю: /топнеделя."""
+    sender = message.from_user
+    user_id = sender.id if sender else None
+    
     top = await economy_repo.weekly_top_earners(
         session, balance.WEEKLY_DAYS, balance.TOP_WEEKLY_LIMIT
     )
     
     deletion = get_deletion_service()
-    
-    # Удаляем команду пользователя через 5 сек
-    await deletion.schedule(session, message.chat.id, message.message_id, 5)
     
     if not top:
         await message.answer(texts.WEEKLY_EMPTY)
@@ -136,21 +140,28 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
     )
     sent = await message.answer(texts.WEEKLY_HEADER.format(rows=rows))
     
-    # Удаляем топ через 5 минут
-    await deletion.schedule(session, sent.chat.id, sent.message_id, 300)
+    # Автоудаление информационного сообщения через 3 минуты
+    if user_id:
+        await deletion.schedule_info_message(
+            session,
+            user_id=user_id,
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            delay_seconds=180
+        )
 
 
 @router.message(RuCommand("семьи", "families", "браки"))
 async def cmd_families(message: Message, session: AsyncSession, command_args: str) -> None:
     """Рейтинг самых долгих семей: /семьи."""
+    sender = message.from_user
+    user_id = sender.id if sender else None
+    
     marriages = await marriages_repo.top_longest_marriages(
         session, balance.TOP_FAMILIES_LIMIT
     )
     
     deletion = get_deletion_service()
-    
-    # Удаляем команду пользователя через 5 сек
-    await deletion.schedule(session, message.chat.id, message.message_id, 5)
     
     if not marriages:
         await message.answer(texts.TOP_FAMILIES_EMPTY)
@@ -165,10 +176,17 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
                 place=place_marker(i + 1),
                 first=mention(u1.user_id, u1.first_name, u1.username) if u1 else "?",
                 second=mention(u2.user_id, u2.first_name, u2.username) if u2 else "?",
-                duration=format_marriage_duration(m.married_at),
+                duration=format_marriage_duration_days(m.married_at),
             )
         )
     sent = await message.answer(texts.TOP_FAMILIES_HEADER.format(rows="\n".join(lines)))
     
-    # Удаляем топ через 5 минут
-    await deletion.schedule(session, sent.chat.id, sent.message_id, 300)
+    # Автоудаление информационного сообщения через 3 минуты
+    if user_id:
+        await deletion.schedule_info_message(
+            session,
+            user_id=user_id,
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            delay_seconds=180
+        )

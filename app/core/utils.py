@@ -90,6 +90,17 @@ def format_marriage_duration(since: datetime, until: datetime | None = None) -> 
     return f"{days} дн. {hours} ч. {minutes} мин."
 
 
+def format_marriage_duration_days(since: datetime, until: datetime | None = None) -> str:
+    """Форматирует длительность брака только в днях."""
+    start = to_local(since)
+    end = to_local(until) if until is not None else now_local()
+    delta = end - start
+    if delta.total_seconds() < 0:
+        delta = timedelta(0)
+    days = delta.days
+    return f"{days} дн." if days > 0 else "менее дня"
+
+
 def escape(text: str | None) -> str:
     """Экранирует текст для HTML-режима Telegram."""
     if not text:

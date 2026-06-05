@@ -42,15 +42,20 @@ async def cmd_achievements(
 
     deletion = get_deletion_service()
     
-    # Удаляем команду пользователя через 5 сек
-    await deletion.schedule(session, message.chat.id, message.message_id, 5)
-    
-    # Отправляем компактные ачивки с кнопкой и удаляем через 5 минут
+    # Отправляем компактные ачивки с кнопкой
     sent = await message.answer(
         await render_achievements_compact(session, user_id, first_name, username),
         reply_markup=achievements_full_button(user_id)
     )
-    await deletion.schedule(session, sent.chat.id, sent.message_id, 300)
+    
+    # Автоудаление информационного сообщения через 3 минуты
+    await deletion.schedule_info_message(
+        session,
+        user_id=sender.id,
+        chat_id=message.chat.id,
+        message_id=sent.message_id,
+        delay_seconds=180
+    )
 
 
 @router.callback_query(F.data.startswith("ach:full:"))

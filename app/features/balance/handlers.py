@@ -27,18 +27,29 @@ async def cmd_balance(message: Message, session: AsyncSession, command_args: str
     record = await users_repo.get_user(session, user.id)
     amount = record.balance if record else 0
     earned = record.total_earned if record else 0
+    rank = await users_repo.get_user_rank_by_balance(session, user.id)
     
     deletion = get_deletion_service()
     
-    # Удаляем команду пользователя через 5 сек
-    await deletion.schedule(session, message.chat.id, message.message_id, 5)
-    
-    # Отправляем баланс и удаляем через 2 минуты
-    sent = await message.answer(
-        texts.BALANCE.format(
-            mention=mention(user.id, user.first_name, user.username),
-            balance=money(amount),
-            title=get_title(earned).label,
-        )
+    # Формируем текст баланса
+    balance_text = texts.BALANCE.format(
+        mention=mention(user.id, user.first_name, user.username),
+        balance=money(amount),
+        title=get_title(earned).label,
     )
-    await deletion.schedule(session, sent.chat.id, sent.message_id, 120)
+    
+    # Добавляем место в топе
+    if rank:
+        balance_text += f"\n🏆 Место в топе: #{rank}"
+    
+    # Отправляем баланс
+    sent = await message.answer(balance_text)
+    
+    # Автоудаление информационного сообщения через 3 минуты
+    await deletion.schedule_info_message(
+        session,
+        user_id=user.id,
+        chat_id=message.chat.id,
+        message_id=sent.message_id,
+        delay_seconds=180
+    )

@@ -11,7 +11,7 @@ from datetime import timedelta
 from app.core.filters import RuCommand
 from app.core.keyboards import marriage_accept
 from app.core.targets import resolve_target
-from app.core.utils import format_marriage_duration, mention, now_utc
+from app.core.utils import format_marriage_duration_days, mention, now_utc
 from app.features.achievements.service import (
     award_specific,
     check_award_and_notify,
@@ -184,12 +184,23 @@ async def cmd_marriage_info(
         )
         return
 
-    await message.answer(
+    sent = await message.answer(
         texts.MARRIAGE_INFO.format(
             first=await _mention_of(session, marriage.user_id_1),
             second=await _mention_of(session, marriage.user_id_2),
-            duration=format_marriage_duration(marriage.married_at),
+            duration=format_marriage_duration_days(marriage.married_at),
         )
+    )
+    
+    # Автоудаление информационного сообщения
+    from app.services.deletion import get_deletion_service
+    deletion = get_deletion_service()
+    await deletion.schedule_info_message(
+        session,
+        user_id=user.id,
+        chat_id=message.chat.id,
+        message_id=sent.message_id,
+        delay_seconds=180
     )
 
     # Легендарка «Любовь до гроба»: 30 дней в браке.

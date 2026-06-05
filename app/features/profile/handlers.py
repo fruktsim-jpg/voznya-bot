@@ -26,7 +26,7 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     next_title = get_next_title(user.total_earned)
     
     text = (
-        f"👤 <b>Профиль игрока</b>\n\n"
+        f"👤 <b>Профиль — {user.display_name()}</b>\n\n"
         f"💰 Баланс: <b>{user.balance:,}</b> ешек\n"
         f"📈 Заработано: <b>{user.total_earned:,}</b> ешек\n"
         f"🏆 Титул: {title.emoji} <b>{title.name}</b>\n"
@@ -90,4 +90,15 @@ async def profile_command(message: Message, session: AsyncSession, command_args:
         ]
     )
     
-    await message.answer(text, reply_markup=keyboard)
+    sent = await message.answer(text, reply_markup=keyboard)
+    
+    # Автоудаление информационного сообщения
+    from app.services.deletion import get_deletion_service
+    deletion = get_deletion_service()
+    await deletion.schedule_info_message(
+        session,
+        user_id=user_tg.id,
+        chat_id=message.chat.id,
+        message_id=sent.message_id,
+        delay_seconds=180
+    )
