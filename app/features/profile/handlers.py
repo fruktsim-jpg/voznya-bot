@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from aiogram import Router
-from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,9 +64,10 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     return text
 
 
-@router.message(Command("profile"), RuCommand("профиль"))
-async def profile_command(message: Message, session: AsyncSession) -> None:
+@router.message(RuCommand("профиль", "profile"))
+async def profile_command(message: Message, session: AsyncSession, command_args: str) -> None:
     """Показывает профиль игрока с кнопкой на сайт."""
+    
     from app.repositories.users import get_user
     
     user_tg = message.from_user

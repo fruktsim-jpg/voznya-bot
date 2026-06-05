@@ -1,0 +1,21 @@
+[1mdiff --git a/app/features/profile/handlers.py b/app/features/profile/handlers.py[m
+[1mindex 0a17e90..93b7f06 100644[m
+[1m--- a/app/features/profile/handlers.py[m
+[1m+++ b/app/features/profile/handlers.py[m
+[36m@@ -3,7 +3,6 @@[m
+ from __future__ import annotations[m
+ [m
+ from aiogram import Router[m
+[31m-from aiogram.filters import Command[m
+ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message[m
+ from sqlalchemy.ext.asyncio import AsyncSession[m
+ [m
+[36m@@ -65,7 +64,7 @@[m [masync def render_profile(session: AsyncSession, user: User) -> str:[m
+     return text[m
+ [m
+ [m
+[31m-@router.message(Command("profile"), RuCommand("профиль"))[m
+[32m+[m[32m@router.message(RuCommand("профиль", "profile"))[m
+ async def profile_command(message: Message, session: AsyncSession) -> None:[m
+     """Показывает профиль игрока с кнопкой на сайт."""[m
+     from app.repositories.users import get_user[m
