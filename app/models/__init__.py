@@ -8,6 +8,10 @@ from app.models.account_link import AccountLink
 from app.models.admin_role import AdminRole
 from app.models.audit_log import AuditLog
 from app.models.base import Base
+from app.models.combot_activity_heatmap import CombotActivityHeatmap
+from app.models.combot_daily_stats import CombotDailyStats
+from app.models.combot_import_run import CombotImportRun
+from app.models.combot_user_stats import CombotUserStats
 from app.models.cooldown import Cooldown
 from app.models.gift_transaction import GiftTransaction
 from app.models.inventory import Inventory
@@ -53,6 +57,10 @@ __all__ = [
     "ShopOffer",
     "PurchaseHistory",
     "GiftTransaction",
+    "CombotUserStats",
+    "CombotDailyStats",
+    "CombotActivityHeatmap",
+    "CombotImportRun",
 ]
 
 
