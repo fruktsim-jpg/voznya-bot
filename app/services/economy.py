@@ -34,22 +34,18 @@ class InsufficientFunds(Exception):
         super().__init__(f"Недостаточно средств: есть {balance}, нужно {requested}")
 
 
-async def change_balance(
+async def _apply_balance_change(
     session: AsyncSession,
     user_id: int,
     amount: int,
     reason: str,
-    meta: dict | None = None,
-    allow_negative: bool = False,
-) -> User:
-    """Изменяет баланс пользователя на ``amount`` (+ начисление, − списание).
+    meta: dict | None,
+    allow_negative: bool,
+) -> tuple[User, Transaction]:
+    """Ядро изменения баланса: блокировка, проверка, проводка в леджер.
 
-    Блокирует строку пользователя на время операции, чтобы исключить гонки
-    (например, двойное начисление при быстром повторе команды).
-
-    :param allow_negative: если False, баланс не может уйти в минус — будет
-        брошено :class:`InsufficientFunds`.
-    :raises InsufficientFunds: при недостатке средств и ``allow_negative=False``.
+    Возвращает пользователя и созданную (но ещё не сброшенную) транзакцию.
+    Используется обёртками :func:`change_balance` и :func:`change_balance_tx`.
     """
     user = await session.get(User, user_id, with_for_update=True)
     if user is None:
@@ -74,14 +70,59 @@ async def change_balance(
         elif amount < 0:
             user.total_spent += -amount
 
-    session.add(
-        Transaction(user_id=user_id, amount=amount, reason=reason, meta=meta)
-    )
+    tx = Transaction(user_id=user_id, amount=amount, reason=reason, meta=meta)
+    session.add(tx)
     logger.debug(
         "balance change: user=%s amount=%s reason=%s -> balance=%s",
         user_id, amount, reason, user.balance,
     )
+    return user, tx
+
+
+async def change_balance(
+    session: AsyncSession,
+    user_id: int,
+    amount: int,
+    reason: str,
+    meta: dict | None = None,
+    allow_negative: bool = False,
+) -> User:
+    """Изменяет баланс пользователя на ``amount`` (+ начисление, − списание).
+
+    Блокирует строку пользователя на время операции, чтобы исключить гонки
+    (например, двойное начисление при быстром повторе команды).
+
+    :param allow_negative: если False, баланс не может уйти в минус — будет
+        брошено :class:`InsufficientFunds`.
+    :raises InsufficientFunds: при недостатке средств и ``allow_negative=False``.
+    """
+    user, _ = await _apply_balance_change(
+        session, user_id, amount, reason, meta, allow_negative
+    )
     return user
+
+
+async def change_balance_tx(
+    session: AsyncSession,
+    user_id: int,
+    amount: int,
+    reason: str,
+    meta: dict | None = None,
+    allow_negative: bool = False,
+) -> Transaction:
+    """Как :func:`change_balance`, но возвращает саму проводку.
+
+    Делает ``session.flush()``, чтобы у транзакции был проставлен ``id`` — его
+    можно связать с другими леджерами (например, ``case_openings.transaction_id``
+    или ``purchase_history.transaction_id``). Семантика и блокировки идентичны
+    ``change_balance``; существующие вызовы не затрагиваются.
+    """
+    _, tx = await _apply_balance_change(
+        session, user_id, amount, reason, meta, allow_negative
+    )
+    await session.flush()
+    return tx
+
 
 
 async def get_balance(session: AsyncSession, user_id: int) -> int:

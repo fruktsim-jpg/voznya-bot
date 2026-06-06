@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Index,
@@ -25,6 +26,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -76,6 +78,13 @@ class InventoryItem(Base):
     # Специфика предмета без новых колонок: {"color": "#ff0", "image": "...",
     # "text": "Легенда"} и т.п.
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # Эталонная (оценочная) стоимость предмета в ешках. Справочное поле для
+    # аналитики: позволяет считать ПОЛНЫЙ EV кейсов (валюта + предметы) и
+    # оценивать предметные награды/подарки. NULL = предмет не оценён (в EV не
+    # участвует). Экономику напрямую НЕ трогает — это не цена покупки.
+    ref_value: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
 
     # Лимитированность: is_limited + max_supply (NULL = безлимит). Сколько уже
     # выдано — считается по inventory/inventory_history, здесь не дублируем.

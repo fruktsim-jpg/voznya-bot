@@ -39,8 +39,9 @@ from app.models import CaseOpening, CaseReward, Inventory, InventoryItem, User
 from app.models.case_reward import REWARD_KINDS_V1
 
 from app.repositories import cases as cases_repo
-from app.services.economy import change_balance
+from app.services.economy import change_balance_tx
 from app.services.inventory_grant import consume_item
+
 
 
 @dataclass(frozen=True)
@@ -168,15 +169,20 @@ async def open_case(
                 f"key consume failed after pre-flight for case '{case_item_code}'"
             )
 
-    # 4b. Списать ешки за открытие (через экономическое ядро).
+    # 4b. Списать ешки за открытие (через экономическое ядро). Сохраняем id
+    # проводки, чтобы связать открытие с его списанием (case_openings.
+    # transaction_id) — точный per-open burn и сверка по леджеру.
+    open_transaction_id: int | None = None
     if needs_currency:
-        await change_balance(
+        tx = await change_balance_tx(
             session,
             user_id,
             -case.open_cost_amount,
             reason=EVENT_PURCHASE,
             meta={"source": "case_open", "case": case.item_code},
         )
+        open_transaction_id = tx.id
+
 
     # 4c. Инкремент лимита выпадения (для лимиток), безопасно при гонках.
     if reward.max_global_supply is not None:
@@ -211,8 +217,10 @@ async def open_case(
             qty=result.qty,
             roll=roll,
             weight_snapshot={"total": total_weight, "rewards": snapshot},
+            transaction_id=open_transaction_id,
         )
     )
+
 
     # Имя/редкость предмета-награды для красивого ответа (best-effort).
     reward_item_name = None
