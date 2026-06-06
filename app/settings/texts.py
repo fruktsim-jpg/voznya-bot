@@ -499,3 +499,40 @@ ADMIN_INFO = (
     "⚔️ {wins}W/{losses}L · 📦 {treasures} · 💊 {farms} · 🎰 {casino}"
 )
 ADMIN_TREASURE_DONE = "✅ Чемодан подкинут."
+
+
+# --- Кейсы -------------------------------------------------------------------
+CASES_EMPTY = "🎁 <b>Кейсов сейчас нет.</b>\nЗаглядывай позже — добавим."
+
+CASES_HEADER = "🎁 <b>Кейсы</b>\nВыбери кейс командой <code>/кейс код</code>:"
+
+# Строка кейса в списке: «🎁 Название — 100 ешек (у тебя: 2)».
+CASES_ROW = "🎁 <b>{name}</b> — {cost}{owned}"
+CASES_ROW_FREE = "бесплатно"
+CASES_ROW_OWNED = " (у тебя: {count})"
+
+CASE_NOT_FOUND = "🤷 Такого кейса нет. Список — <code>/кейсы</code>."
+
+# Карточка одного кейса: описание + дроп-лист с шансами.
+CASE_CARD_HEADER = "🎁 <b>{name}</b>\n{description}\n\n💵 Открытие: {cost}\n📦 Содержимое:"
+CASE_CARD_ROW = "• {label} — <b>{chance}</b>"
+CASE_CARD_FOOTER = "\nУ тебя кейсов: <b>{count}</b>"
+
+CASE_USAGE = "Использование: <code>/кейс код</code>. Список — <code>/кейсы</code>."
+CASE_OPEN_USAGE = "Использование: <code>/открыть код</code>."
+
+# Результаты открытия.
+CASE_OPEN_NO_KEY = "🚫 У тебя нет этого кейса. Сначала добудь его."
+CASE_OPEN_NOT_ENOUGH = "💸 Не хватает ешек на открытие «{name}»."
+CASE_OPEN_INACTIVE = "⏳ Кейс «{name}» сейчас недоступен."
+CASE_OPEN_ERROR = "⚠️ Не удалось открыть кейс. Попробуй ещё раз."
+CASE_OPEN_SPINNING = "🎰 Открываем «{name}»…"
+
+CASE_OPEN_WIN_ITEM = "🎉 Из «{case}» выпало: {rarity} <b>{item}</b>{qty}!"
+CASE_OPEN_WIN_CURRENCY = "🎉 Из «{case}» выпало: <b>{amount}</b>!\n💰 Баланс: <b>{balance}</b>"
+CASE_OPEN_JACKPOT = "💎 ДЖЕКПОТ! {line}"
+
+# Чужая кнопка.
+CASE_NOT_YOURS = "Это не твой кейс 🙅"
+
+

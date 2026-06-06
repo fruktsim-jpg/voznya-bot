@@ -19,7 +19,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 # Причина движения предмета.
-INVENTORY_SOURCES = ("shop", "gift", "admin", "reward", "event", "migration")
+INVENTORY_SOURCES = ("shop", "gift", "admin", "reward", "event", "migration", "case")
+
 
 # Тип события движения.
 INVENTORY_EVENTS = ("grant", "revoke", "purchase", "use", "equip", "unequip")

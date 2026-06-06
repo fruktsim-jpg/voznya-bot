@@ -19,7 +19,9 @@ def get_feature_routers() -> list[Router]:
     from app.features.achievements.handlers import router as achievements_router
     from app.features.admin.handlers import router as admin_router
     from app.features.balance.handlers import router as balance_router
+    from app.features.cases.handlers import router as cases_router
     from app.features.casino.handlers import router as casino_router
+
     from app.features.duel.handlers import router as duel_router
     from app.features.farm.handlers import router as farm_router
     from app.features.help.handlers import router as help_router
@@ -52,6 +54,7 @@ def get_feature_routers() -> list[Router]:
         reputation_router,
         farm_router,
         casino_router,
+        cases_router,
         duel_router,
 
         treasure_router,
@@ -71,5 +74,3 @@ def get_feature_routers() -> list[Router]:
 
         admin_router,
     ]
-
-

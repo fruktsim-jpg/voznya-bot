@@ -86,7 +86,26 @@ def top_pagination(page: int, total_pages: int, user_id: int) -> InlineKeyboardM
     return InlineKeyboardMarkup(inline_keyboard=[buttons] if buttons else [])
 
 
+def case_open(case_item_code: str, user_id: int) -> InlineKeyboardMarkup:
+    """Кнопка «Открыть» для карточки кейса.
+
+    Callback несёт код кейса и id игрока: открыть может только адресат (проверка
+    в хендлере), а сама выдача защищена блокировками строк в open_case().
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎁 Открыть",
+                    callback_data=f"case:open:{case_item_code}:{user_id}",
+                )
+            ]
+        ]
+    )
+
+
 def divorce_confirm(user_id: int, partner_id: int) -> InlineKeyboardMarkup:
+
 
     """Кнопки подтверждения развода."""
     return InlineKeyboardMarkup(
