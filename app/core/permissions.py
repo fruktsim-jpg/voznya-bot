@@ -62,8 +62,11 @@ _SUPPORT: frozenset[str] = frozenset(
         PERM_MODERATION_VIEW,
         PERM_GIFT_VIEW,
         PERM_MMR_VIEW,
+        PERM_REPUTATION_VIEW,
+        PERM_ACHIEVEMENTS_VIEW,
     }
 )
+
 
 
 
@@ -87,8 +90,13 @@ _ADMIN: frozenset[str] = _MODERATOR | frozenset(
         PERM_GIFT_MANAGE,
         PERM_MMR_ADD,
         PERM_MMR_REMOVE,
+        PERM_REPUTATION_ADD,
+        PERM_REPUTATION_REMOVE,
+        PERM_ACHIEVEMENTS_GRANT,
+        PERM_ACHIEVEMENTS_REVOKE,
     }
 )
+
 
 
 
