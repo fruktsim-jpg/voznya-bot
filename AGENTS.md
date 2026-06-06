@@ -4,45 +4,65 @@ Guidance for AI agents working in this repository.
 
 ## Project status
 
-`voznya-bot` is currently a **greenfield stub**: the only tracked file besides this document is `README.md`. There is no application entrypoint, dependency manifest, Docker setup, or test suite yet.
+`voznya-bot` is an **active project**, not a stub. It is the Telegram bot half of
+the «Возня» ecosystem: a Python (aiogram) bot backed by PostgreSQL with Alembic
+migrations. The companion repo `v0-voznya` (Next.js) is the website + admin panel.
 
-When implementation lands, re-read `README.md`, lockfiles, and any `docker-compose` / `.env.example` files to learn how to install, run, lint, and test.
+Before working, read `README.md` and `PROJECT_STATE_REPORT.md` — they describe the
+real, current state. For per-subsystem detail see the `*_FOUNDATION.md`,
+`ADMIN_PLATFORM.md`, `COMBOT_IMPORT_PLAN.md`, `MINI_APP_PLAN.md`, `docs/ECONOMY.md`.
+Stale one-off reports live in `docs/archive/` — do not treat them as current.
 
-## Cursor Cloud specific instructions
+## Stack & layout
 
-### Services
+- Language/runtime: Python 3.12, aiogram. Deps in `requirements.txt`.
+- DB: PostgreSQL, migrations via Alembic (`alembic.ini`, `migrations/`).
+- Container: `Dockerfile` + `docker-compose.yml` (bot + db).
+- Code: `app/` — `features/` (bot routers), `repositories/`, `services/`,
+  `models/`, `core/`, `settings/`, `middlewares/`, `config.py`, `main.py`.
 
-| Service | Required | Notes |
-|---------|----------|--------|
-| *(none)* | — | No dev servers, databases, or containers are defined in the repo yet. |
+## Source of truth
 
-### Update script (VM startup)
+- The bot is the **only** writer of `users` and gameplay tables.
+- The website is **read-only** over `users`, writing only via explicit admin
+  routes (`/api/admin/*`) and the OIDC linking flow. Do not introduce website
+  writes that bypass the bot.
 
-The VM update script is a no-op (`true`) until dependency manifests exist. After adding e.g. `package.json` or `requirements.txt`, change the update script to the appropriate install command (`npm ci`, `pnpm install`, `uv sync`, etc.) via the Cloud Agent environment settings.
+## Build / run / migrate
 
-### Available VM toolchain (verified 2026-06-04)
+```bash
+cp .env.example .env
+docker compose up -d
+docker compose exec bot alembic upgrade head     # apply migrations
+docker compose logs -f bot
+```
 
-Cloud Agent VMs have common runtimes preinstalled for when bot code lands:
+Local (no Docker): `pip install -r requirements.txt`, set `DATABASE_URL`,
+`alembic upgrade head`, `python -m app.main`.
 
-| Tool | Version (example VM) |
-|------|----------------------|
-| Node.js | v22.x (via nvm) |
-| npm / pnpm | available on PATH |
-| Python | 3.12.x |
-| git | 2.43+ |
+Migration chain is linear; current HEAD is `0014_mmr_foundation`. Add new
+revisions on top — never rewrite past migrations. No automated test suite exists
+yet; if you add tests, use pytest as the standard choice.
 
-No project-specific install step runs until a lockfile is committed.
+## What is implemented vs foundation-only
 
-### Lint / test / build / run
+- Implemented & live: farm, duel, treasure, casino, marriage/para, pidor,
+  achievements, economy/transactions, ratings, profile, help, reputation, MMR,
+  OIDC linking, admin platform (bot RBAC + site UI + audit), Combot import.
+- Foundation-only (schema + migration + doc, NO runtime code): inventory, shop,
+  gifts, cosmetics, Mini App. Do not assume these work.
 
-Not applicable until source code and tooling are added. Standard commands will appear in `README.md` or package scripts once the bot is implemented.
+## Git
 
-### Git
+- Default branch: `main`. Remote: `origin` → GitHub `fruktsim-jpg/voznya-bot`.
+- Detached HEAD checkouts should be switched to `main` before branching:
+  `git checkout main`.
 
-- Default branch: `main`
-- Remote: `origin` → GitHub `fruktsim-jpg/voznya-bot`
+## Gotchas
 
-### Gotchas
-
-- Do not assume Python vs Node vs another stack from the repo name alone; check lockfiles and README after the first implementation commit.
-- Detached HEAD checkouts should be switched to `main` before branching: `git checkout main`.
+- MMR ranks are duplicated in `app/settings/mmr.py` (`RANKS`) and
+  `v0-voznya/lib/queries.ts` (`MMR_RANKS`) — keep them in sync if changed.
+- Reputation/MMR site blocks are hidden until migrations 0013/0014 are applied
+  on prod.
+- Do not touch the economy core (`app/core/economy_events.py`, `transactions`),
+  account_links/OIDC, or past migrations without explicit need and tests.

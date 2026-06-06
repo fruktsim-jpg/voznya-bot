@@ -5,9 +5,12 @@
 систем — `inventory` (владение), `transactions` (деньги), `audit_log` (аудит),
 `permissions` (доступ).
 
-Статус: **gift/economy layer реализован в коде** (модель `gift_transactions`,
-колонка `transferable`, модуль `economy_events`, права, миграция 0011). UI,
-маркетплейс и кейсы — НЕ делались.
+Статус (2026-06-06, проверено аудитом): **FOUNDATION ONLY.** Есть модель
+`gift_transactions`, колонка `transferable`, модуль `economy_events`, права и
+миграция 0011. НЕТ хендлеров дарения, проверки `transferable` в рантайме и
+перевода предметов — ни один живой код не использует `gift_transactions`.
+Зависит от инвентаря, который тоже foundation-only. UI, маркетплейс и кейсы —
+НЕ делались.
 
 Дата: 2026-06-06
 Связанные документы: `INVENTORY_FOUNDATION.md`, `SHOP_FOUNDATION.md`,
