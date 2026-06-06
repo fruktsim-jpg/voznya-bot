@@ -45,6 +45,9 @@ PERM_REPUTATION_REMOVE = "reputation.remove"  # снять репутацию
 PERM_ACHIEVEMENTS_VIEW = "achievements.view"      # просмотр достижений
 PERM_ACHIEVEMENTS_GRANT = "achievements.grant"    # выдать достижение
 PERM_ACHIEVEMENTS_REVOKE = "achievements.revoke"  # отозвать достижение
+PERM_CASES_VIEW = "cases.view"      # просмотр кейсов, дроп-листов, истории
+PERM_CASES_MANAGE = "cases.manage"  # CRUD кейсов и дроп-листов
+PERM_CASES_GRANT = "cases.grant"    # выдать кейс игроку (item-выдача)
 
 
 
@@ -64,6 +67,7 @@ _SUPPORT: frozenset[str] = frozenset(
         PERM_MMR_VIEW,
         PERM_REPUTATION_VIEW,
         PERM_ACHIEVEMENTS_VIEW,
+        PERM_CASES_VIEW,
     }
 )
 
@@ -94,6 +98,8 @@ _ADMIN: frozenset[str] = _MODERATOR | frozenset(
         PERM_REPUTATION_REMOVE,
         PERM_ACHIEVEMENTS_GRANT,
         PERM_ACHIEVEMENTS_REVOKE,
+        PERM_CASES_MANAGE,
+        PERM_CASES_GRANT,
     }
 )
 

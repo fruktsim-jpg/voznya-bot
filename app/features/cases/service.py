@@ -2,16 +2,23 @@
 
 Открытие полностью атомарно: всё (списание стоимости, выпадение, выдача награды,
 инкремент лимита, запись в леджер открытий) происходит в одной транзакции
-сессии. Commit/rollback делает DbSessionMiddleware — если на любом шаге возникнет
-ошибка, откатывается ВСЁ: нельзя получить награду без записи в case_openings и
-наоборот.
+сессии. Commit/rollback делает DbSessionMiddleware: при успешном возврате из
+хендлера сессия коммитится, при исключении — откатывается.
+
+ВАЖНО про control-flow: middleware коммитит при ОБЫЧНОМ возврате. Поэтому
+нельзя сначала списать ресурс, а потом вернуть «неуспех» — это закоммитит
+частичную мутацию (например, съест ключ, не выдав награду). Решение —
+пред-проверка (pre-flight): СНАЧАЛА под блокировками строк проверяем, что всех
+ресурсов хватает, и только потом, когда отказ уже невозможен, выполняем сами
+мутации. Неуспешные исходы возвращаются ДО первой записи.
 
 Защита от двойного открытия:
-* строка пользователя блокируется ``FOR UPDATE`` (через change_balance / при
-  списании предмета-ключа), поэтому два параллельных открытия сериализуются;
-* строки дроп-листа берутся ``FOR UPDATE`` (лимитные награды не уйдут в минус);
-* списание предмета-ключа идёт под блокировкой строки владения и проверяет
-  наличие — двойной клик/два callback не спишут один кейс дважды.
+* строка владения предметом-ключом блокируется ``FOR UPDATE`` в pre-flight и
+  держится до конца транзакции — двойной клик/два callback сериализуются и не
+  спишут один кейс дважды;
+* строка пользователя блокируется ``FOR UPDATE`` (баланс не уйдёт в минус при
+  гонке);
+* строки дроп-листа берутся ``FOR UPDATE`` (лимитные награды не уйдут в минус).
 
 Выпадение воспроизводимо: в ``case_openings`` сохраняется ``roll`` и
 ``weight_snapshot`` (слепок весов на момент открытия).
@@ -23,16 +30,16 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.economy_events import EVENT_PURCHASE
 from app.features.cases.rewards import RewardResult, grant_reward
-from app.models import CaseOpening, CaseReward
+from app.models import CaseOpening, CaseReward, Inventory, InventoryItem, User
 from app.models.case_reward import REWARD_KINDS_V1
 
 from app.repositories import cases as cases_repo
-from app.services.economy import InsufficientFunds, change_balance
+from app.services.economy import change_balance
 from app.services.inventory_grant import consume_item
 
 
@@ -77,11 +84,14 @@ async def open_case(
 
     Порядок (всё в одной транзакции):
       1) загрузить и проверить кейс (активность, окно дат);
-      2) списать стоимость открытия (ешки — через ядро) и/или предмет-ключ;
-      3) выбрать награду по весам среди доступных (под блокировкой);
-      4) инкрементировать лимит выпадения (для лимиток);
-      5) выдать награду через grant_reward();
-      6) записать строку в case_openings (леджер честности).
+      2) PRE-FLIGHT: под блокировками строк проверить, что хватает ключа и/или
+         ешек — БЕЗ мутаций. Любой недостаток → ранний возврат (мутаций ещё нет,
+         коммит middleware безвреден);
+      3) выбрать награду по весам среди доступных (под блокировкой дроп-листа).
+         Если доступных наград нет — исключение (rollback, ничего ещё не списано
+         тоже, но это аварийный конфиг кейса);
+      4) выполнить мутации, отказ которых уже невозможен: списать ключ, списать
+         ешки, инкрементировать лимит, выдать награду, записать леджер.
     Любая ошибка → rollback всего (middleware).
     """
     case = await cases_repo.get_case_by_item_code(session, case_item_code)
@@ -96,9 +106,52 @@ async def open_case(
     if case.ends_at is not None and case.ends_at < now:
         return OpenResult(status="inactive", case_name=case.name)
 
-    # --- 2. Списание стоимости открытия ------------------------------------
-    # Предмет-ключ: списываем ПЕРВЫМ под блокировкой строки владения. Это и есть
-    # защита от двойного открытия по предмету (двойной клик не спишет дважды).
+    needs_currency = (
+        case.open_cost_kind == "currency" and case.open_cost_amount > 0
+    )
+
+    # --- 2. PRE-FLIGHT: проверка ресурсов под блокировками, БЕЗ мутаций ------
+    # Сначала убеждаемся, что списание ВОЗМОЖНО для всех видов стоимости, и
+    # только потом начинаем списывать. Иначе ранний возврат после частичного
+    # списания закоммитил бы потерю ресурса (middleware коммитит при возврате).
+    # Блокировки, взятые здесь, держатся до конца транзакции — значения не
+    # изменятся, поэтому фактические списания ниже уже не могут отказать.
+    if case.consumes_key:
+        owned = await session.scalar(
+            select(Inventory.quantity)
+            .where(Inventory.user_id == user_id)
+            .where(Inventory.item_code == case.item_code)
+            .with_for_update()
+        )
+        if not owned or owned < 1:
+            return OpenResult(status="no_key", case_name=case.name)
+
+    if needs_currency:
+        user = await session.get(User, user_id, with_for_update=True)
+        if user is None or user.balance < case.open_cost_amount:
+            return OpenResult(status="not_enough", case_name=case.name)
+
+    # --- 3. Выбор награды (под блокировкой строк дроп-листа) ----------------
+    rewards = await cases_repo.get_available_rewards_for_update(
+        session, case_item_code
+    )
+    # Валидатор скоупа V1: в горячем пути допускаем только item/currency.
+    rewards = [r for r in rewards if r.reward_kind in REWARD_KINDS_V1]
+    if not rewards:
+        # Нет доступных наград (пустой дроп-лист / лимиты исчерпаны). Поднимаем
+        # исключение → rollback (ничего ещё не списано, но кейс мисконфигурён).
+        raise RuntimeError(f"case '{case_item_code}' has no available rewards")
+
+    reward, roll, total_weight = _pick_reward(rewards)
+    qty = (
+        reward.min_qty
+        if reward.min_qty == reward.max_qty
+        else reward.min_qty + secrets.randbelow(reward.max_qty - reward.min_qty + 1)
+    )
+
+    # --- 4. Мутации (отказ уже невозможен — ресурсы заблокированы выше) ------
+    # 4a. Списать предмет-ключ. consume_item повторно берёт FOR UPDATE на уже
+    # удерживаемую строку (своя блокировка — безопасно) и гарантированно успеет.
     if case.consumes_key:
         ok = await consume_item(
             session,
@@ -110,41 +163,22 @@ async def open_case(
             meta={"reason": "open_case"},
         )
         if not ok:
-            return OpenResult(status="no_key", case_name=case.name)
-
-    # Ешки за открытие (через экономическое ядро, с блокировкой строки игрока).
-    if case.open_cost_kind == "currency" and case.open_cost_amount > 0:
-        try:
-            await change_balance(
-                session,
-                user_id,
-                -case.open_cost_amount,
-                reason=EVENT_PURCHASE,
-                meta={"source": "case_open", "case": case.item_code},
+            # Недостижимо после pre-flight под блокировкой; защита от регрессий.
+            raise RuntimeError(
+                f"key consume failed after pre-flight for case '{case_item_code}'"
             )
-        except InsufficientFunds:
-            # Откатит всё (в т.ч. списание ключа) — middleware на исключении.
-            return OpenResult(status="not_enough", case_name=case.name)
 
-    # --- 3. Выбор награды (под блокировкой строк дроп-листа) ----------------
-    rewards = await cases_repo.get_available_rewards_for_update(
-        session, case_item_code
-    )
-    # Валидатор скоупа V1: в горячем пути допускаем только item/currency.
-    rewards = [r for r in rewards if r.reward_kind in REWARD_KINDS_V1]
-    if not rewards:
-        # Нет доступных наград (пустой дроп-лист / лимиты исчерпаны). Поднимаем
-        # исключение, чтобы откатить уже списанную стоимость.
-        raise RuntimeError(f"case '{case_item_code}' has no available rewards")
+    # 4b. Списать ешки за открытие (через экономическое ядро).
+    if needs_currency:
+        await change_balance(
+            session,
+            user_id,
+            -case.open_cost_amount,
+            reason=EVENT_PURCHASE,
+            meta={"source": "case_open", "case": case.item_code},
+        )
 
-    reward, roll, total_weight = _pick_reward(rewards)
-    qty = (
-        reward.min_qty
-        if reward.min_qty == reward.max_qty
-        else reward.min_qty + secrets.randbelow(reward.max_qty - reward.min_qty + 1)
-    )
-
-    # --- 4. Инкремент лимита выпадения (для лимиток), безопасно при гонках --
+    # 4c. Инкремент лимита выпадения (для лимиток), безопасно при гонках.
     if reward.max_global_supply is not None:
         await session.execute(
             update(CaseReward)
@@ -152,7 +186,7 @@ async def open_case(
             .values(granted_count=CaseReward.granted_count + 1)
         )
 
-    # --- 5. Выдача награды через единую точку -------------------------------
+    # 4d. Выдача награды через единую точку.
     result: RewardResult = await grant_reward(
         session,
         user_id=user_id,
@@ -164,7 +198,7 @@ async def open_case(
         transaction_meta={"case": case.item_code, "reward_id": reward.id},
     )
 
-    # --- 6. Леджер открытия (честность + воспроизводимость) -----------------
+    # 4e. Леджер открытия (честность + воспроизводимость).
     snapshot = [{"reward_id": r.id, "weight": r.weight} for r in rewards]
     session.add(
         CaseOpening(
@@ -184,10 +218,6 @@ async def open_case(
     reward_item_name = None
     reward_rarity = None
     if result.reward_kind == "item" and result.reward_item_code:
-        from sqlalchemy import select
-
-        from app.models import InventoryItem
-
         item = (
             await session.execute(
                 select(InventoryItem.name, InventoryItem.rarity).where(
@@ -200,7 +230,6 @@ async def open_case(
             reward_rarity = item[1]
 
     return OpenResult(
-
         status="ok",
         case_name=case.name,
         reward_kind=result.reward_kind,
