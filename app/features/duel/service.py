@@ -164,7 +164,28 @@ async def accept_challenge(
     loser.duels_lost += 1
     loser.duel_loss_streak += 1
 
+    # MMR за дуэль (отдельный игровой рейтинг, не связан с банком/ешками):
+    # оба получают за участие, победитель — ещё и за победу.
+    from app.features.mmr.service import award_mmr
+    from app.settings import mmr as mmr_settings
+
+    await award_mmr(
+        session,
+        player_id=winner_id,
+        amount=mmr_settings.MMR_DUEL_PARTICIPATION + mmr_settings.MMR_DUEL_WIN,
+        source=mmr_settings.SOURCE_DUEL,
+        reason="win",
+    )
+    await award_mmr(
+        session,
+        player_id=loser_id,
+        amount=mmr_settings.MMR_DUEL_PARTICIPATION,
+        source=mmr_settings.SOURCE_DUEL,
+        reason="participation",
+    )
+
     pending.status = STATUS_ACCEPTED
+
 
     return DuelResult(
         status="done",

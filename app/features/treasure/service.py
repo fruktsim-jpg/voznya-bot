@@ -70,6 +70,19 @@ async def claim_treasure(
     )
     user.treasures_found += 1
 
+    # MMR за найденный клад (отдельный игровой рейтинг, не связан с ешками).
+    from app.features.mmr.service import award_mmr
+    from app.settings import mmr as mmr_settings
+
+    await award_mmr(
+        session,
+        player_id=user_id,
+        amount=mmr_settings.MMR_TREASURE,
+        source=mmr_settings.SOURCE_TREASURE,
+        reason=str(treasure.id),
+    )
+
+
     return ClaimResult(
         status="claimed", reward=treasure.reward, balance=user.balance, fast=fast
     )

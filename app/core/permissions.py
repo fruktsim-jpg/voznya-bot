@@ -36,6 +36,10 @@ PERM_MODERATION_BAN = "moderation.ban"      # бан/разбан
 PERM_ROLES_MANAGE = "roles.manage"          # назначать/менять роли
 PERM_GIFT_VIEW = "gift.view"                # просмотр истории подарков
 PERM_GIFT_MANAGE = "gift.manage"            # системные/админские подарки
+PERM_MMR_VIEW = "mmr.view"                  # просмотр рейтинга/истории MMR
+PERM_MMR_ADD = "mmr.add"                    # начислить MMR (награда/ивент)
+PERM_MMR_REMOVE = "mmr.remove"              # списать MMR (коррекция)
+
 
 
 # --- Права по ролям ----------------------------------------------------------
@@ -50,8 +54,10 @@ _SUPPORT: frozenset[str] = frozenset(
         PERM_SHOP_VIEW,
         PERM_MODERATION_VIEW,
         PERM_GIFT_VIEW,
+        PERM_MMR_VIEW,
     }
 )
+
 
 
 # moderator: support + модерация и просмотр логов.
@@ -72,8 +78,11 @@ _ADMIN: frozenset[str] = _MODERATOR | frozenset(
         PERM_INVENTORY_REVOKE,
         PERM_SHOP_MANAGE,
         PERM_GIFT_MANAGE,
+        PERM_MMR_ADD,
+        PERM_MMR_REMOVE,
     }
 )
+
 
 
 # owner: всё, включая управление ролями.

@@ -85,7 +85,20 @@ async def _grant(session: AsyncSession, user_id: int, ach: Achievement) -> bool:
         await change_balance(
             session, user_id, ach.reward, "achievement", {"code": ach.code}
         )
+    # MMR за ачивку — отдельный игровой рейтинг (зависит от редкости ачивки).
+    # Изолирован от ешек: начисляется всегда, даже если ачивка без награды.
+    from app.features.mmr.service import award_mmr, mmr_for_achievement
+    from app.settings import mmr as mmr_settings
+
+    await award_mmr(
+        session,
+        player_id=user_id,
+        amount=mmr_for_achievement(ach),
+        source=mmr_settings.SOURCE_ACHIEVEMENT,
+        reason=ach.code,
+    )
     return True
+
 
 
 async def check_and_award(session: AsyncSession, user_id: int) -> list[Achievement]:

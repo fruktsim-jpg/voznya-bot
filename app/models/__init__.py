@@ -21,6 +21,8 @@ from app.models.inventory_item import InventoryItem
 from app.models.marriage import Marriage
 
 from app.models.message_daily import MessageDaily
+from app.models.mmr_entry import MmrEntry
+
 from app.models.nomination import DailyNomination
 from app.models.oidc_link_request import OidcLinkRequest
 from app.models.pending_action import PendingAction
@@ -60,8 +62,10 @@ __all__ = [
     "PurchaseHistory",
     "GiftTransaction",
     "ReputationEntry",
+    "MmrEntry",
 
     "CombotUserStats",
+
     "CombotDailyStats",
     "CombotActivityHeatmap",
     "CombotImportRun",

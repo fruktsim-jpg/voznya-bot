@@ -96,6 +96,17 @@ async def do_farm(session: AsyncSession, user_id: int) -> FarmResult:
     # Успешной считается ферма с положительным результатом (для достижений).
     if amount > 0:
         user.farm_success_count += 1
+        # MMR за успешную ферму (отдельный игровой рейтинг, не связан с ешками).
+        from app.features.mmr.service import award_mmr
+        from app.settings import mmr as mmr_settings
+
+        await award_mmr(
+            session,
+            player_id=user_id,
+            amount=mmr_settings.MMR_FARM,
+            source=mmr_settings.SOURCE_FARM,
+        )
+
 
     user.last_farm_at = now_utc()
     user.farm_streak = new_streak

@@ -30,14 +30,26 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     # Для игрока это одна цифра за всю историю сообщества, без упоминания Combot.
     overlay = await get_combot_overlay(session, user.user_id)
     messages_total = total_messages(user.messages_count, overlay)
-    
+
+    # MMR — отдельный игровой рейтинг (общий прогресс), не связан с ешками.
+    from app.repositories.mmr import get_mmr
+    from app.settings import mmr as mmr_settings
+
+    mmr_value = await get_mmr(session, user.user_id)
+    rank = mmr_settings.get_rank(mmr_value)
+
     text = (
         f"👤 <b>Профиль — {user.display_name()}</b>\n\n"
         f"💰 Баланс: <b>{user.balance:,}</b> ешек\n"
         f"📈 Заработано: <b>{user.total_earned:,}</b> ешек\n"
         f"💬 Сообщений: <b>{messages_total:,}</b>\n"
         f"🏆 Титул: {title.emoji} <b>{title.name}</b>\n"
+        + mmr_settings.PROFILE_MMR_LINE.format(mmr=mmr_value)
+        + mmr_settings.PROFILE_RANK_LINE.format(
+            rank_emoji=rank.emoji, rank_name=rank.name
+        )
     )
+
 
     
     # Компактная строка «в чате с» — только если Combot знает дату входа.
