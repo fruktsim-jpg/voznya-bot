@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
 
 from aiogram import Router
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from app.core.filters import RuCommand
 from app.core.money import money
@@ -87,6 +89,8 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
     result = await play_casino(session, user.id, bet)
     who = mention(user.id, user.first_name, user.username)
 
+    # Кулдаун/нехватка средств — игра не состоялась, барабан не крутим.
+    # Эти сообщения короткие и самоудаляются, отдельное «ожидание» тут лишнее.
     if result.status == "cooldown":
         await notify_and_cleanup(
             session,
@@ -100,8 +104,19 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
         )
         return
 
-    await message.answer(_render_result(result, who))
+    # Игра состоялась: показываем ожидание и редактируем ЭТО ЖЕ сообщение
+    # результатом. Так итог живёт в одном сообщении, без лишнего спама в чате.
+    spinning = await message.answer(texts.CASINO_SPINNING)
+    await asyncio.sleep(1.0)
+    try:
+        await spinning.edit_text(_render_result(result, who))
+    except Exception:  # noqa: BLE001
+        # Редактирование не прошло (сообщение удалили и т.п.) — отдаём результат
+        # отдельным сообщением, чтобы игрок всё равно увидел исход.
+        await message.answer(_render_result(result, who))
+
     await check_award_and_notify(message, session, user.id, user.first_name, user.username)
     await _award_casino_events(message, session, user, result)
+
 
 

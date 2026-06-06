@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
+
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +43,10 @@ class ChallengeResult:
     remaining: float = 0.0
     balance: int = 0
     pending_id: int = 0
+    # Момент протухания вызова — хендлер по нему планирует автоудаление
+    # сообщения с кнопками, если бой так и не приняли/не отклонили.
+    expires_at: datetime | None = None
+
 
 
 @dataclass
@@ -89,8 +94,12 @@ async def create_challenge(
     )
     session.add(pending)
     await session.flush()
-    await cooldowns.set_cooldown(session, initiator_id, "duel", balance.COOLDOWNS["duel"])
-    return ChallengeResult(status="ok", pending_id=pending.id)
+    # ВАЖНО: кулдаун здесь НЕ ставим. Вызов — это ещё не состоявшийся бой:
+    # его могут отклонить или просто проигнорировать (никто не примет). Кулдаун
+    # начисляется только когда механика реально запустилась — в accept_challenge
+    # после успешного боя. Так отказ/просрочка не «съедают» кулдаун инициатора.
+    return ChallengeResult(status="ok", pending_id=pending.id, expires_at=expires_at)
+
 
 
 async def accept_challenge(
@@ -192,8 +201,13 @@ async def accept_challenge(
 
     pending.status = STATUS_ACCEPTED
 
+    # Кулдаун дуэли ставится здесь — только теперь бой реально состоялся.
+    # Обоим участникам, чтобы спам-замесами не заваливали чат.
+    await cooldowns.set_cooldown(session, initiator_id, "duel", balance.COOLDOWNS["duel"])
+    await cooldowns.set_cooldown(session, confirmer_id, "duel", balance.COOLDOWNS["duel"])
 
     return DuelResult(
+
         status="done",
         winner_id=winner_id,
         loser_id=loser_id,
@@ -243,3 +257,26 @@ async def decline_challenge(
         initiator_id=pending.initiator_id,
         decliner_id=decliner_id,
     )
+
+
+async def expire_challenge_if_pending(
+    session: AsyncSession, pending_id: int
+) -> bool:
+    """Помечает вызов просроченным, если он ещё висит в статусе pending.
+
+    Возвращает True, если вызов был именно просрочен этим вызовом (т.е. его
+    никто не принял/не отклонил). Возвращает False, если вызов уже разрулен
+    (принят, отклонён, просрочен ранее) или не существует — в этом случае
+    чистить сообщения в чате не нужно.
+    """
+    pending = await session.get(PendingAction, pending_id, with_for_update=True)
+    if (
+        pending is None
+        or pending.action_type != TYPE_DUEL
+        or pending.status != STATUS_PENDING
+    ):
+        return False
+    pending.status = STATUS_EXPIRED
+    return True
+
+

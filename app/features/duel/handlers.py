@@ -8,24 +8,74 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import datetime
+
+from aiogram import Bot
+
+from app.core.db import get_sessionmaker
 from app.core.filters import RuCommand
 from app.core.keyboards import duel_accept
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
+from app.core.scheduler import get_scheduler
 from app.core.targets import extract_amount_after_target, resolve_target
-from app.core.utils import format_cooldown, mention
+from app.core.utils import format_cooldown, mention, now_utc
 from app.features.achievements.service import check_award_and_notify
 from app.features.duel.service import (
     DuelResult,
     accept_challenge,
     create_challenge,
     decline_challenge,
+    expire_challenge_if_pending,
 )
 
 from app.models import User
 from app.settings import balance, texts
 
 router = Router(name="duel")
+
+
+async def _expire_and_cleanup(
+    bot: Bot, chat_id: int, message_id: int, pending_id: int
+) -> None:
+    """Фоновая задача: по истечении срока гасит непринятый вызов и убирает его
+    сообщение из чата, чтобы мёртвые вызовы не висели.
+
+    Если вызов уже приняли/отклонили — ничего не делаем (сообщение там уже
+    обновлено результатом боя или отказа).
+    """
+    async with get_sessionmaker()() as session:
+        expired = await expire_challenge_if_pending(session, pending_id)
+        await session.commit()
+    if not expired:
+        return
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:  # noqa: BLE001
+        # Сообщение уже удалено/недоступно — это нормально.
+        pass
+
+
+def _schedule_duel_cleanup(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    pending_id: int,
+    expires_at: datetime,
+) -> None:
+    """Планирует автоудаление непринятого вызова на момент его протухания."""
+    from datetime import timedelta
+
+    get_scheduler().add_job(
+        _expire_and_cleanup,
+        trigger="date",
+        run_date=max(expires_at, now_utc() + timedelta(seconds=1)),
+        args=[bot, chat_id, message_id, pending_id],
+        id=f"duel_expire_{pending_id}",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
 
 
 async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) -> None:
@@ -113,15 +163,22 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
             await message.answer(texts.DUEL_INITIATOR_POOR.format(balance=money(result.balance)))
             return
 
-        await message.answer(
+        # Открытый вызов: кнопки отказа нет (отказываться некому — зовём весь чат).
+        sent = await message.answer(
             texts.DUEL_OPEN_CHALLENGE.format(
                 initiator=mention(user.id, user.first_name, user.username),
                 amount=money(amount),
                 minutes=balance.DUEL_EXPIRE_MINUTES,
             ),
-            reply_markup=duel_accept(result.pending_id),
+            reply_markup=duel_accept(result.pending_id, with_decline=False),
         )
+        if result.expires_at is not None:
+            _schedule_duel_cleanup(
+                message.bot, sent.chat.id, sent.message_id,
+                result.pending_id, result.expires_at,
+            )
         return
+
     
     # Вызов конкретному игроку
     if target.user_id == user.id:
@@ -167,7 +224,7 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
         await message.answer(texts.DUEL_INITIATOR_POOR.format(balance=money(result.balance)))
         return
 
-    await message.answer(
+    sent = await message.answer(
         texts.DUEL_CHALLENGE.format(
             initiator=mention(user.id, user.first_name, user.username),
             target=mention(target.user_id, target.first_name, target.username),
@@ -176,6 +233,12 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
         ),
         reply_markup=duel_accept(result.pending_id),
     )
+    if result.expires_at is not None:
+        _schedule_duel_cleanup(
+            message.bot, sent.chat.id, sent.message_id,
+            result.pending_id, result.expires_at,
+        )
+
 
 
 @router.message(RuCommand("го", "accept", "go"))

@@ -24,21 +24,27 @@ def treasure_claim() -> InlineKeyboardMarkup:
     )
 
 
-def duel_accept(pending_id: int) -> InlineKeyboardMarkup:
+def duel_accept(pending_id: int, *, with_decline: bool = True) -> InlineKeyboardMarkup:
+    """Кнопки дуэли.
 
-    """Кнопки принятия и отказа от дуэли."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⚔️ Принять бой", callback_data=f"duel:accept:{pending_id}"
-                ),
-                InlineKeyboardButton(
-                    text="🏳️ Слиться", callback_data=f"duel:decline:{pending_id}"
-                ),
-            ]
-        ]
-    )
+    Для персонального вызова (``with_decline=True``) показываем «Принять» и
+    «Слиться»: вызванному есть от чего отказываться. Для открытого вызова
+    (``with_decline=False``) кнопки отказа нет — приглашение адресовано всему
+    чату, отказываться некому.
+    """
+    row = [
+        InlineKeyboardButton(
+            text="⚔️ Принять бой", callback_data=f"duel:accept:{pending_id}"
+        )
+    ]
+    if with_decline:
+        row.append(
+            InlineKeyboardButton(
+                text="🏳️ Слиться", callback_data=f"duel:decline:{pending_id}"
+            )
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
 
 
 
