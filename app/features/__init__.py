@@ -32,9 +32,11 @@ def get_feature_routers() -> list[Router]:
     from app.features.profile.handlers import router as profile_router
     from app.features.ratings.handlers import router as ratings_router
     from app.features.reputation.handlers import router as reputation_router
+    from app.features.social.handlers import router as social_router
 
 
     from app.features.treasure.handlers import router as treasure_router
+
     from app.features.welcome.handlers import router as welcome_router
 
     return [
@@ -55,6 +57,8 @@ def get_feature_routers() -> list[Router]:
         pidor_router,
         para_router,
         marriage_router,
+        social_router,
+
         profile_router,
         balance_router,
         ratings_router,

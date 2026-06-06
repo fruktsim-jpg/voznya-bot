@@ -168,16 +168,23 @@ def format_unlock_notification(
     
     if len(newly) == 1:
         ach = newly[0]
+        reward = money(ach.reward) if ach.reward else texts.ACH_UNLOCK_NO_REWARD
         return texts.ACH_UNLOCK_ONE.format(
             mention=user_mention,
             name=ach.name,
-            reward=_reward_suffix(ach)
+            description=ach.description,
+            reward=reward,
         )
     lines = "\n".join(
-        texts.ACH_UNLOCK_ROW.format(name=ach.name, reward=_reward_suffix(ach))
+        texts.ACH_UNLOCK_ROW.format(
+            name=ach.name,
+            description=ach.description,
+            reward=_reward_suffix(ach),
+        )
         for ach in newly
     )
     return texts.ACH_UNLOCK_MANY.format(mention=user_mention, lines=lines)
+
 
 
 async def check_award_and_notify(

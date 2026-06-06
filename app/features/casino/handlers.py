@@ -69,17 +69,20 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
 
     arg = command_args.split()[0] if command_args else ""
     if not arg:
-        await message.answer(texts.CASINO_USAGE)
+        await notify_and_cleanup(session, message, texts.CASINO_USAGE)
         return
 
     bet = _parse_bet(arg)
     if bet is None or bet < balance.CASINO_MIN_BET or bet > balance.CASINO_MAX_BET:
-        await message.answer(
+        await notify_and_cleanup(
+            session,
+            message,
             texts.CASINO_BAD_AMOUNT.format(
                 min=balance.CASINO_MIN_BET, max=balance.CASINO_MAX_BET
-            )
+            ),
         )
         return
+
 
     result = await play_casino(session, user.id, bet)
     who = mention(user.id, user.first_name, user.username)

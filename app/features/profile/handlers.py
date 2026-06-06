@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.filters import RuCommand
 from app.models import User
+from app.settings import texts
 from app.settings.titles import get_title, get_next_title
+
 
 router = Router(name="profile")
 
@@ -89,42 +91,73 @@ async def render_profile(session: AsyncSession, user: User) -> str:
 
 
 
-@router.message(RuCommand("профиль", "profile", "проф", "я", "мой профиль", "кто я"))
-async def profile_command(message: Message, session: AsyncSession, command_args: str) -> None:
+async def _send_profile(message: Message, session: AsyncSession, user: User) -> None:
+    """Отправляет карточку профиля игрока с кнопкой на сайт + автоудаление."""
+    from app.services.deletion import get_deletion_service
 
-    """Показывает профиль игрока с кнопкой на сайт."""
-    
-    from app.repositories.users import get_user
-    
-    user_tg = message.from_user
-    if user_tg is None:
-        return
-    
-    user = await get_user(session, user_tg.id)
-    if user is None:
-        await message.answer("❌ Пользователь не найден в базе данных.")
-        return
-    
     settings = get_settings()
     text = await render_profile(session, user)
-    
-    # Кнопка на сайт
+
     profile_url = f"{settings.website_url}/profile/{user.user_id}"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🌐 Открыть профиль на сайте", url=profile_url)]
         ]
     )
-    
+
     sent = await message.answer(text, reply_markup=keyboard)
-    
-    # Автоудаление информационного сообщения
-    from app.services.deletion import get_deletion_service
+
+    # Автоудаление информационного сообщения (чистота чата).
     deletion = get_deletion_service()
     await deletion.schedule_info_message(
         session,
-        user_id=user_tg.id,
+        user_id=message.from_user.id if message.from_user else user.user_id,
         chat_id=message.chat.id,
         user_command_id=message.message_id,
         bot_message_id=sent.message_id,
     )
+
+
+# Короткие алиасы вроде «я» убраны: они ложно срабатывали на обычную речь.
+@router.message(RuCommand("профиль", "profile", "проф"))
+async def profile_command(message: Message, session: AsyncSession, command_args: str) -> None:
+    """Показывает профиль игрока с кнопкой на сайт."""
+    from app.repositories.users import get_user
+
+    user_tg = message.from_user
+    if user_tg is None:
+        return
+
+    user = await get_user(session, user_tg.id)
+    if user is None:
+        await message.answer(texts.USER_NOT_FOUND)
+        return
+
+    await _send_profile(message, session, user)
+
+
+@router.message(RuCommand("кто"))
+async def who_are_you_command(
+    message: Message, session: AsyncSession, command_args: str
+) -> None:
+    """Быстрый просмотр профиля по reply: «кто ты» в ответ на сообщение.
+
+    Работает только как ответ (reply) на сообщение реального человека и только
+    на точную фразу «кто ты». Иначе — молчим, чтобы не мешать обычной речи.
+    """
+    from app.repositories.users import get_user
+
+    if command_args.strip().lower() != "ты":
+        return
+    reply = message.reply_to_message
+    if reply is None or reply.from_user is None or reply.from_user.is_bot:
+        return
+
+    user = await get_user(session, reply.from_user.id)
+    if user is None:
+        await message.answer(texts.USER_NOT_FOUND)
+        return
+
+    await _send_profile(message, session, user)
+
+

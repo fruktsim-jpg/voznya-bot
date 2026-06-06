@@ -13,7 +13,9 @@ from datetime import timedelta
 
 from app.core.filters import RuCommand
 from app.core.keyboards import marriage_accept
+from app.core.responses import notify_and_cleanup
 from app.core.targets import resolve_target
+
 from app.core.utils import format_marriage_duration_days, mention, now_utc
 from app.features.achievements.service import (
     award_specific,
@@ -61,11 +63,12 @@ async def cmd_marry(message: Message, session: AsyncSession, command_args: str) 
 
     target = await resolve_target(session, message, command_args)
     if target is None:
-        await message.answer(texts.MARRY_USAGE)
+        await notify_and_cleanup(session, message, texts.MARRY_USAGE)
         return
     if target.user_id == user.id:
         await message.answer(texts.MARRY_SELF)
         return
+
 
     result = await service.propose(session, user.id, target.user_id, message.chat.id)
 
@@ -99,9 +102,13 @@ async def cmd_accept(message: Message, session: AsyncSession, command_args: str)
 
     result = await service.accept_proposal(session, user.id)
 
-    # При отсутствии предложения молчим (бытовое «да» не должно спамить чат).
+    # При отсутствии предложения обычно молчим (бытовое «да» не должно спамить
+    # чат). Но на ТОЧНОЕ «да» (без аргументов) отвечаем пасхалкой Возни.
     if result.status == "no_pending":
+        if not command_args.strip():
+            await message.reply(texts.DA_EASTER_EGG)
         return
+
     if result.status in {"initiator_busy", "target_busy"}:
         await message.answer(texts.MARRY_INITIATOR_BUSY)
         return

@@ -15,7 +15,13 @@ from app.core.responses import notify_and_cleanup
 from app.core.targets import extract_amount_after_target, resolve_target
 from app.core.utils import format_cooldown, mention
 from app.features.achievements.service import check_award_and_notify
-from app.features.duel.service import DuelResult, accept_challenge, create_challenge
+from app.features.duel.service import (
+    DuelResult,
+    accept_challenge,
+    create_challenge,
+    decline_challenge,
+)
+
 from app.models import User
 from app.settings import balance, texts
 
@@ -63,14 +69,17 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
         # Пробуем распарсить как открытый вызов
         amount_str = command_args.strip().split()[0] if command_args.strip() else ""
         if not amount_str or len(amount_str) > 12 or not amount_str.lstrip("-").isdigit():
-            await message.answer(texts.DUEL_USAGE)
+            await notify_and_cleanup(session, message, texts.DUEL_USAGE)
             return
         amount = int(amount_str)
         if amount < balance.DUEL_MIN_BET or amount > balance.DUEL_MAX_BET:
-            await message.answer(
-                texts.DUEL_BAD_AMOUNT.format(min=balance.DUEL_MIN_BET, max=balance.DUEL_MAX_BET)
+            await notify_and_cleanup(
+                session,
+                message,
+                texts.DUEL_BAD_AMOUNT.format(min=balance.DUEL_MIN_BET, max=balance.DUEL_MAX_BET),
             )
             return
+
         
         # Создаём открытый вызов (target_id=None)
         result = await create_challenge(
@@ -105,14 +114,17 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
 
     amount_str = extract_amount_after_target(command_args)
     if not amount_str or len(amount_str) > 12 or not amount_str.lstrip("-").isdigit():
-        await message.answer(texts.DUEL_USAGE)
+        await notify_and_cleanup(session, message, texts.DUEL_USAGE)
         return
     amount = int(amount_str)
     if amount < balance.DUEL_MIN_BET or amount > balance.DUEL_MAX_BET:
-        await message.answer(
-            texts.DUEL_BAD_AMOUNT.format(min=balance.DUEL_MIN_BET, max=balance.DUEL_MAX_BET)
+        await notify_and_cleanup(
+            session,
+            message,
+            texts.DUEL_BAD_AMOUNT.format(min=balance.DUEL_MIN_BET, max=balance.DUEL_MAX_BET),
         )
         return
+
     
     # Проверка баланса цели ПЕРЕД отправкой вызова
     if target.balance < amount:
@@ -206,3 +218,49 @@ async def cb_duel_accept(callback: CallbackQuery, session: AsyncSession) -> None
             pass
         await _finish_duel(callback.message, session, result)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("duel:decline:"))
+async def cb_duel_decline(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Отклоняет вызов на дуэль кнопкой и закрывает запись."""
+    parts = callback.data.split(":")
+    if len(parts) != 3 or not parts[2].isdigit():
+        await callback.answer()
+        return
+    pending_id = int(parts[2])
+
+    result = await decline_challenge(session, callback.from_user.id, pending_id)
+
+    if result.status == "no_pending":
+        await callback.answer(texts.CB_EXPIRED, show_alert=True)
+        return
+    if result.status == "not_target":
+        await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
+        return
+
+    # Убираем кнопки и сообщаем обеим сторонам, что бой не состоится.
+    if callback.message is not None:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:  # noqa: BLE001
+            pass
+        decliner = await session.get(User, result.decliner_id)
+        initiator = await session.get(User, result.initiator_id)
+        decliner_mention = (
+            mention(decliner.user_id, decliner.first_name, decliner.username)
+            if decliner
+            else "Боец"
+        )
+        initiator_mention = (
+            mention(initiator.user_id, initiator.first_name, initiator.username)
+            if initiator
+            else "Боец"
+        )
+        await callback.message.answer(
+            texts.DUEL_DECLINED.format(
+                decliner=decliner_mention, initiator=initiator_mention
+            )
+        )
+    await callback.answer()
+
+

@@ -21,11 +21,13 @@ from app.core.utils import now_utc
 from app.models import User
 from app.models.pending_action import (
     STATUS_ACCEPTED,
+    STATUS_DECLINED,
     STATUS_EXPIRED,
     STATUS_PENDING,
     TYPE_DUEL,
     PendingAction,
 )
+
 from app.services import cooldowns
 from app.services.economy import change_balance
 from app.settings import balance
@@ -194,3 +196,46 @@ async def accept_challenge(
         bank=bank,
         amount=amount,
     )
+
+
+@dataclass
+class DeclineResult:
+    """Результат отказа от вызова на дуэль."""
+
+    status: str  # "no_pending" / "not_target" / "ok"
+    initiator_id: int = 0
+    decliner_id: int = 0
+
+
+async def decline_challenge(
+    session: AsyncSession, decliner_id: int, pending_id: int
+) -> DeclineResult:
+    """Отклоняет вызов на дуэль и закрывает запись.
+
+    Отказаться может только тот, кого вызвали (для персонального вызова) или
+    любой, кроме инициатора (для открытого вызова). Ставки не списывались,
+    поэтому возвращать ничего не нужно — просто помечаем вызов отклонённым.
+    """
+    pending = await session.get(PendingAction, pending_id, with_for_update=True)
+    if (
+        pending is None
+        or pending.action_type != TYPE_DUEL
+        or pending.status != STATUS_PENDING
+    ):
+        return DeclineResult(status="no_pending")
+
+    if pending.target_id is None:
+        # Открытый вызов: инициатор не может «слиться» за других.
+        if pending.initiator_id == decliner_id:
+            return DeclineResult(status="not_target")
+    elif pending.target_id != decliner_id:
+        return DeclineResult(status="not_target")
+
+    pending.status = STATUS_DECLINED
+    return DeclineResult(
+        status="ok",
+        initiator_id=pending.initiator_id,
+        decliner_id=decliner_id,
+    )
+
+

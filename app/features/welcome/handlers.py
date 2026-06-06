@@ -1,7 +1,8 @@
 """Приветствие новых участников чата.
 
-Сообщение приветствия автоматически удаляется через минуту, текст
-выбирается случайно из нескольких коротких вариантов.
+Текст приветствия выбирается случайно из нескольких коротких вариантов и
+ОСТАЁТСЯ в чате (не удаляется автоматически) — это часть истории сообщества.
+Убираем только служебное сообщение Telegram «X вошёл в чат».
 """
 
 from __future__ import annotations
@@ -30,12 +31,12 @@ async def on_new_members(message: Message, session: AsyncSession) -> None:
         text = random.choice(texts.WELCOME_VARIANTS).format(
             mention=mention(member.id, member.first_name, member.username)
         )
-        sent = await message.answer(text, disable_web_page_preview=False)
-        await deletion.schedule(
-            session, sent.chat.id, sent.message_id, balance.WELCOME_DELETE_AFTER
-        )
+        # Приветствие остаётся в чате навсегда — не планируем удаление.
+        await message.answer(text, disable_web_page_preview=False)
 
-    # Убираем служебное сообщение о входе, чтобы чат оставался чистым.
+    # Убираем только служебное сообщение Telegram о входе, чтобы чат был чистым.
     await deletion.schedule(
         session, message.chat.id, message.message_id, balance.WELCOME_DELETE_AFTER
     )
+
+
