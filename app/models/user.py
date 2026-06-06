@@ -60,6 +60,16 @@ class User(Base):
     # Telegram историю не отдаёт.
     messages_count: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
 
+    # Текущий MMR (денормализованная проекция журнала mmr_entries). Журнал
+    # остаётся источником правды и аудитом, но текущее значение хранится здесь,
+    # чтобы профиль/рейтинг/сайт/MMR-команды читали одно поле, а не агрегировали
+    # SUM(amount) при каждом запросе. Обновляется синхронно с журналом в
+    # repositories.mmr.add_entry.
+    mmr: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, index=True
+    )
+
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

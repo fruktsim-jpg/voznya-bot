@@ -39,6 +39,13 @@ PERM_GIFT_MANAGE = "gift.manage"            # системные/админск�
 PERM_MMR_VIEW = "mmr.view"                  # просмотр рейтинга/истории MMR
 PERM_MMR_ADD = "mmr.add"                    # начислить MMR (награда/ивент)
 PERM_MMR_REMOVE = "mmr.remove"              # списать MMR (коррекция)
+PERM_REPUTATION_VIEW = "reputation.view"    # просмотр репутации/истории
+PERM_REPUTATION_ADD = "reputation.add"      # выдать репутацию
+PERM_REPUTATION_REMOVE = "reputation.remove"  # снять репутацию
+PERM_ACHIEVEMENTS_VIEW = "achievements.view"      # просмотр достижений
+PERM_ACHIEVEMENTS_GRANT = "achievements.grant"    # выдать достижение
+PERM_ACHIEVEMENTS_REVOKE = "achievements.revoke"  # отозвать достижение
+
 
 
 
