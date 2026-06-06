@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.filters import RuCommand
 from app.core.money import money
 from app.core.utils import mention, place_marker
+from app.features.achievements.service import check_award_and_notify
 from app.features.pidor.service import get_or_choose_pidor
 from app.models import User
 from app.repositories import users as users_repo
@@ -66,3 +67,18 @@ async def cmd_pidor(message: Message, session: AsyncSession, command_args: str) 
         text = texts.PIDOR_TODAY.format(mention=who, count=result.count)
 
     await message.answer(text + top_block)
+
+    # Только при фактическом выборе сегодня меняются счётчики: победителю
+    # +1 к pidor_count, открывшему — продуктивный бонус (total_earned). Тогда
+    # же проверяем достижения обоих, чтобы они открывались СРАЗУ, а не «висели»
+    # до следующего действия игрока.
+    if result.status == "chosen":
+        if winner is not None:
+            await check_award_and_notify(
+                message, session, winner.user_id, winner.first_name, winner.username
+            )
+        # Открывший мог не совпадать с победителем — проверяем и его (бонус).
+        if result.winner_id != user.id:
+            await check_award_and_notify(
+                message, session, user.id, user.first_name, user.username
+            )

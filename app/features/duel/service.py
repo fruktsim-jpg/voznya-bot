@@ -31,6 +31,7 @@ from app.models.pending_action import (
 from app.services import cooldowns
 from app.services.economy import change_balance
 from app.settings import balance
+from app.settings import mmr as mmr_settings
 
 
 @dataclass
@@ -53,6 +54,9 @@ class DuelResult:
     loser_id: int = 0
     bank: int = 0
     amount: int = 0
+    # Повышения ранга по итогу дуэли (если случились) — для уведомления.
+    winner_rankup: mmr_settings.Rank | None = None
+    loser_rankup: mmr_settings.Rank | None = None
 
 
 async def create_challenge(
@@ -167,18 +171,18 @@ async def accept_challenge(
     loser.duel_loss_streak += 1
 
     # MMR за дуэль (отдельный игровой рейтинг, не связан с банком/ешками):
-    # оба получают за участие, победитель — ещё и за победу.
+    # оба получают за участие, победитель — ещё и за победу. award_mmr вернёт
+    # новый ранг, если начисление подняло игрока на следующую ступень.
     from app.features.mmr.service import award_mmr
-    from app.settings import mmr as mmr_settings
 
-    await award_mmr(
+    winner_rankup = await award_mmr(
         session,
         player_id=winner_id,
         amount=mmr_settings.MMR_DUEL_PARTICIPATION + mmr_settings.MMR_DUEL_WIN,
         source=mmr_settings.SOURCE_DUEL,
         reason="win",
     )
-    await award_mmr(
+    loser_rankup = await award_mmr(
         session,
         player_id=loser_id,
         amount=mmr_settings.MMR_DUEL_PARTICIPATION,
@@ -195,6 +199,8 @@ async def accept_challenge(
         loser_id=loser_id,
         bank=bank,
         amount=amount,
+        winner_rankup=winner_rankup,
+        loser_rankup=loser_rankup,
     )
 
 
@@ -237,5 +243,3 @@ async def decline_challenge(
         initiator_id=pending.initiator_id,
         decliner_id=decliner_id,
     )
-
-

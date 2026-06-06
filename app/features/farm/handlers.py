@@ -57,7 +57,12 @@ async def cmd_farm(message: Message, session: AsyncSession, command_args: str) -
         return
 
     who = mention(user.id, user.first_name, user.username)
+    # MMR снимаем ДО начислений этого апдейта, чтобы поймать повышение ранга.
+    from app.features.mmr.service import announce_rankup_if_any
+    from app.repositories.mmr import get_mmr
+
+    mmr_before = await get_mmr(session, user.id)
+
     await message.answer(render_farm_result(result, who))
     await check_award_and_notify(message, session, user.id, user.first_name, user.username)
-
-
+    await announce_rankup_if_any(message, session, user.id, who, mmr_before)

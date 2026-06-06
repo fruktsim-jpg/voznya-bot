@@ -52,6 +52,22 @@ async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) ->
     await check_award_and_notify(
         answerable, session, winner.user_id, winner.first_name, winner.username
     )
+    # Проигравший тоже меняет счётчики (duels_lost, duel_loss_streak), поэтому
+    # его достижения — в т.ч. секретный «Мешок» за 5 поражений подряд — нужно
+    # проверять СРАЗУ здесь, а не ждать его следующего действия.
+    await check_award_and_notify(
+        answerable, session, loser.user_id, loser.first_name, loser.username
+    )
+
+    # Повышения ранга MMR по итогу боя считаются в сервисе (award_mmr вернул
+    # новый ранг). Объявляем их после результата: сначала победителю, потом
+    # проигравшему (он тоже растёт за участие).
+    from app.features.mmr.service import format_rankup
+
+    if result.winner_rankup is not None:
+        await answerable.answer(format_rankup(winner_mention, result.winner_rankup))
+    if result.loser_rankup is not None:
+        await answerable.answer(format_rankup(loser_mention, result.loser_rankup))
 
 
 @router.message(RuCommand("бой", "duel", "дуэль", "дуэлька"))
@@ -262,5 +278,3 @@ async def cb_duel_decline(callback: CallbackQuery, session: AsyncSession) -> Non
             )
         )
     await callback.answer()
-
-

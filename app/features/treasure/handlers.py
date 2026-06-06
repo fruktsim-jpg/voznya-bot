@@ -31,19 +31,27 @@ async def _do_claim(
     ``answerable`` — объект с методом ``answer`` (Message или
     callback.message), куда уйдёт сообщение о результате.
     """
+    # MMR снимаем ДО взятия клада, чтобы поймать повышение ранга по итогу.
+    from app.features.mmr.service import announce_rankup_if_any
+    from app.repositories.mmr import get_mmr
+
+    mmr_before = await get_mmr(session, user_id)
+
     result = await claim_treasure(session, user_id, chat_id)
     if result.status == "none":
         return False
 
+    who = mention(user_id, first_name, username)
     await answerable.answer(
         random.choice(texts.TREASURE_CLAIM_VARIANTS).format(
-            mention=mention(user_id, first_name, username),
+            mention=who,
             reward=money(result.reward),
         )
     )
     await check_award_and_notify(answerable, session, user_id, first_name, username)
     if result.fast:
         await notify_specific(answerable, session, user_id, first_name, username, "kladmen")
+    await announce_rankup_if_any(answerable, session, user_id, who, mmr_before)
     return True
 
 
