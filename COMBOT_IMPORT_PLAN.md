@@ -109,10 +109,12 @@ combot_import_runs (1) ──logical(import_run_id)──> combot_user_stats    
 
 ---
 
-## 5. Одноразовый импорт (дизайн, без реализации)
+## 5. Одноразовый импорт — РЕАЛИЗОВАН
 
-Импорт-скрипт ещё не написан — здесь только согласованный план. Предлагаемое
-место: `scripts/import_combot_history.py` (CLI, запуск вручную, НЕ из бота).
+Скрипт: `scripts/import_combot_history.py` (CLI, запуск вручную, НЕ из бота,
+НЕ автоматически). HTTP — на stdlib `urllib` (без новых зависимостей), БД —
+через существующий `app.core.db.get_sessionmaker`.
+
 
 Алгоритм:
 1. Создать строку `combot_import_runs` со `status='running'`, зафиксировать
@@ -177,9 +179,39 @@ git). Запуск только вручную и сначала на dev/stagin
 - `migrations/versions/0012_combot_import_foundation.py` — схема (ручное применение)
 - `app/settings/combot_historical_achievements.py` — правила исторических бейджей
 
+## Запуск импорта (вручную, в окружении бота)
+```bash
+# 0. Миграцию накатить заранее (один раз):
+docker compose run --rm bot alembic upgrade head
+
+# 1. Сухой прогон — только тянет API и печатает статистику, в БД не пишет:
+docker compose run --rm -e COMBOT_API_KEY=<KEY> bot \
+    python -m scripts.import_combot_history --dry-run
+
+# 2. Реальный импорт (идемпотентный, можно повторять):
+docker compose run --rm -e COMBOT_API_KEY=<KEY> bot \
+    python -m scripts.import_combot_history --started-by <admin_user_id>
+```
+`COMBOT_API_KEY` берётся из окружения/`.env` (в git не коммитим). `COMBOT_CHAT_ID`
+по умолчанию = `CHAT_ID`, период — с 2020-01-01 по «сейчас» (переопределяется
+`--from-ms` / `--to-ms`).
+
+Ожидаемый вывод (по данным `COMBOT_MIGRATION.md`):
+```
+ИМПОРТ ЗАВЕРШЁН (run_id=1)
+  combot_user_stats:        405 пользователей
+  combot_daily_stats:       2348 дней
+  combot_activity_heatmap:  ≤168 ячеек
+  сверка user_id: N из 405 Combot-пользователей есть в нашей users
+  примеры совпадений (user_id | username | messages):
+        8354006262  ...                  14037
+```
+
 ## Следующие шаги (вне этой задачи)
-1. Написать `scripts/import_combot_history.py` по алгоритму из раздела 5.
-2. Применить миграцию на dev, прогнать импорт на dev, сверить итоги с
+1. Применить миграцию на dev, прогнать импорт на dev, сверить итоги с
    `COMBOT_MIGRATION.md` (405 юзеров, messages_total 94 960).
-3. Откалибровать пороги бейджей по реальному распределению.
+2. Откалибровать пороги бейджей по реальному распределению.
+3. Добавить чтение `combot_*` на сайте (отдельная задача — UI здесь не делался).
 4. Только после успешного импорта в prod — рассматривать отказ от Combot.
+
+

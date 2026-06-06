@@ -17,6 +17,7 @@ router = Router(name="profile")
 async def render_profile(session: AsyncSession, user: User) -> str:
     """Формирует текст профиля игрока."""
     from app.features.achievements.service import get_unlocked_codes
+    from app.repositories.combot_stats import get_combot_overlay, total_messages
     from app.repositories.marriages import get_active_marriage
     from app.repositories.users import get_user
     from app.settings.achievements import ACHIEVEMENTS
@@ -24,16 +25,28 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     settings = get_settings()
     title = get_title(user.total_earned)
     next_title = get_next_title(user.total_earned)
+
+    # Единый счётчик сообщений: историческая надстройка Combot + счёт Возни.
+    # Для игрока это одна цифра за всю историю сообщества, без упоминания Combot.
+    overlay = await get_combot_overlay(session, user.user_id)
+    messages_total = total_messages(user.messages_count, overlay)
     
     text = (
         f"👤 <b>Профиль — {user.display_name()}</b>\n\n"
         f"💰 Баланс: <b>{user.balance:,}</b> ешек\n"
         f"📈 Заработано: <b>{user.total_earned:,}</b> ешек\n"
+        f"💬 Сообщений: <b>{messages_total:,}</b>\n"
         f"🏆 Титул: {title.emoji} <b>{title.name}</b>\n"
     )
+
     
+    # Компактная строка «в чате с» — только если Combot знает дату входа.
+    if overlay.joined_at is not None:
+        text += f"📅 В чате с: {overlay.joined_at:%d.%m.%Y}\n"
+
     # Прогресс до следующего титула
     if next_title:
+
         progress = user.total_earned - title.min_earned
         needed = next_title.min_earned - title.min_earned
         percent = int((progress / needed) * 100) if needed > 0 else 100
