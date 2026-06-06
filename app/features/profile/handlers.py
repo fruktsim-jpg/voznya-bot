@@ -71,6 +71,14 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     total_achievements = len(ACHIEVEMENTS)
     opened_achievements = len(unlocked)
     text += f"🏅 Достижения: {opened_achievements}/{total_achievements}\n"
+
+    # Инвентарь — суммарное число предметов (read-only из inventory).
+    from app.repositories.inventory import count_items
+    from app.settings import inventory as inv_settings
+
+    items_count = await count_items(session, user.user_id)
+    if items_count:
+        text += inv_settings.PROFILE_ITEMS_LINE.format(count=items_count)
     
     # Брак
     marriage = await get_active_marriage(session, user.user_id)

@@ -73,7 +73,7 @@ ADMIN_PLATFORM.md, FOUNDATION_STATUS.md, и `*_FOUNDATION.md`
 
 | Система | Модель/таблица | Миграция | Repository | Service | Handler/UI бот | Сайт | Готовность |
 |---|---|---|---|---|---|---|---|
-| Inventory | да | 0009 | нет | нет | нет | **admin grant/revoke API есть** | schema + admin-write |
+| Inventory | да | 0009 | **да (`/инвентарь`)** | **да (read-only витрина в профиле)** | нет | **admin grant/revoke API есть** | runtime read + admin-write |
 | Shop | да | ~0010 | нет | нет | нет | нет (только модель) | schema-only |
 | Gifts | да | ~0011 | нет | нет | нет | счётчик в admin dashboard | schema-only |
 | Cosmetics | через item types | — | нет | нет | нет | нет | schema-only |
@@ -228,9 +228,11 @@ single-query, проблем роста не выявлено.
 4. **Admin V2: Репутация** (выдать/снять + аудит).
 5. **Admin V2: Достижения** (выдать/отозвать/массово).
 6. **Admin V2: MMR-коррекция** (после п.1).
-7. **Admin V2: просмотр инвентаря игрока** (write уже есть).
+7. ~~**Admin V2: просмотр инвентаря игрока**~~ ✅ read-only витрина в профиле
+   на сайте (`InventoryShowcase`), write-API уже был.
 8. **Catalog-API из бота** (ранги/титулы/ачивки) → убрать ручную синхру (р.9).
-9. **Inventory runtime в боте** (показать предметы игроку: `/инвентарь`).
+9. ~~**Inventory runtime в боте**~~ ✅ команда `/инвентарь` (просмотр предметов,
+   пагинация, чужой инвентарь по reply/@username) + строка в профиле.
 10. **Shop runtime + Admin CRUD магазина**.
 11. **Кейсы**: схема + открытие в боте + Admin-настройка дропа.
 12. **Gifts runtime**: выдача/просмотр + Admin ручная выдача.
