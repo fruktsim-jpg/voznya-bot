@@ -8,7 +8,11 @@ from app.models.account_link import AccountLink
 from app.models.admin_role import AdminRole
 from app.models.audit_log import AuditLog
 from app.models.base import Base
+from app.models.case_definition import CaseDefinition
+from app.models.case_opening import CaseOpening
+from app.models.case_reward import CaseReward
 from app.models.combot_activity_heatmap import CombotActivityHeatmap
+
 from app.models.combot_daily_stats import CombotDailyStats
 from app.models.combot_import_run import CombotImportRun
 from app.models.combot_user_stats import CombotUserStats
@@ -17,8 +21,10 @@ from app.models.gift_transaction import GiftTransaction
 from app.models.inventory import Inventory
 
 from app.models.inventory_history import InventoryHistory
+from app.models.inventory_instance import InventoryInstance
 from app.models.inventory_item import InventoryItem
 from app.models.marriage import Marriage
+
 
 from app.models.message_daily import MessageDaily
 from app.models.mmr_entry import MmrEntry
@@ -57,7 +63,12 @@ __all__ = [
     "InventoryItem",
     "Inventory",
     "InventoryHistory",
+    "InventoryInstance",
+    "CaseDefinition",
+    "CaseReward",
+    "CaseOpening",
     "ShopCategory",
+
     "ShopOffer",
     "PurchaseHistory",
     "GiftTransaction",
