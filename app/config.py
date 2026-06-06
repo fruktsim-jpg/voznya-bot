@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # Логирование
     log_level: str = "INFO"
 
+    # Gifts-магазин: реальная выдача Telegram Gifts через Bot API. По умолчанию
+    # ВЫКЛЮЧЕНА — покупка работает (ешки списываются, доставка остаётся pending),
+    # но реальные Stars не тратятся, пока выдача явно не включена и у бота нет
+    # подключённого доступа/баланса Stars. См. TELEGRAM_GIFTS_AUDIT.md.
+    gifts_delivery_enabled: bool = False
+
+
     @property
     def admin_ids(self) -> list[int]:
         """Список ID администраторов, разобранный из строки ADMIN_IDS."""

@@ -48,7 +48,9 @@ BOT_COMMANDS = [
     BotCommand(command="casino", description="🎰 Рискнуть в казино"),
     BotCommand(command="duel", description="⚔️ Звать на замес"),
     BotCommand(command="accept", description="⚔️ Принять бой"),
+    BotCommand(command="gifts", description="🎁 Магазин подарков"),
     BotCommand(command="claim", description="📦 Забрать клад"),
+
     BotCommand(command="pidor", description="🏳️‍🌈 Пидор дня"),
     BotCommand(command="couple", description="💞 Пара дня"),
     BotCommand(command="marry", description="💍 Предложение руки и сердца"),

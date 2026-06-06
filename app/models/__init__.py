@@ -17,7 +17,9 @@ from app.models.combot_daily_stats import CombotDailyStats
 from app.models.combot_import_run import CombotImportRun
 from app.models.combot_user_stats import CombotUserStats
 from app.models.cooldown import Cooldown
+from app.models.gift_catalog import GiftCatalog
 from app.models.gift_transaction import GiftTransaction
+
 from app.models.inventory import Inventory
 
 from app.models.inventory_history import InventoryHistory
@@ -71,7 +73,9 @@ __all__ = [
 
     "ShopOffer",
     "PurchaseHistory",
+    "GiftCatalog",
     "GiftTransaction",
+
     "ReputationEntry",
     "MmrEntry",
 

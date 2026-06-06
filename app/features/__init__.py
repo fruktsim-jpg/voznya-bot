@@ -24,6 +24,8 @@ def get_feature_routers() -> list[Router]:
 
     from app.features.duel.handlers import router as duel_router
     from app.features.farm.handlers import router as farm_router
+    from app.features.gifts.handlers import router as gifts_router
+
     from app.features.help.handlers import router as help_router
     from app.features.inventory.handlers import router as inventory_router
     from app.features.linking.handlers import router as linking_router
@@ -55,7 +57,9 @@ def get_feature_routers() -> list[Router]:
         farm_router,
         casino_router,
         cases_router,
+        gifts_router,
         duel_router,
+
 
         treasure_router,
         pidor_router,

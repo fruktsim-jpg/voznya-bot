@@ -32,8 +32,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 
-# Что дарится.
-GIFT_KINDS = ("item", "currency")
+# Что дарится. ``tg_gift`` — реальный Telegram Gift (внешний актив, выдаётся через
+# Bot API sendGift; не предмет инвентаря и не ешки) — см. TELEGRAM_GIFTS_AUDIT.md.
+GIFT_KINDS = ("item", "currency", "tg_gift")
+
 
 # Происхождение подарка.
 GIFT_TYPES = ("player", "system", "admin")
