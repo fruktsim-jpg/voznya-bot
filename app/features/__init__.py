@@ -29,6 +29,8 @@ def get_feature_routers() -> list[Router]:
     from app.features.pidor.handlers import router as pidor_router
     from app.features.profile.handlers import router as profile_router
     from app.features.ratings.handlers import router as ratings_router
+    from app.features.reputation.handlers import router as reputation_router
+
 
     from app.features.treasure.handlers import router as treasure_router
     from app.features.welcome.handlers import router as welcome_router
@@ -38,9 +40,15 @@ def get_feature_routers() -> list[Router]:
         # перехватывает любой /start.
         linking_router,
         welcome_router,
+        # Репутация — РАНЬШЕ командных роутеров: reply-фраза («топ», «+», ...)
+        # должна срабатывать как репутация. Фильтр требует reply + точный
+        # алиас, поэтому обычные команды (не-reply «топ» и т.п.) спокойно
+        # проходят дальше к своим роутерам.
+        reputation_router,
         farm_router,
         casino_router,
         duel_router,
+
         treasure_router,
         pidor_router,
         para_router,
@@ -50,6 +58,7 @@ def get_feature_routers() -> list[Router]:
         ratings_router,
         achievements_router,
         help_router,
+
         admin_router,
     ]
 

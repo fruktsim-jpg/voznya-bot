@@ -25,7 +25,9 @@ from app.models.nomination import DailyNomination
 from app.models.oidc_link_request import OidcLinkRequest
 from app.models.pending_action import PendingAction
 from app.models.purchase_history import PurchaseHistory
+from app.models.reputation_entry import ReputationEntry
 from app.models.scheduled_deletion import ScheduledDeletion
+
 from app.models.shop_category import ShopCategory
 from app.models.shop_offer import ShopOffer
 from app.models.transaction import Transaction
@@ -57,6 +59,8 @@ __all__ = [
     "ShopOffer",
     "PurchaseHistory",
     "GiftTransaction",
+    "ReputationEntry",
+
     "CombotUserStats",
     "CombotDailyStats",
     "CombotActivityHeatmap",
