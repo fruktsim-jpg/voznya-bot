@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import random
+
 from aiogram import F, Router
+
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,11 +39,12 @@ async def _finish_marriage(
 ) -> None:
     """Объявляет о браке и проверяет достижения у обоих супругов."""
     await answerable.answer(
-        texts.MARRY_DONE.format(
+        random.choice(texts.MARRY_DONE_VARIANTS).format(
             first=await _mention_of(session, initiator_id),
             second=await _mention_of(session, target_id),
         )
     )
+
     for uid in (initiator_id, target_id):
         u = await session.get(User, uid)
         if u is not None:
@@ -275,12 +279,13 @@ async def cb_divorce_confirm(callback: CallbackQuery, session: AsyncSession) -> 
         except Exception:  # noqa: BLE001
             pass
         await callback.message.answer(
-            texts.DIVORCE_DONE.format(
+            random.choice(texts.DIVORCE_DONE_VARIANTS).format(
                 first=mention(user_id, callback.from_user.first_name, callback.from_user.username),
                 second=await _mention_of(session, partner_id),
             )
         )
     await callback.answer()
+
 
 
 @router.callback_query(F.data.startswith("divorce:cancel:"))
@@ -299,7 +304,8 @@ async def cb_divorce_cancel(callback: CallbackQuery, session: AsyncSession) -> N
     
     if callback.message:
         try:
-            await callback.message.edit_text("❌ Развод отменён")
+            await callback.message.edit_text(texts.DIVORCE_CANCELLED)
+
         except Exception:  # noqa: BLE001
             pass
     await callback.answer()

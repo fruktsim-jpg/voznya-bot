@@ -39,23 +39,24 @@ logger = get_logger(__name__)
 # команд меню, поэтому здесь — латинские алиасы (русские команды работают
 # в чате благодаря собственному фильтру RuCommand).
 BOT_COMMANDS = [
-    BotCommand(command="farm", description="💊 Ферма — получить ешки"),
-    BotCommand(command="balance", description="💰 Баланс"),
-    BotCommand(command="profile", description="👤 Профиль игрока"),
-    BotCommand(command="achievements", description="🏅 Достижения"),
-    BotCommand(command="top", description="🏆 Рейтинг богачей"),
-    BotCommand(command="weekly", description="📅 Заработок за неделю"),
-    BotCommand(command="casino", description="🎰 Казино"),
-    BotCommand(command="duel", description="⚔️ Вызвать на дуэль"),
-    BotCommand(command="accept", description="⚔️ Принять дуэль"),
+    BotCommand(command="farm", description="💊 Ферма — поднять ешек"),
+    BotCommand(command="balance", description="💰 Сколько у тебя ешек"),
+    BotCommand(command="profile", description="👤 Твоя карточка"),
+    BotCommand(command="achievements", description="🏅 Ачивки"),
+    BotCommand(command="top", description="🏆 Богачи Возни"),
+    BotCommand(command="weekly", description="📅 Богачи недели"),
+    BotCommand(command="casino", description="🎰 Рискнуть в казино"),
+    BotCommand(command="duel", description="⚔️ Звать на замес"),
+    BotCommand(command="accept", description="⚔️ Принять бой"),
     BotCommand(command="claim", description="📦 Забрать клад"),
     BotCommand(command="pidor", description="🏳️‍🌈 Пидор дня"),
     BotCommand(command="couple", description="💞 Пара дня"),
-    BotCommand(command="marry", description="💍 Сделать предложение"),
-    BotCommand(command="marriage", description="💍 Информация о браке"),
+    BotCommand(command="marry", description="💍 Предложение руки и сердца"),
+    BotCommand(command="marriage", description="💍 Инфо о браке"),
     BotCommand(command="divorce", description="💔 Развод"),
-    BotCommand(command="families", description="💞 Рейтинг семей"),
-    BotCommand(command="help", description="❓ Помощь и список команд"),
+    BotCommand(command="families", description="💞 Крепкие семьи"),
+    BotCommand(command="help", description="❓ Помощь и команды"),
+
 ]
 
 
