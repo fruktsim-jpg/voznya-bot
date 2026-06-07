@@ -538,8 +538,10 @@ CASES_ROW_OWNED = " (у тебя: {count})"
 CASE_NOT_FOUND = "🤷 Такого кейса нет. Список — <code>/кейсы</code>."
 
 # Карточка одного кейса: описание + дроп-лист с шансами.
-CASE_CARD_HEADER = "🎁 <b>{name}</b>\n{description}\n\n💵 Открытие: {cost}\n📦 Содержимое:"
+CASE_CARD_HEADER = "🎁 <b>{name}</b>\n{description}\n\n💵 Открытие: {cost}\n\n📦 Что внутри (от редкого к частому):"
 CASE_CARD_ROW = "• {label} — <b>{chance}</b>"
+# Строка-подсказка о джекпотах кейса (самые жирные лимитированные награды).
+CASE_CARD_JACKPOT = "💎 <b>Джекпот:</b> {rewards}"
 CASE_CARD_FOOTER = "\nУ тебя кейсов: <b>{count}</b>"
 
 CASE_USAGE = "Использование: <code>/кейс код</code>. Список — <code>/кейсы</code>."

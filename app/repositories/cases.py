@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import CaseDefinition, CaseOpening, CaseReward
+from app.models import CaseDefinition, CaseOpening, CaseReward, InventoryItem
 
 
 async def get_active_cases(session: AsyncSession) -> list[CaseDefinition]:
@@ -57,6 +57,25 @@ async def get_case_rewards(
         .order_by(CaseReward.id)
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_item_meta_by_codes(
+    session: AsyncSession, codes: list[str]
+) -> dict[str, tuple[str, str]]:
+    """Возвращает {code: (name, rarity)} для предметов каталога по их кодам.
+
+    Нужно дроп-листу кейса, чтобы показывать НАЗВАНИЕ и РЕДКОСТЬ предмета вместо
+    голого ``item_code``. Отсутствующие в каталоге коды просто не попадают в
+    результат — вызывающая сторона делает фолбэк на сам код.
+    """
+    if not codes:
+        return {}
+    rows = await session.execute(
+        select(InventoryItem.code, InventoryItem.name, InventoryItem.rarity).where(
+            InventoryItem.code.in_(codes)
+        )
+    )
+    return {row[0]: (row[1] or row[0], row[2] or "common") for row in rows}
 
 
 async def get_available_rewards_for_update(

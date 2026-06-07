@@ -78,19 +78,54 @@ def _format_chance(weight: int, total: int) -> str:
     return f"{pct:.1f}%" if pct < 10 else f"{pct:.0f}%"
 
 
-def _reward_label(reward: CaseReward) -> str:
-    """Подпись награды в дроп-листе (без раскрытия точных кодов)."""
+# Порядок редкости валюты в дроп-листе: ешки показываем среди «обычных».
+_CURRENCY_RARITY = "common"
+
+
+def _reward_rarity(reward: CaseReward, item_meta: dict[str, tuple[str, str]]) -> str:
+    """Редкость награды: для предмета — из каталога, для ешек — common."""
+    if reward.reward_kind == "item" and reward.reward_item_code:
+        meta = item_meta.get(reward.reward_item_code)
+        if meta is not None:
+            return meta[1]
+    return _CURRENCY_RARITY
+
+
+def _reward_label(
+    reward: CaseReward, item_meta: dict[str, tuple[str, str]]
+) -> str:
+    """Подпись награды с эмодзи редкости и НАЗВАНИЕМ (код — только фолбэк)."""
+    qty_suffix = ""
+    if reward.max_qty > reward.min_qty:
+        qty_suffix = f" ×{reward.min_qty}–{reward.max_qty}"
+    elif reward.min_qty > 1:
+        qty_suffix = f" ×{reward.min_qty}"
+
     if reward.reward_kind == "currency":
-        amount = reward.amount or 0
-        return money(amount)
+        style = inv_texts.rarity_style(_CURRENCY_RARITY)
+        return f"{style.emoji} {money(reward.amount or 0)}"
+
     if reward.reward_kind == "item":
-        return reward.reward_item_code or "предмет"
+        rarity = _reward_rarity(reward, item_meta)
+        style = inv_texts.rarity_style(rarity)
+        name = None
+        if reward.reward_item_code:
+            meta = item_meta.get(reward.reward_item_code)
+            name = meta[0] if meta else reward.reward_item_code
+        name = name or "предмет"
+        return f"{style.emoji} <b>{name}</b>{qty_suffix}"
+
     return reward.reward_kind
 
 
 @router.message(RuCommand("кейс", "case"))
 async def cmd_case(message: Message, session: AsyncSession, command_args: str) -> None:
-    """Карточка одного кейса: описание, дроп-лист с шансами, кнопка открытия."""
+    """Карточка одного кейса: описание, дроп-лист с шансами, кнопка открытия.
+
+    Подача: награды отсортированы от редких к обычным, у каждой — эмодзи
+    редкости и человекочитаемое название (item_code только как фолбэк).
+    Джекпоты вынесены отдельной строкой, чтобы игрок сразу видел «ради чего».
+    """
     user = message.from_user
     if user is None:
         return
@@ -108,6 +143,22 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
     rewards = await cases_repo.get_case_rewards(session, code)
     total = sum(r.weight for r in rewards) or 1
 
+    # Подтягиваем названия/редкости предметов одним запросом (фолбэк — код).
+    item_codes = [
+        r.reward_item_code
+        for r in rewards
+        if r.reward_kind == "item" and r.reward_item_code
+    ]
+    item_meta = await cases_repo.get_item_meta_by_codes(session, item_codes)
+
+    # Сортировка: джекпоты выше, затем по убыванию редкости, затем по шансу.
+    def _sort_key(r: CaseReward) -> tuple:
+        rarity = _reward_rarity(r, item_meta)
+        order = inv_texts.rarity_style(rarity).order
+        return (0 if r.is_jackpot else 1, -order, r.weight)
+
+    ordered = sorted(rewards, key=_sort_key)
+
     body = [
         texts.CASE_CARD_HEADER.format(
             name=case.name,
@@ -115,10 +166,22 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
             cost=_cost_label(case),
         )
     ]
-    for r in rewards:
+
+    # Джекпот-подсказка: что самое жирное можно выбить (если есть лимитки).
+    jackpots = [r for r in ordered if r.is_jackpot]
+    if jackpots:
+        labels = ", ".join(
+            _reward_label(r, item_meta).replace("<b>", "").replace("</b>", "")
+            for r in jackpots[:3]
+        )
+        body.append(texts.CASE_CARD_JACKPOT.format(rewards=labels))
+
+    for r in ordered:
+        prefix = "💎 " if r.is_jackpot else ""
         body.append(
             texts.CASE_CARD_ROW.format(
-                label=_reward_label(r), chance=_format_chance(r.weight, total)
+                label=prefix + _reward_label(r, item_meta),
+                chance=_format_chance(r.weight, total),
             )
         )
     owned = await _owned_count(session, user.id, case.item_code)
@@ -127,6 +190,7 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
     await message.answer(
         "\n".join(body), reply_markup=case_open(case.item_code, user.id)
     )
+
 
 
 def _render_open(result: OpenResult) -> str:
