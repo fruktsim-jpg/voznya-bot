@@ -46,7 +46,16 @@ BUY_ERROR = "Не получилось купить подарок. Попроб
 
 DELIVERY_SENT = "✅ Подарок отправлен!"
 DELIVERY_PENDING = "⏳ Подарок оплачен, отправлю чуть позже."
+DELIVERY_PENDING_ADMIN = "⏳ Оплачено. Выдача отложена (pending). Причина: {reason}."
 DELIVERY_REFUNDED = "⚠️ Не удалось отправить подарок — ешки возвращены."
+
+# Человекочитаемые причины задержки выдачи (для админа).
+DELIVERY_REASONS = {
+    "delivery_disabled": "выдача выключена (GIFTS_DELIVERY_ENABLED=false)",
+    "no_telegram_gift_id": "у позиции каталога не задан telegram_gift_id",
+    "insufficient_bot_stars": "не хватает Stars на балансе бота",
+}
+
 
 NOT_YOURS = "Это не твоя кнопка."
 
@@ -140,10 +149,15 @@ async def cb_gift_buy(callback: CallbackQuery, session: AsyncSession) -> None:
         delivery_line = DELIVERY_SENT
     elif outcome.status == "cancelled":
         delivery_line = DELIVERY_REFUNDED
+    elif get_settings().is_admin(user_id):
+        # Админу показываем точную причину задержки (не гадаем).
+        reason = DELIVERY_REASONS.get(outcome.error or "", outcome.error or "неизвестно")
+        delivery_line = DELIVERY_PENDING_ADMIN.format(reason=reason)
     else:
         delivery_line = DELIVERY_PENDING
 
     await callback.answer()
+
     await callback.message.answer(
         BUY_OK.format(
             name=result.gift_name,
