@@ -22,6 +22,11 @@ class User(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # URL аватарки из Telegram. Заполняется сайтом при входе (Login Widget
+    # `photo_url` / OIDC `picture`) — бот в обычных апдейтах URL фото не получает.
+    # Может быть NULL (UI откатывается на инициал). Миграция 0023.
+    photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
 
     # Экономика
     balance: Mapped[int] = mapped_column(
