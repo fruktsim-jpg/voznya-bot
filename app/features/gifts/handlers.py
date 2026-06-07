@@ -149,7 +149,10 @@ async def cb_gift_buy(callback: CallbackQuery, session: AsyncSession) -> None:
         delivery_line = DELIVERY_SENT
     elif outcome.status == "cancelled":
         delivery_line = DELIVERY_REFUNDED
+        if get_settings().is_admin(user_id) and outcome.error:
+            delivery_line += f"\n(ошибка: {outcome.error})"
     elif get_settings().is_admin(user_id):
+
         # Админу показываем точную причину задержки (не гадаем).
         reason = DELIVERY_REASONS.get(outcome.error or "", outcome.error or "неизвестно")
         delivery_line = DELIVERY_PENDING_ADMIN.format(reason=reason)
