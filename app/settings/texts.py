@@ -572,6 +572,13 @@ CASE_OPEN_FRAME_DELAY = 0.4
 CASE_OPEN_WIN_ITEM = "🎉 Из «{case}» выпало: {rarity} <b>{item}</b>{qty}!"
 CASE_OPEN_WIN_CURRENCY = "🎉 Из «{case}» выпало: <b>{amount}</b>!\n💰 Баланс: <b>{balance}</b>"
 CASE_OPEN_JACKPOT = "💎 ДЖЕКПОТ! {line}"
+# Выпал реальный Telegram Gift / Premium — это не предмет инвентаря, а настоящий
+# подарок. Выдаётся вручную (pending), поэтому сразу честно говорим про доставку.
+CASE_OPEN_WIN_GIFT = (
+    "🎁🔥 Из «{case}» выпал НАСТОЯЩИЙ подарок: <b>{gift}</b>!\n"
+    "📬 Заявка принята — подарок выдаст админ. Ожидай доставку."
+)
+
 
 # Чужая кнопка.
 CASE_NOT_YOURS = "Это не твой кейс 🙅"

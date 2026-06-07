@@ -144,8 +144,9 @@ async def open_case(
     rewards = await cases_repo.get_available_rewards_for_update(
         session, case_item_code
     )
-    # Валидатор скоупа V1: в горячем пути допускаем только item/currency.
-    rewards = [r for r in rewards if r.reward_kind in REWARD_KINDS_V1]
+    # Валидатор скоупа: в горячем пути допускаем item/currency/tg_gift.
+    rewards = [r for r in rewards if r.reward_kind in REWARD_KINDS_OPENABLE]
+
     if not rewards:
         # Нет доступных наград (пустой дроп-лист / лимиты исчерпаны). Поднимаем
         # исключение → rollback (ничего ещё не списано, но кейс мисконфигурён).
@@ -230,7 +231,7 @@ async def open_case(
     )
 
 
-    # Имя/редкость предмета-награды для красивого ответа (best-effort).
+    # Имя/редкость награды для красивого ответа (best-effort).
     reward_item_name = None
     reward_rarity = None
     if result.reward_kind == "item" and result.reward_item_code:
@@ -244,6 +245,12 @@ async def open_case(
         if item is not None:
             reward_item_name = item[0]
             reward_rarity = item[1]
+    elif result.reward_kind == "tg_gift" and result.reward_item_code:
+        # Реальный Telegram Gift / Premium: показываем НАЗВАНИЕ из каталога.
+        gift_meta = await cases_repo.get_gift_meta_by_codes(
+            session, [result.reward_item_code]
+        )
+        reward_item_name = gift_meta.get(result.reward_item_code)
 
     return OpenResult(
         status="ok",
@@ -256,4 +263,7 @@ async def open_case(
         qty=result.qty,
         is_jackpot=reward.is_jackpot,
         balance=result.new_balance,
+        delivery_key=result.delivery_key,
     )
+
+

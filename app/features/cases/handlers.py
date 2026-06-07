@@ -92,14 +92,23 @@ async def _best_reward_label(session: AsyncSession, case_item_code: str) -> str 
         if r.reward_kind == "item" and r.reward_item_code
     ]
     item_meta = await cases_repo.get_item_meta_by_codes(session, item_codes)
+    gift_codes = [
+        r.reward_item_code
+        for r in rewards
+        if r.reward_kind == "tg_gift" and r.reward_item_code
+    ]
+    gift_meta = await cases_repo.get_gift_meta_by_codes(session, gift_codes)
 
     def _key(r: CaseReward) -> tuple:
         rarity = _reward_rarity(r, item_meta)
         order = inv_texts.rarity_style(rarity).order
-        return (1 if r.is_jackpot else 0, order)
+        # tg_gift — самые ценные награды (реальные подарки/Premium): выше всего.
+        kind_rank = 1 if r.reward_kind == "tg_gift" else 0
+        return (kind_rank, 1 if r.is_jackpot else 0, order)
 
     best = max(rewards, key=_key)
-    return _reward_label(best, item_meta)
+    return _reward_label(best, item_meta, gift_meta)
+
 
 
 
@@ -116,16 +125,22 @@ _CURRENCY_RARITY = "common"
 
 
 def _reward_rarity(reward: CaseReward, item_meta: dict[str, tuple[str, str]]) -> str:
-    """Редкость награды: для предмета — из каталога, для ешек — common."""
+    """Редкость награды: предмет — из каталога, tg_gift — легендарный, ешки —
+    common. Реальные Telegram Gifts/Premium — самые ценные, поэтому group'аются
+    как «легендарные» в дроп-листе."""
     if reward.reward_kind == "item" and reward.reward_item_code:
         meta = item_meta.get(reward.reward_item_code)
         if meta is not None:
             return meta[1]
+    if reward.reward_kind == "tg_gift":
+        return "legendary"
     return _CURRENCY_RARITY
 
 
 def _reward_label(
-    reward: CaseReward, item_meta: dict[str, tuple[str, str]]
+    reward: CaseReward,
+    item_meta: dict[str, tuple[str, str]],
+    gift_meta: dict[str, str] | None = None,
 ) -> str:
     """Подпись награды с эмодзи редкости и НАЗВАНИЕМ (код — только фолбэк)."""
     qty_suffix = ""
@@ -148,7 +163,17 @@ def _reward_label(
         name = name or "предмет"
         return f"{style.emoji} <b>{name}</b>{qty_suffix}"
 
+    if reward.reward_kind == "tg_gift":
+        # Реальный Telegram Gift / Premium: 🎁 + название из каталога.
+        name = None
+        if reward.reward_item_code:
+            name = (gift_meta or {}).get(reward.reward_item_code)
+            name = name or reward.reward_item_code
+        name = name or "подарок"
+        return f"🎁 <b>{name}</b>"
+
     return reward.reward_kind
+
 
 
 @router.message(RuCommand("кейс", "case"))
@@ -183,12 +208,19 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
         if r.reward_kind == "item" and r.reward_item_code
     ]
     item_meta = await cases_repo.get_item_meta_by_codes(session, item_codes)
+    gift_codes = [
+        r.reward_item_code
+        for r in rewards
+        if r.reward_kind == "tg_gift" and r.reward_item_code
+    ]
+    gift_meta = await cases_repo.get_gift_meta_by_codes(session, gift_codes)
 
     # Сортировка: джекпоты выше, затем по убыванию редкости, затем по шансу.
     def _sort_key(r: CaseReward) -> tuple:
         rarity = _reward_rarity(r, item_meta)
         order = inv_texts.rarity_style(rarity).order
         return (0 if r.is_jackpot else 1, -order, r.weight)
+
 
     ordered = sorted(rewards, key=_sort_key)
 
@@ -204,10 +236,11 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
     jackpots = [r for r in ordered if r.is_jackpot]
     if jackpots:
         labels = ", ".join(
-            _reward_label(r, item_meta).replace("<b>", "").replace("</b>", "")
+            _reward_label(r, item_meta, gift_meta).replace("<b>", "").replace("</b>", "")
             for r in jackpots[:3]
         )
         body.append(texts.CASE_CARD_JACKPOT.format(rewards=labels))
+
 
     # Группируем по редкости с заголовками — визуально отделяем ценное от
     # ширпотреба. Внутри группы порядок уже задан сортировкой ordered.
@@ -246,7 +279,12 @@ def _render_open(result: OpenResult) -> str:
             amount=money(result.amount or 0),
             balance=money(result.balance or 0),
         )
+    elif result.reward_kind == "tg_gift":
+        # Реальный Telegram Gift / Premium: создана pending-заявка на выдачу.
+        gift = result.reward_item_name or result.reward_item_code or "подарок"
+        line = texts.CASE_OPEN_WIN_GIFT.format(case=result.case_name, gift=gift)
     else:
+
         qty = f" ×{result.qty}" if result.qty > 1 else ""
         # Показываем редкость предмета (эмодзи + название) — игроку важно
         # сразу понять, насколько ценный дроп выпал. Раньше rarity было пустым.
