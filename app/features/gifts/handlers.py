@@ -59,7 +59,12 @@ DELIVERY_REASONS = {
     "delivery_disabled": "выдача выключена (GIFTS_DELIVERY_ENABLED=false)",
     "no_telegram_gift_id": "у позиции каталога не задан telegram_gift_id",
     "insufficient_bot_stars": "не хватает Stars на балансе бота",
+    "send_gift_unsupported": (
+        "sendGift недоступен в этой версии aiogram (нужен 3.14+); "
+        "обнови зависимость или выдай вручную"
+    ),
 }
+
 
 
 NOT_YOURS = "Это не твоя кнопка."

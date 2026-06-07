@@ -124,6 +124,20 @@ async def send_gift(
             ok=False, retriable=True, error="no_telegram_gift_id"
         )
 
+    # sendGift добавлен в Bot API 7.10 и появился в aiogram только с 3.14+.
+    # В установленной версии (3.13.1) метода НЕТ — прямой вызов упал бы с
+    # AttributeError. Проверяем наличие так же, как get_star_balance /
+    # get_available_gifts (единый защитный паттерн адаптера). Отсутствие метода —
+    # это НЕ постоянный отказ конкретной выдачи, а неготовность окружения:
+    # возвращаем retriable, чтобы доставка осталась pending (деньги не
+    # возвращаем — выдаст админ вручную или авто после апгрейда aiogram), а не
+    # ушла в ошибочный refund/cancel.
+    send = getattr(bot, "send_gift", None)
+    if send is None:
+        return DeliveryResult(
+            ok=False, retriable=True, error="send_gift_unsupported"
+        )
+
     balance_before = await get_star_balance(bot)
     if balance_before is not None and balance_before < star_cost:
         # Боту не хватает Stars — НЕ пытаемся слать (иначе гарантированная ошибка).
@@ -135,10 +149,11 @@ async def send_gift(
         )
 
     try:
-        result = await bot.send_gift(
+        result = await send(
             user_id=user_id, gift_id=telegram_gift_id, text=text
         )
     except Exception as exc:  # noqa: BLE001
+
         # Классификация: сетевые/временные — retriable; прочее — постоянное.
         msg = str(exc)
         retriable = _is_retriable_error(msg)

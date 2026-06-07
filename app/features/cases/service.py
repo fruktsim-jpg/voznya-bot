@@ -36,7 +36,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.economy_events import EVENT_PURCHASE
 from app.features.cases.rewards import RewardResult, grant_reward
 from app.models import CaseOpening, CaseReward, Inventory, InventoryItem, User
-from app.models.case_reward import REWARD_KINDS_V1
+
+# Виды наград, допустимые в горячем пути открытия. tg_gift включён: реальные
+# Telegram Gifts/Premium выдаются НЕ синхронно, а через pending-доставку
+# (см. rewards._grant_tg_gift) — тем же конвейером, что магазин подарков.
+REWARD_KINDS_OPENABLE = ("item", "currency", "tg_gift")
+
 
 from app.repositories import cases as cases_repo
 from app.services.economy import change_balance_tx
@@ -58,7 +63,10 @@ class OpenResult:
     qty: int = 1
     is_jackpot: bool = False
     balance: int | None = None
+    # Для tg_gift — idempotency_key созданной pending-доставки (уведомления).
+    delivery_key: str | None = None
     error: str | None = None
+
 
 
 def _pick_reward(rewards: list[CaseReward]) -> tuple[CaseReward, int, int]:

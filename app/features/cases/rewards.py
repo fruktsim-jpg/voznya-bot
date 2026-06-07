@@ -5,15 +5,21 @@
 Gifts / Stars = новая ветка в :func:`grant_reward`, без изменения кода кейсов,
 профиля, инвентаря и сайта.
 
-В V1 поддержаны две ветки:
+Поддержаны ветки:
 * ``currency`` — начисление ешек через экономическое ядро (``change_balance`` +
   ``transactions``). Баланс напрямую НЕ трогается;
 * ``item`` — выдача стекового предмета через ``inventory_grant`` (+ запись в
-  ``inventory_history``).
+  ``inventory_history``);
+* ``tg_gift`` — реальный Telegram Gift / Premium. НЕ выдаётся синхронно: его
+  нельзя отправить внутри транзакции БД, а Premium вообще выдаётся только
+  вручную. Вместо выдачи создаётся pending-``GiftTransaction`` — тот же
+  жизненный цикл, что у магазина подарков (``pending → completed/cancelled``,
+  ручная выдача командой ``/gifts_done``, идемпотентность по
+  ``idempotency_key``). Дальше доставка идёт ОБЩИМ конвейером Gifts — без
+  отдельной системы. ``reward_item_code`` указывает на код позиции
+  ``gift_catalog`` (например ``gift_heart`` / ``gift_premium_3m``).
 
-Ветки ``tg_gift`` и ``stars`` намеренно не реализованы (поднимают
-``NotImplementedError``) — это задел, разрешённый схемой, но запрещённый
-рантаймом V1.
+Ветка ``stars`` пока не реализована (поднимает ``NotImplementedError``).
 
 Функция не делает commit — выполняется внутри транзакции вызывающего
 (открытие кейса), чтобы выдача и леджер открытия были атомарны.
@@ -21,11 +27,14 @@ Gifts / Stars = новая ветка в :func:`grant_reward`, без измен
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.economy_events import EVENT_REWARD
+from app.models import GiftCatalog, GiftTransaction
 from app.services.economy import change_balance
 from app.services.inventory_grant import grant_item
 
@@ -39,6 +48,9 @@ class RewardResult:
     amount: int | None       # для currency — начисленные ешки
     qty: int                 # для item — выданное количество
     new_balance: int | None  # для currency — баланс после начисления
+    # Для tg_gift — idempotency_key созданной pending-доставки (для уведомлений
+    # игроку и ручной выдачи через тот же конвейер, что и магазин подарков).
+    delivery_key: str | None = None
 
 
 async def grant_reward(
@@ -54,7 +66,7 @@ async def grant_reward(
 ) -> RewardResult:
     """Выдаёт одну награду игроку. Диспетчер по ``reward_kind``.
 
-    :raises NotImplementedError: для tg_gift/stars (пост-V1).
+    :raises NotImplementedError: для stars (пост-V1).
     :raises ValueError: при некорректных данных награды.
     """
     if reward_kind == "currency":
@@ -99,11 +111,78 @@ async def grant_reward(
             new_balance=None,
         )
 
-    if reward_kind in ("tg_gift", "stars"):
-        # Разрешено схемой (задел), запрещено рантаймом V1. Включение = реализация
-        # этой ветки (через inventory_instances / telegram_payments).
-        raise NotImplementedError(
-            f"reward_kind '{reward_kind}' is post-V1 (Telegram Gifts/Stars)"
+    if reward_kind == "tg_gift":
+        return await _grant_tg_gift(
+            session,
+            user_id=user_id,
+            gift_code=reward_item_code,
+            source=source,
+            transaction_meta=transaction_meta,
         )
 
+    if reward_kind == "stars":
+        # Разрешено схемой (задел), не реализовано в рантайме.
+        raise NotImplementedError("reward_kind 'stars' is not implemented yet")
+
     raise ValueError(f"unknown reward_kind: {reward_kind}")
+
+
+async def _grant_tg_gift(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    gift_code: str | None,
+    source: str,
+    transaction_meta: dict | None,
+) -> RewardResult:
+    """Создаёт pending-доставку реального Telegram Gift/Premium (НЕ выдаёт сразу).
+
+    Награда-гифт не отправляется в момент открытия (Telegram-вызов нельзя делать
+    внутри транзакции, а Premium выдаётся только вручную). Вместо этого пишем
+    ``GiftTransaction(status='pending')`` — ту же запись, что создаёт покупка в
+    магазине подарков. Дальше она попадает в очередь ``/gifts_pending`` и
+    выдаётся тем же конвейером (``deliver_gift`` / ``complete_gift_manually``).
+
+    Так все реальные призы (обычные гифты и Premium) идут одним путём, без
+    отдельной системы выдачи.
+    """
+    if not gift_code:
+        raise ValueError("tg_gift reward requires reward_item_code (gift code)")
+
+    gift = await session.scalar(
+        select(GiftCatalog).where(GiftCatalog.code == gift_code)
+    )
+    if gift is None:
+        # Награда ссылается на несуществующую позицию каталога — это
+        # мисконфигурация дроп-листа. Поднимаем → rollback всего открытия.
+        raise ValueError(f"tg_gift reward references unknown gift '{gift_code}'")
+
+    idem = f"casegift:{user_id}:{secrets.token_hex(8)}"
+    meta = {
+        "source": source,
+        "gift": gift.code,
+        "star_cost": gift.star_cost,
+        "telegram_gift_id": gift.telegram_gift_id,
+        **(transaction_meta or {}),
+    }
+    session.add(
+        GiftTransaction(
+            kind="tg_gift",
+            gift_type="system",
+            sender_user_id=None,
+            recipient_user_id=user_id,
+            item_code=gift.code,
+            quantity=1,
+            status="pending",
+            idempotency_key=idem,
+            meta=meta,
+        )
+    )
+    return RewardResult(
+        reward_kind="tg_gift",
+        reward_item_code=gift.code,
+        amount=None,
+        qty=1,
+        new_balance=None,
+        delivery_key=idem,
+    )
