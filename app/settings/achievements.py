@@ -71,8 +71,9 @@ ACHIEVEMENTS: list[Achievement] = [
     # --- 💰 Экономика -------------------------------------------------------
     Achievement("first_ezhka", "🌱", "Первая ешка", "Заработал первую ешку",
                 "economy", "total_earned", 1, reward=10),
-    Achievement("thousandaire", "💰", "Первый чемодан", "Поднял 1 000 ешек за всё время",
+    Achievement("thousandaire", "💰", "Первая тысяча", "Поднял 1 000 ешек за всё время",
                 "economy", "total_earned", 1000, reward=100),
+
     Achievement("magnate", "💰", "Магнат аптеки", "Поднял 10 000 ешек за всё время",
                 "economy", "total_earned", 10000, reward=400),
 
@@ -91,8 +92,9 @@ ACHIEVEMENTS: list[Achievement] = [
     # --- 📦 Клады -----------------------------------------------------------
     Achievement("treasure_hunter", "📦", "Кладоискатель", "Поднял первый клад",
                 "treasure", "treasures_found", 1, reward=50),
-    Achievement("treasure_master", "📦", "Охотник за чемоданами", "Поднял 10 кладов",
+    Achievement("treasure_master", "📦", "Охотник за закладками", "Поднял 10 кладов",
                 "treasure", "treasures_found", 10, reward=200),
+
 
     # --- 💍 Браки -----------------------------------------------------------
     Achievement("true_love", "💍", "Любовь существует", "Сыграл первую свадьбу",
@@ -117,10 +119,11 @@ ACHIEVEMENTS: list[Achievement] = [
                 "legend", "duels_won", 100, reward=500),
     Achievement("war_machine", "⚔️", "Машина возни", "250 побед в дуэлях",
                 "legend", "duels_won", 250, reward=900),
-    Achievement("cursed_suitcase", "📦", "Ёбаный чемодан", "Поднял 50 кладов",
+    Achievement("cursed_suitcase", "📦", "Сколько я к тебе шёл", "Поднял 50 кладов",
                 "legend", "treasures_found", 50, reward=500),
-    Achievement("radik_vault", "📦", "Кладовая Радика", "Поднял 100 кладов",
+    Achievement("radik_vault", "📦", "Кладовая барыги", "Поднял 100 кладов",
                 "legend", "treasures_found", 100, reward=900),
+
     Achievement("nomination_king", "🏳️", "Король номинаций", "50 раз «Пидор дня»",
                 "legend", "pidor_count", 50, reward=500),
     # Переименовано из «Авторитет» во избежание путаницы с рангом MMR.
@@ -164,8 +167,9 @@ ACHIEVEMENTS: list[Achievement] = [
 #   • mmr (новая категория): «Путь начался» (MMR≥1000), «Свой в Зволле»
 #     (MMR≥2500), «Котость подтверждена» (MMR≥5000), «Вершина Возни»
 #     (MMR≥25000). Метрика: текущий MMR = SUM(mmr_entries.amount).
-#   • reputation (новая категория): «Конинг заметил» (rep≥10), «Уважение двора»
+#   • reputation (новая категория): «Двор заметил» (rep≥10), «Уважение двора»
 #     (rep≥50), «Тёмный друн» (rep≤−10, секрет). Метрика: SUM(reputation_entries.value).
+
 #   • legacy (новая категория): «Старожил Возни» (10k сообщений), «Древний друн»
 #     (50k сообщений), «Видел Последний Деп» (активен до Combot-импорта).
 #     Метрика: объединённый счётчик сообщений. ВАЖНО: сообщения дают ачивки,

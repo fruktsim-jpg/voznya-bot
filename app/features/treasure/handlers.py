@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 from app.core.money import money
+from app.core.responses import notify_and_cleanup
 from app.core.utils import mention
 from app.features.achievements.service import check_award_and_notify, notify_specific
 from app.features.treasure.service import claim_treasure
 from app.settings import texts
+
 
 router = Router(name="treasure")
 
@@ -66,7 +68,10 @@ async def cmd_claim(message: Message, session: AsyncSession, command_args: str) 
         message, session, user.id, user.first_name, user.username, message.chat.id
     )
     if not claimed:
-        await message.answer(texts.TREASURE_NONE)
+        # Клада нет — не плодим мусор: удаляем команду игрока и короткий ответ
+        # бота (чат остаётся чистым).
+        await notify_and_cleanup(session, message, texts.TREASURE_NONE)
+
 
 
 @router.callback_query(F.data == "treasure:claim")

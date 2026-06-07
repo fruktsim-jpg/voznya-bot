@@ -17,7 +17,7 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
-from app.core.utils import format_cooldown, mention, place_marker
+from app.core.utils import display_name, format_cooldown, mention, place_marker
 from app.features.reputation.service import apply_reputation, classify
 from app.repositories import reputation as rep_repo
 from app.settings import reputation as rep_texts
@@ -140,7 +140,7 @@ async def cmd_top_reputation(
     rows = "\n".join(
         rep_texts.REP_TOP_ROW.format(
             place=place_marker(i + 1),
-            mention=mention(row.user_id, row.first_name, row.username),
+            mention=display_name(row.first_name, row.username),
             score=row.score,
         )
         for i, row in enumerate(top)

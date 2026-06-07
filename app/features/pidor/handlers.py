@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 from app.core.money import money
-from app.core.utils import mention, place_marker
+from app.core.utils import display_name, place_marker
+
 from app.features.achievements.service import check_award_and_notify
 from app.features.pidor.service import get_or_choose_pidor
 from app.models import User
@@ -26,8 +27,9 @@ async def _build_top(session: AsyncSession) -> str:
     rows = "\n".join(
         texts.PIDOR_TOP_ROW.format(
             place=place_marker(i + 1),
-            mention=mention(u.user_id, u.first_name, u.username),
+            mention=display_name(u.first_name, u.username),
             count=u.pidor_count,
+
         )
         for i, u in enumerate(top)
     )
@@ -50,11 +52,10 @@ async def cmd_pidor(message: Message, session: AsyncSession, command_args: str) 
         return
 
     winner = await session.get(User, result.winner_id)
-    who = (
-        mention(winner.user_id, winner.first_name, winner.username)
-        if winner
-        else "кто-то"
-    )
+    # Имя без пинга: «Пидор дня» — публичная номинация, не звоним человеку
+    # уведомлением каждый раз, когда кто-то вызвал команду.
+    who = display_name(winner.first_name, winner.username) if winner else "кто-то"
+
     top_block = await _build_top(session)
 
     if result.status == "chosen":

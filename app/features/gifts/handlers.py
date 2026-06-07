@@ -22,7 +22,12 @@ from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
-from app.features.gifts.service import buy_gift, deliver_gift
+from app.features.gifts.service import (
+    buy_gift,
+    complete_gift_manually,
+    deliver_gift,
+    refund_gift,
+)
 from app.models import GiftCatalog
 from app.repositories import gifts as gifts_repo
 from app.services.telegram_gifts import get_star_balance, list_available_gifts
@@ -239,5 +244,115 @@ async def cmd_gifts_setid(
         .values(telegram_gift_id=gid)
     )
     await message.answer(SETID_OK.format(code=code, gid=gid))
+
+
+# --- Админ: ручное управление выдачей подарков ------------------------------
+# Сценарий: автодоставка через Telegram не сработала (выключена, нет gift_id,
+# мало Stars). Покупка уже оплачена (ешки списаны, есть pending-доставка). Админ
+# отправляет подарок вручную и закрывает доставку, либо отменяет с возвратом.
+PENDING_EMPTY = "🎁 Нет подарков в ожидании выдачи (pending)."
+PENDING_HEADER = "🎁 <b>Подарки в ожидании выдачи</b> ({n}):"
+PENDING_ROW = (
+    "• <code>{key}</code>\n"
+    "  «{item}» → пользователю <code>{user}</code>{stars}"
+)
+PENDING_HINT = (
+    "\n\nВыдать вручную: <code>/gifts_done &lt;ключ&gt;</code>\n"
+    "Отменить с возвратом: <code>/gifts_refund &lt;ключ&gt;</code>"
+)
+
+GIFT_KEY_USAGE = (
+    "Укажи ключ доставки (idempotency_key) из <code>/gifts_pending</code>:\n"
+    "<code>/{cmd} &lt;ключ&gt;</code>"
+)
+GIFT_DELIVERY_NOT_FOUND = "🤷 Доставки с таким ключом нет."
+GIFT_DELIVERY_NOT_PENDING = "⚠️ Эта доставка уже обработана (не pending)."
+GIFT_DONE_OK = "✅ Подарок отмечен как выданный вручную. Статистика обновлена."
+GIFT_REFUND_OK = "↩️ Доставка отменена, ешки возвращены игроку."
+
+
+@router.message(RuCommand("gifts_pending", "gifts_pending"))
+async def cmd_gifts_pending(message: Message, session: AsyncSession) -> None:
+    """Показывает оплаченные, но ещё не выданные подарки (только админ)."""
+    if not _admin_ok(message):
+        await message.answer(ADMIN_ONLY)
+        return
+
+    deliveries = await gifts_repo.get_recent_deliveries(session, limit=50)
+    pending = [d for d in deliveries if d.status == "pending"]
+    if not pending:
+        await message.answer(PENDING_EMPTY)
+        return
+
+    lines = [PENDING_HEADER.format(n=len(pending))]
+    for d in pending:
+        star_cost = int((d.meta or {}).get("star_cost") or 0)
+        stars = f" · {star_cost} ⭐" if star_cost else ""
+        lines.append(
+            PENDING_ROW.format(
+                key=d.idempotency_key,
+                item=d.item_code or "?",
+                user=d.recipient_user_id,
+                stars=stars,
+            )
+        )
+    await message.answer("\n".join(lines) + PENDING_HINT)
+
+
+@router.message(RuCommand("gifts_done", "gifts_done"))
+async def cmd_gifts_done(
+    message: Message, session: AsyncSession, command_args: str
+) -> None:
+    """Отмечает pending-доставку как выданную вручную (только админ).
+
+    Деньги игрока не трогаем (покупка уже зафиксирована), но доставка переходит
+    в ``completed`` и единица реализуется (reserved-1, sold_count+1) — чтобы
+    подарок считался отправленным и попадал в аналитику.
+    """
+    if not _admin_ok(message):
+        await message.answer(ADMIN_ONLY)
+        return
+    key = (command_args or "").strip()
+    if not key:
+        await message.answer(GIFT_KEY_USAGE.format(cmd="gifts_done"))
+        return
+
+    outcome = await complete_gift_manually(
+        session,
+        idempotency_key=key,
+        admin_user_id=message.from_user.id,
+        channel="bot",
+    )
+    if outcome.status == "completed":
+        await message.answer(GIFT_DONE_OK)
+    elif outcome.error == "delivery_not_found":
+        await message.answer(GIFT_DELIVERY_NOT_FOUND)
+    else:
+        await message.answer(GIFT_DELIVERY_NOT_PENDING)
+
+
+@router.message(RuCommand("gifts_refund", "gifts_refund"))
+async def cmd_gifts_refund(
+    message: Message, session: AsyncSession, command_args: str
+) -> None:
+    """Отменяет pending-доставку с возвратом ешек игроку (только админ)."""
+    if not _admin_ok(message):
+        await message.answer(ADMIN_ONLY)
+        return
+    key = (command_args or "").strip()
+    if not key:
+        await message.answer(GIFT_KEY_USAGE.format(cmd="gifts_refund"))
+        return
+
+    outcome = await refund_gift(
+        session, idempotency_key=key, channel="bot", reason="admin_manual"
+    )
+    if outcome.status == "cancelled":
+        await message.answer(GIFT_REFUND_OK)
+    elif outcome.error == "delivery_not_found":
+        await message.answer(GIFT_DELIVERY_NOT_FOUND)
+    else:
+        await message.answer(GIFT_DELIVERY_NOT_PENDING)
+
 
 

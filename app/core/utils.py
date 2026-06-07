@@ -131,6 +131,26 @@ def mention(user_id: int, name: str | None, username: str | None = None) -> str:
     """Создаёт HTML-упоминание пользователя.
 
     Используется tg://user?id=... — работает даже без username.
+
+    ВНИМАНИЕ: такая ссылка ПИНГует пользователя (шлёт уведомление). Для
+    массовых публичных списков (топы, daily, номинации) используй
+    ``display_name`` — он показывает имя БЕЗ пинга.
     """
     display = escape(name) or (f"@{escape(username)}" if username else "Игрок")
     return f'<a href="tg://user?id={user_id}">{display}</a>'
+
+
+def display_name(name: str | None, username: str | None = None) -> str:
+    """Имя пользователя для показа БЕЗ пинга (без кликабельной mention-ссылки).
+
+    Нужен для топов, daily и номинаций: сообщение остаётся информативным, но
+    люди не получают лишние уведомления. Если есть имя — берём его; иначе
+    @username; иначе «Игрок». Всё экранируется под HTML-режим Telegram.
+    """
+    if name and name.strip():
+        return escape(name)
+    if username and username.strip():
+        return f"@{escape(username)}"
+    return "Игрок"
+
+

@@ -319,3 +319,60 @@ async def refund_gift(
         reason_error=reason,
     )
     return DeliverOutcome(status="cancelled", refunded=True, error=reason)
+
+
+async def complete_gift_manually(
+    session: AsyncSession,
+    *,
+    idempotency_key: str,
+    admin_user_id: int,
+    channel: str = "bot",
+) -> DeliverOutcome:
+    """Ручная отметка pending-доставки как ВЫДАННОЙ (админом).
+
+    Сценарий: автоматическая выдача через Telegram не сработала (выдача
+    выключена, нет gift_id, не хватает Stars), и админ отправил подарок
+    вручную. Эта функция приводит леджер в то же состояние, что и успешный
+    :func:`deliver_gift`:
+
+      pending → completed, reserved-1, sold_count+1.
+
+    Деньги игрока не трогаем (покупка уже списала ешки и зафиксирована в
+    purchase_history), поэтому экономическая статистика остаётся корректной,
+    а подарок считается отправленным и попадает в аналитику как ``completed``.
+
+    Stars здесь НЕ списываем: ручная выдача делается вне бота, точного расхода
+    Stars у нас нет — фиксируем только факт ручной выдачи в meta. Идемпотентно.
+    """
+    delivery = await gifts_repo.get_delivery_for_update(session, idempotency_key)
+    if delivery is None:
+        return DeliverOutcome(status="skip", error="delivery_not_found")
+    if delivery.status != "pending":
+        # Уже обработано (completed/cancelled) — повторно ничего не делаем.
+        return DeliverOutcome(status="skip")
+
+    gift_code = delivery.item_code or ""
+    meta = dict(delivery.meta or {})
+    meta.update(
+        {
+            "manual_delivery": True,
+            "manual_by_admin": admin_user_id,
+            "manual_channel": channel,
+        }
+    )
+    delivery.status = "completed"
+    delivery.meta = meta
+
+    # Реализовать единицу: reserved-1, sold_count+1 — как при обычной выдаче.
+    await session.execute(
+        update(GiftCatalog)
+        .where(GiftCatalog.code == gift_code)
+        .where(GiftCatalog.reserved > 0)
+        .values(
+            reserved=GiftCatalog.reserved - 1,
+            sold_count=GiftCatalog.sold_count + 1,
+        )
+    )
+    return DeliverOutcome(status="completed")
+
+

@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.filters import RuCommand
 from app.core.keyboards import top_pagination
 from app.core.money import money
-from app.core.utils import format_marriage_duration_days, mention, place_marker
+from app.core.utils import display_name, format_marriage_duration_days, place_marker
+
 from app.models import User
 from app.repositories import economy as economy_repo
 from app.repositories import marriages as marriages_repo
@@ -44,8 +45,9 @@ async def render_top(session: AsyncSession, page: int, user_id: int | None) -> t
     rows = "\n".join(
         texts.TOP_RICH_ROW.format(
             place=place_marker(offset + i + 1),
-            mention=mention(u.user_id, u.first_name, u.username),
+            mention=display_name(u.first_name, u.username),
             balance=money(u.balance),
+
         )
         for i, u in enumerate(top)
     )
@@ -134,8 +136,9 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
     rows = "\n".join(
         texts.WEEKLY_ROW.format(
             place=place_marker(i + 1),
-            mention=mention(u.user_id, u.first_name, u.username),
+            mention=display_name(u.first_name, u.username),
             amount=money(earned),
+
         )
         for i, (u, earned) in enumerate(top)
     )
@@ -176,8 +179,9 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
         lines.append(
             texts.TOP_FAMILIES_ROW.format(
                 place=place_marker(i + 1),
-                first=mention(u1.user_id, u1.first_name, u1.username) if u1 else "?",
-                second=mention(u2.user_id, u2.first_name, u2.username) if u2 else "?",
+                first=display_name(u1.first_name, u1.username) if u1 else "?",
+                second=display_name(u2.first_name, u2.username) if u2 else "?",
+
                 duration=format_marriage_duration_days(m.married_at),
             )
         )

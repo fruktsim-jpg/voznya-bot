@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 from app.core.money import money
-from app.core.utils import mention
+from app.core.utils import display_name
 from app.features.achievements.service import check_award_and_notify
 from app.features.para.service import get_or_choose_para
 from app.models import User
@@ -18,10 +18,13 @@ router = Router(name="para")
 
 
 async def _mention_of(session: AsyncSession, user_id: int) -> str:
+    # Имя без пинга: «Пара дня» — публичная номинация, не звоним людям
+    # уведомлением каждый раз, когда кто-то вызвал команду.
     user = await session.get(User, user_id)
     if user is None:
         return "кто-то"
-    return mention(user.user_id, user.first_name, user.username)
+    return display_name(user.first_name, user.username)
+
 
 
 @router.message(RuCommand("пара", "couple", "para"))

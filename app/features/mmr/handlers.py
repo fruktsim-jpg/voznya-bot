@@ -15,7 +15,7 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
-from app.core.utils import mention, place_marker
+from app.core.utils import display_name, place_marker
 from app.repositories import mmr as mmr_repo
 from app.settings import mmr as mmr_texts
 
@@ -61,7 +61,7 @@ async def cmd_top_mmr(
     rows = "\n".join(
         mmr_texts.MMR_TOP_ROW.format(
             place=place_marker(i + 1),
-            mention=mention(row.user_id, row.first_name, row.username),
+            mention=display_name(row.first_name, row.username),
             mmr=row.mmr,
         )
         for i, row in enumerate(top)
