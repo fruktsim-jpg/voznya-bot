@@ -61,13 +61,43 @@ async def cmd_cases(message: Message, session: AsyncSession) -> None:
     for case in cases:
         owned = await _owned_count(session, user.id, case.item_code)
         owned_str = texts.CASES_ROW_OWNED.format(count=owned) if owned else ""
-        lines.append(
-            texts.CASES_ROW.format(
-                name=case.name, cost=_cost_label(case), owned=owned_str
-            )
-            + f"\n   <code>/кейс {case.item_code}</code>"
+        row = texts.CASES_ROW.format(
+            name=case.name, cost=_cost_label(case), owned=owned_str
         )
+        # Превью топ-дропа: лучшая по редкости награда кейса, чтобы игрок
+        # понимал ценность, не открывая карточку. Голых кодов не показываем.
+        best = await _best_reward_label(session, case.item_code)
+        if best:
+            row += texts.CASES_ROW_BEST.format(best=best)
+        row += f"\n   <code>/кейс {case.item_code}</code>"
+        lines.append(row)
     await message.answer("\n".join(lines))
+
+
+async def _best_reward_label(session: AsyncSession, case_item_code: str) -> str | None:
+    """Подпись самой ценной награды кейса (по редкости, джекпоты в приоритете).
+
+    Возвращает строку с эмодзи редкости и названием предмета (без шанса) или
+    None, если у кейса нет наград. Используется в списке кейсов как превью.
+    """
+    rewards = await cases_repo.get_case_rewards(session, case_item_code)
+    if not rewards:
+        return None
+    item_codes = [
+        r.reward_item_code
+        for r in rewards
+        if r.reward_kind == "item" and r.reward_item_code
+    ]
+    item_meta = await cases_repo.get_item_meta_by_codes(session, item_codes)
+
+    def _key(r: CaseReward) -> tuple:
+        rarity = _reward_rarity(r, item_meta)
+        order = inv_texts.rarity_style(rarity).order
+        return (1 if r.is_jackpot else 0, order)
+
+    best = max(rewards, key=_key)
+    return _reward_label(best, item_meta)
+
 
 
 def _format_chance(weight: int, total: int) -> str:
@@ -176,7 +206,19 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
         )
         body.append(texts.CASE_CARD_JACKPOT.format(rewards=labels))
 
+    # Группируем по редкости с заголовками — визуально отделяем ценное от
+    # ширпотреба. Внутри группы порядок уже задан сортировкой ordered.
+    current_rarity: str | None = None
     for r in ordered:
+        rarity = _reward_rarity(r, item_meta)
+        if rarity != current_rarity:
+            current_rarity = rarity
+            style = inv_texts.rarity_style(rarity)
+            body.append(
+                texts.CASE_CARD_RARITY_HEADER.format(
+                    emoji=style.emoji, name=style.name
+                )
+            )
         prefix = "💎 " if r.is_jackpot else ""
         body.append(
             texts.CASE_CARD_ROW.format(

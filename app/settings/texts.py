@@ -534,6 +534,8 @@ CASES_HEADER = "🎁 <b>Кейсы</b>\nВыбери кейс командой <
 CASES_ROW = "🎁 <b>{name}</b> — {cost}{owned}"
 CASES_ROW_FREE = "бесплатно"
 CASES_ROW_OWNED = " (у тебя: {count})"
+# Превью лучшей награды кейса в списке (чтобы выбирать, не открывая карточку).
+CASES_ROW_BEST = "\n   🌟 Топ-дроп: {best}"
 
 CASE_NOT_FOUND = "🤷 Такого кейса нет. Список — <code>/кейсы</code>."
 
@@ -542,6 +544,8 @@ CASE_CARD_HEADER = "🎁 <b>{name}</b>\n{description}\n\n💵 Открытие: 
 CASE_CARD_ROW = "• {label} — <b>{chance}</b>"
 # Строка-подсказка о джекпотах кейса (самые жирные лимитированные награды).
 CASE_CARD_JACKPOT = "💎 <b>Джекпот:</b> {rewards}"
+# Заголовок группы редкости в дроп-листе (визуальное разделение).
+CASE_CARD_RARITY_HEADER = "\n{emoji} <b>{name}</b>"
 CASE_CARD_FOOTER = "\nУ тебя кейсов: <b>{count}</b>"
 
 CASE_USAGE = "Использование: <code>/кейс код</code>. Список — <code>/кейсы</code>."
