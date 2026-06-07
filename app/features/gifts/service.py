@@ -34,8 +34,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.economy_events import EVENT_PURCHASE, EVENT_REWARD
 from app.models import GiftCatalog, GiftTransaction, PurchaseHistory, User
 from app.repositories import gifts as gifts_repo
+from app.services import stars as stars_service
 from app.services.economy import change_balance_tx
 from app.services.telegram_gifts import DeliveryResult, send_gift
+
 
 
 @dataclass(frozen=True)
@@ -256,7 +258,21 @@ async def deliver_gift(
                 sold_count=GiftCatalog.sold_count + 1,
             )
         )
+        # Зафиксировать РАСХОД Stars в едином леджере (источник правды по Stars).
+        # ref = idempotency_key доставки → расход однозначно связан с выдачей.
+        if star_cost > 0:
+            await stars_service.record_out(
+                session,
+                amount_stars=star_cost,
+                reason="gift_send",
+                user_id=delivery.recipient_user_id,
+                ref=idempotency_key,
+                source=channel,
+                balance_after=result.star_balance_after,
+                meta={"gift": gift_code},
+            )
         return DeliverOutcome(status="completed")
+
 
     if result.retriable:
         # Временная неудача: оставляем pending, копим попытки.

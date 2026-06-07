@@ -31,6 +31,8 @@ def get_feature_routers() -> list[Router]:
     from app.features.linking.handlers import router as linking_router
     from app.features.marriage.handlers import router as marriage_router
     from app.features.mmr.handlers import router as mmr_router
+    from app.features.payments.handlers import router as payments_router
+
 
     from app.features.para.handlers import router as para_router
     from app.features.pidor.handlers import router as pidor_router
@@ -54,7 +56,10 @@ def get_feature_routers() -> list[Router]:
         # алиас, поэтому обычные команды (не-reply «топ» и т.п.) спокойно
         # проходят дальше к своим роутерам.
         reputation_router,
+        # Платежи Stars: pre_checkout/successful_payment должны ловиться рано.
+        payments_router,
         farm_router,
+
         casino_router,
         cases_router,
         gifts_router,

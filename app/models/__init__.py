@@ -40,6 +40,8 @@ from app.models.scheduled_deletion import ScheduledDeletion
 
 from app.models.shop_category import ShopCategory
 from app.models.shop_offer import ShopOffer
+from app.models.stars_ledger import StarsLedger
+
 from app.models.transaction import Transaction
 
 from app.models.treasure import Treasure
@@ -75,6 +77,8 @@ __all__ = [
     "PurchaseHistory",
     "GiftCatalog",
     "GiftTransaction",
+    "StarsLedger",
+
 
     "ReputationEntry",
     "MmrEntry",
