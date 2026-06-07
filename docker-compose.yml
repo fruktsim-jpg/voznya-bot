@@ -25,6 +25,10 @@ services:
     # Внутри docker-сети БД доступна по имени сервиса "db".
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      # Реальная выдача Telegram Gifts (sendGift). По умолчанию выключена;
+      # включить = GIFTS_DELIVERY_ENABLED=true в .env. См. STARS_FLOW.md.
+      GIFTS_DELIVERY_ENABLED: ${GIFTS_DELIVERY_ENABLED:-false}
 
 volumes:
+
   voznya_pgdata:

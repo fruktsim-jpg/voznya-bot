@@ -15,6 +15,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -22,9 +23,12 @@ from app.core.filters import RuCommand
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
 from app.features.gifts.service import buy_gift, deliver_gift
+from app.models import GiftCatalog
 from app.repositories import gifts as gifts_repo
+from app.services.telegram_gifts import get_star_balance, list_available_gifts
 
 router = Router(name="gifts")
+
 
 # --- Тексты (изолированы в фиче) --------------------------------------------
 GIFTS_HEADER = "🎁 <b>Магазин подарков</b>\nКопи ешки и забирай реальные Telegram Gifts."
@@ -148,3 +152,75 @@ async def cb_gift_buy(callback: CallbackQuery, session: AsyncSession) -> None:
             delivery=delivery_line,
         )
     )
+
+
+# --- Админ: подключение реальных Telegram gift_id ---------------------------
+ADMIN_ONLY = "Команда доступна только администратору бота."
+AVAIL_EMPTY = (
+    "Telegram не вернул доступных подарков (getAvailableGifts пуст или метод "
+    "недоступен в этой версии aiogram). Баланс Stars бота: {balance}."
+)
+AVAIL_HEADER = "🎁 <b>Доступные у Telegram подарки</b> (баланс бота: {balance} ⭐):"
+AVAIL_ROW = "<code>{id}</code> — {stars} ⭐{remaining}"
+SETID_USAGE = (
+    "Привязать реальный gift_id к позиции каталога:\n"
+    "<code>/gifts_setid &lt;code&gt; &lt;telegram_gift_id&gt;</code>\n"
+    "Список id — командой <code>/gifts_available</code>."
+)
+SETID_NOT_FOUND = "Позиции каталога с кодом «{code}» нет."
+SETID_OK = "✅ «{code}» ← telegram_gift_id <code>{gid}</code>. Можно выдавать."
+
+
+def _admin_ok(message: Message) -> bool:
+    return message.from_user is not None and get_settings().is_admin(
+        message.from_user.id
+    )
+
+
+@router.message(RuCommand("gifts_available", "gifts_available"))
+async def cmd_gifts_available(message: Message) -> None:
+    """Показывает реальные подарки и их id из Telegram (getAvailableGifts)."""
+    if not _admin_ok(message):
+        await message.answer(ADMIN_ONLY)
+        return
+    assert message.bot is not None
+    balance = await get_star_balance(message.bot)
+    balance_str = "—" if balance is None else str(balance)
+    gifts = await list_available_gifts(message.bot)
+    if not gifts:
+        await message.answer(AVAIL_EMPTY.format(balance=balance_str))
+        return
+    lines = [AVAIL_HEADER.format(balance=balance_str)]
+    for g in gifts:
+        rem = "" if g["remaining"] is None else f" · осталось {g['remaining']}"
+        lines.append(AVAIL_ROW.format(id=g["id"], stars=g["star_count"], remaining=rem))
+    await message.answer("\n".join(lines))
+
+
+@router.message(RuCommand("gifts_setid", "gifts_setid"))
+async def cmd_gifts_setid(
+    message: Message, session: AsyncSession, command_args: str
+) -> None:
+    """Привязывает реальный telegram_gift_id к позиции каталога (только админ)."""
+    if not _admin_ok(message):
+        await message.answer(ADMIN_ONLY)
+        return
+    parts = (command_args or "").split()
+    if len(parts) < 2:
+        await message.answer(SETID_USAGE)
+        return
+    code, gid = parts[0], parts[1]
+
+    gift = await gifts_repo.get_gift_by_code(session, code)
+    if gift is None:
+        await message.answer(SETID_NOT_FOUND.format(code=code))
+        return
+
+    await session.execute(
+        update(GiftCatalog)
+        .where(GiftCatalog.code == code)
+        .values(telegram_gift_id=gid)
+    )
+    await message.answer(SETID_OK.format(code=code, gid=gid))
+
+

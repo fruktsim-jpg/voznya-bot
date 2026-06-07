@@ -68,7 +68,37 @@ async def get_star_balance(bot: Bot) -> int | None:
 
 
 
+async def list_available_gifts(bot: Bot) -> list[dict]:
+    """Возвращает доступные боту подарки через getAvailableGifts.
+
+    Нормализует в список словарей ``{id, star_count, remaining}``. Если метода
+    нет в установленной версии aiogram или вызов упал — возвращает [] (вызывающий
+    покажет понятное сообщение).
+    """
+    method = getattr(bot, "get_available_gifts", None)
+    if method is None:
+        return []
+    try:
+        result = await method()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("getAvailableGifts failed: %s", exc)
+        return []
+
+    gifts = getattr(result, "gifts", None) or []
+    out: list[dict] = []
+    for g in gifts:
+        out.append(
+            {
+                "id": str(getattr(g, "id", "")),
+                "star_count": int(getattr(g, "star_count", 0) or 0),
+                "remaining": getattr(g, "remaining_count", None),
+            }
+        )
+    return out
+
+
 async def send_gift(
+
     bot: Bot,
     *,
     user_id: int,
