@@ -57,8 +57,12 @@ async def _do_claim(
     return True
 
 
-@router.message(RuCommand("снять", "claim", "клад", "забрать", "открыть"))
+# Примечание: «открыть» НЕ алиас клада — это команда кейсов (/открыть код).
+# Раньше было пересечение: оба роутера ловили «открыть», и «/открыть код»
+# мог перехватываться кладом. Клад оставляем на снять/клад/забрать/claim.
+@router.message(RuCommand("снять", "claim", "клад", "забрать"))
 async def cmd_claim(message: Message, session: AsyncSession, command_args: str) -> None:
+
     """Обрабатывает команду /снять."""
     user = message.from_user
     if user is None:

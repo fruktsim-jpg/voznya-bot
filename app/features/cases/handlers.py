@@ -21,9 +21,11 @@ from app.features.cases.events import CaseOpenEvent, emit_case_opened
 from app.features.cases.service import OpenResult, open_case
 from app.models import CaseReward, Inventory
 from app.repositories import cases as cases_repo
+from app.settings import inventory as inv_texts
 from app.settings import texts
 
 router = Router(name="cases")
+
 
 
 async def _owned_count(session: AsyncSession, user_id: int, item_code: str) -> int:
@@ -137,12 +139,20 @@ def _render_open(result: OpenResult) -> str:
         )
     else:
         qty = f" ×{result.qty}" if result.qty > 1 else ""
+        # Показываем редкость предмета (эмодзи + название) — игроку важно
+        # сразу понять, насколько ценный дроп выпал. Раньше rarity было пустым.
+        if result.reward_rarity:
+            style = inv_texts.rarity_style(result.reward_rarity)
+            rarity = f"{style.emoji} {style.name} "
+        else:
+            rarity = ""
         line = texts.CASE_OPEN_WIN_ITEM.format(
             case=result.case_name,
-            rarity="",
+            rarity=rarity,
             item=result.reward_item_name or result.reward_item_code or "предмет",
             qty=qty,
         )
+
     if result.is_jackpot:
         return texts.CASE_OPEN_JACKPOT.format(line=line)
     return line
