@@ -176,8 +176,44 @@ async def cb_gift_buy(callback: CallbackQuery, session: AsyncSession) -> None:
     )
 
 
+# --- Игрок: статус своих покупок --------------------------------------------
+MY_GIFTS_EMPTY = "🎁 Ты ещё ничего не покупал в магазине подарков."
+MY_GIFTS_HEADER = "🎁 <b>Твои подарки</b>:"
+# Человекочитаемый статус доставки для игрока.
+MY_GIFTS_STATUS = {
+    "completed": "✅ отправлен",
+    "pending": "⏳ оплачен, в очереди на выдачу",
+    "cancelled": "↩️ отменён, ешки вернули",
+}
+MY_GIFTS_ROW = "• «{item}» — {status}"
+
+
+@router.message(RuCommand("моиподарки", "mygifts"))
+async def cmd_my_gifts(message: Message, session: AsyncSession) -> None:
+    """Показывает игроку его покупки и их статус выдачи.
+
+    Закрывает цикл: после покупки игрок может в любой момент перепроверить,
+    отправлен ли подарок, ждёт ли выдачи или был возвращён.
+    """
+    if message.from_user is None:
+        return
+    deliveries = await gifts_repo.get_recent_deliveries(
+        session, user_id=message.from_user.id, limit=20
+    )
+    if not deliveries:
+        await notify_and_cleanup(session, message, MY_GIFTS_EMPTY)
+        return
+
+    lines = [MY_GIFTS_HEADER]
+    for d in deliveries:
+        status = MY_GIFTS_STATUS.get(d.status, d.status)
+        lines.append(MY_GIFTS_ROW.format(item=d.item_code or "?", status=status))
+    await message.answer("\n".join(lines))
+
+
 # --- Админ: подключение реальных Telegram gift_id ---------------------------
 ADMIN_ONLY = "Команда доступна только администратору бота."
+
 AVAIL_EMPTY = (
     "Telegram не вернул доступных подарков (getAvailableGifts пуст или метод "
     "недоступен в этой версии aiogram). Баланс Stars бота: {balance}."
@@ -278,8 +314,7 @@ async def cmd_gifts_pending(message: Message, session: AsyncSession) -> None:
         await message.answer(ADMIN_ONLY)
         return
 
-    deliveries = await gifts_repo.get_recent_deliveries(session, limit=50)
-    pending = [d for d in deliveries if d.status == "pending"]
+    pending = await gifts_repo.get_pending_deliveries(session, limit=100)
     if not pending:
         await message.answer(PENDING_EMPTY)
         return
@@ -297,6 +332,7 @@ async def cmd_gifts_pending(message: Message, session: AsyncSession) -> None:
             )
         )
     await message.answer("\n".join(lines) + PENDING_HINT)
+
 
 
 @router.message(RuCommand("gifts_done", "gifts_done"))

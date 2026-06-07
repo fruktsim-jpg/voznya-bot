@@ -71,3 +71,24 @@ async def get_recent_deliveries(
     if user_id is not None:
         stmt = stmt.where(GiftTransaction.recipient_user_id == user_id)
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_pending_deliveries(
+    session: AsyncSession, *, limit: int = 100
+) -> list[GiftTransaction]:
+    """ВСЕ оплаченные, но ещё не выданные доставки (status='pending').
+
+    Берём напрямую по статусу (а не «последние N»), чтобы админ видел всю
+    очередь на ручную выдачу, даже если pending накопилось много, а сверху
+    висят свежие completed/cancelled. Старые сверху — выдаём по очереди.
+    """
+    stmt = (
+        select(GiftTransaction)
+        .where(GiftTransaction.kind == "tg_gift")
+        .where(GiftTransaction.status == "pending")
+        .order_by(GiftTransaction.created_at.asc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
