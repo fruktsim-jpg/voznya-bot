@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from aiogram import F, Router
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -305,6 +308,51 @@ async def _do_open_and_render(
     return _render_open(result), result
 
 
+async def _open_with_animation(
+    session: AsyncSession, anchor: Message, user_id: int, code: str
+) -> None:
+    """Открывает кейс с лёгкой «анимацией» в ОДНОМ сообщении.
+
+    Чисто UX: ни экономика, ни RNG, ни выдача не трогаются. Шлём первый кадр,
+    параллельно крутим открытие (open_case) и подменяем текст кадрами саспенса,
+    затем редактируем сообщение финальным результатом. Если редактирование
+    недоступно (старое сообщение/ограничение Telegram) — мягкий фолбэк на
+    обычный ответ. Общий цикл ≈ len(FRAMES) × FRAME_DELAY (около 1.2–1.6 c).
+    """
+    frames = texts.CASE_OPEN_FRAMES
+    delay = texts.CASE_OPEN_FRAME_DELAY
+
+    # Первый кадр — сразу, чтобы игрок видел реакцию мгновенно.
+    try:
+        bubble = await anchor.answer(frames[0])
+    except TelegramBadRequest:
+        bubble = None
+
+    # Открытие крутим в фоне, пока проигрываем кадры саспенса.
+    open_task = asyncio.create_task(_do_open_and_render(session, user_id, code))
+
+    if bubble is not None:
+        for frame in frames[1:]:
+            await asyncio.sleep(delay)
+            try:
+                await bubble.edit_text(frame)
+            except TelegramBadRequest:
+                break  # нечего/нельзя редактировать — просто ждём результат
+    # Гарантируем минимальный саспенс, даже если кадры не отрисовались.
+    elif frames:
+        await asyncio.sleep(min(delay * len(frames), 1.5))
+
+    text, _ = await open_task
+
+    if bubble is not None:
+        try:
+            await bubble.edit_text(text)
+            return
+        except TelegramBadRequest:
+            pass  # фолбэк ниже
+    await anchor.answer(text)
+
+
 @router.message(RuCommand("открыть", "open"))
 async def cmd_open(message: Message, session: AsyncSession, command_args: str) -> None:
     """Открыть кейс командой /открыть код."""
@@ -317,8 +365,7 @@ async def cmd_open(message: Message, session: AsyncSession, command_args: str) -
         await notify_and_cleanup(session, message, texts.CASE_OPEN_USAGE)
         return
 
-    text, _ = await _do_open_and_render(session, user.id, code)
-    await message.answer(text)
+    await _open_with_animation(session, message, user.id, code)
 
 
 @router.callback_query(F.data.startswith("case:open:"))
@@ -345,7 +392,10 @@ async def cb_case_open(callback: CallbackQuery, session: AsyncSession) -> None:
         await callback.answer(texts.CASE_NOT_YOURS, show_alert=False)
         return
 
-    text, _ = await _do_open_and_render(session, target_id, code)
     await callback.answer()
     if callback.message is not None:
-        await callback.message.answer(text)
+        await _open_with_animation(session, callback.message, target_id, code)
+    else:
+        # Нет сообщения-якоря (редко) — отдаём результат без анимации.
+        text, _ = await _do_open_and_render(session, target_id, code)
+        await callback.bot.send_message(target_id, text)
