@@ -65,6 +65,20 @@ def _channel_meta(channel: str) -> dict:
     return {"channel": channel}
 
 
+def _is_shop_purchase(delivery: GiftTransaction) -> bool:
+    """True, если доставка — оплаченная покупка магазина (а не приз из кейса).
+
+    Покупка магазина всегда списывает ешки (есть ``transaction_id`` денежной
+    проводки) и занимает единицу пула каталога (``reserved+1``). Подарок,
+    выигранный в кейсе (:func:`app.features.cases.rewards._grant_tg_gift`),
+    ничего не стоил игроку и резерв не занимал — у него ``transaction_id is
+    None``. По этому признаку отличаем экономику магазина от призов кейсов:
+    выдача/возврат приза НЕ трогает пул каталога и НЕ возвращает ешки.
+    """
+    return delivery.transaction_id is not None
+
+
+
 async def buy_gift(
     session: AsyncSession,
     *,
@@ -169,33 +183,46 @@ async def _refund(
     channel: str,
     reason_error: str | None,
 ) -> None:
-    """Возврат ешек игроку + освобождение резерва + статус cancelled."""
-    refund_tx = await change_balance_tx(
-        session,
-        delivery.recipient_user_id,
-        price,
-        reason=EVENT_REWARD,
-        meta={
-            "source": "gift_refund",
-            "gift": gift_code,
-            "of_transaction": delivery.transaction_id,
-            "channel": channel,
-        },
-    )
+    """Отмена доставки: для покупки магазина — возврат ешек + освобождение
+    резерва; для приза кейса — только статус cancelled.
+
+    Приз кейса игрок не оплачивал (нет денежной проводки) и резерв каталога не
+    занимал (см. :func:`_is_shop_purchase`). Поэтому при его отмене НЕЛЬЗЯ
+    начислять ешки (взялись бы из ниоткуда) и трогать пул каталога — иначе
+    украли бы резерв реального покупателя. Просто помечаем cancelled.
+    """
     meta = dict(delivery.meta or {})
-    meta.update({"refunded": True, "refund_transaction_id": refund_tx.id})
+    if _is_shop_purchase(delivery):
+        # Покупка магазина: вернуть ешки и освободить место в пуле.
+        refund_tx = await change_balance_tx(
+            session,
+            delivery.recipient_user_id,
+            price,
+            reason=EVENT_REWARD,
+            meta={
+                "source": "gift_refund",
+                "gift": gift_code,
+                "of_transaction": delivery.transaction_id,
+                "channel": channel,
+            },
+        )
+        meta.update({"refunded": True, "refund_transaction_id": refund_tx.id})
+        # Освободить место в пуле (reserved-1, не ниже нуля).
+        await session.execute(
+            update(GiftCatalog)
+            .where(GiftCatalog.code == gift_code)
+            .where(GiftCatalog.reserved > 0)
+            .values(reserved=GiftCatalog.reserved - 1)
+        )
+    else:
+        # Приз кейса: ешки не списывались, резерв не занимался — не трогаем.
+        meta["case_prize_cancelled"] = True
+
     if reason_error:
         meta["error"] = reason_error
     delivery.status = "cancelled"
     delivery.meta = meta
 
-    # Освободить место в пуле (reserved-1, не ниже нуля).
-    await session.execute(
-        update(GiftCatalog)
-        .where(GiftCatalog.code == gift_code)
-        .where(GiftCatalog.reserved > 0)
-        .values(reserved=GiftCatalog.reserved - 1)
-    )
 
 
 async def deliver_gift(
@@ -248,17 +275,22 @@ async def deliver_gift(
         )
         delivery.status = "completed"
         delivery.meta = meta
-        # Реализовать единицу: reserved-1, sold_count+1.
-        await session.execute(
-            update(GiftCatalog)
-            .where(GiftCatalog.code == gift_code)
-            .where(GiftCatalog.reserved > 0)
-            .values(
-                reserved=GiftCatalog.reserved - 1,
-                sold_count=GiftCatalog.sold_count + 1,
+        # Реализовать единицу: reserved-1, sold_count+1 — ТОЛЬКО для покупки
+        # магазина. Приз кейса резерв не занимал и в продажах каталога не
+        # учитывается — пул не трогаем (иначе reserved уйдёт в минус / в
+        # sold_count попадёт несуществующая продажа).
+        if _is_shop_purchase(delivery):
+            await session.execute(
+                update(GiftCatalog)
+                .where(GiftCatalog.code == gift_code)
+                .where(GiftCatalog.reserved > 0)
+                .values(
+                    reserved=GiftCatalog.reserved - 1,
+                    sold_count=GiftCatalog.sold_count + 1,
+                )
             )
-        )
         # Зафиксировать РАСХОД Stars в едином леджере (источник правды по Stars).
+
         # ref = idempotency_key доставки → расход однозначно связан с выдачей.
         if star_cost > 0:
             await stars_service.record_out(
@@ -341,6 +373,11 @@ async def complete_gift_manually(
     purchase_history), поэтому экономическая статистика остаётся корректной,
     а подарок считается отправленным и попадает в аналитику как ``completed``.
 
+    Для приза кейса (нет денежной проводки, резерв каталога не занимался —
+    см. :func:`_is_shop_purchase`) пул каталога НЕ трогаем: достаточно перевести
+    доставку в ``completed``. Так одна команда ``/gifts_done`` закрывает и
+    купленные, и выигранные в кейсе подарки.
+
     Stars здесь НЕ списываем: ручная выдача делается вне бота, точного расхода
     Stars у нас нет — фиксируем только факт ручной выдачи в meta. Идемпотентно.
     """
@@ -363,16 +400,19 @@ async def complete_gift_manually(
     delivery.status = "completed"
     delivery.meta = meta
 
-    # Реализовать единицу: reserved-1, sold_count+1 — как при обычной выдаче.
-    await session.execute(
-        update(GiftCatalog)
-        .where(GiftCatalog.code == gift_code)
-        .where(GiftCatalog.reserved > 0)
-        .values(
-            reserved=GiftCatalog.reserved - 1,
-            sold_count=GiftCatalog.sold_count + 1,
+    # Реализовать единицу: reserved-1, sold_count+1 — ТОЛЬКО для покупки
+    # магазина. Приз кейса резерв не занимал и продажей каталога не является.
+    if _is_shop_purchase(delivery):
+        await session.execute(
+            update(GiftCatalog)
+            .where(GiftCatalog.code == gift_code)
+            .where(GiftCatalog.reserved > 0)
+            .values(
+                reserved=GiftCatalog.reserved - 1,
+                sold_count=GiftCatalog.sold_count + 1,
+            )
         )
-    )
     return DeliverOutcome(status="completed")
+
 
 

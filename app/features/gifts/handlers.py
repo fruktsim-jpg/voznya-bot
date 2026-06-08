@@ -295,8 +295,12 @@ PENDING_EMPTY = "🎁 Нет подарков в ожидании выдачи (
 PENDING_HEADER = "🎁 <b>Подарки в ожидании выдачи</b> ({n}):"
 PENDING_ROW = (
     "• <code>{key}</code>\n"
-    "  «{item}» → пользователю <code>{user}</code>{stars}"
+    "  {origin} «{item}» → пользователю <code>{user}</code>{stars}"
 )
+# Откуда взялся подарок (по meta.source): приз кейса или покупка магазина.
+PENDING_ORIGIN_CASE = "🎰"
+PENDING_ORIGIN_SHOP = "🛒"
+
 PENDING_HINT = (
     "\n\nВыдать вручную: <code>/gifts_done &lt;ключ&gt;</code>\n"
     "Отменить с возвратом: <code>/gifts_refund &lt;ключ&gt;</code>"
@@ -328,14 +332,23 @@ async def cmd_gifts_pending(message: Message, session: AsyncSession) -> None:
     for d in pending:
         star_cost = int((d.meta or {}).get("star_cost") or 0)
         stars = f" · {star_cost} ⭐" if star_cost else ""
+        # Приз кейса (meta.source='case') vs покупка магазина — чтобы админ
+        # сразу видел происхождение и не путал выдачу.
+        origin = (
+            PENDING_ORIGIN_CASE
+            if (d.meta or {}).get("source") == "case"
+            else PENDING_ORIGIN_SHOP
+        )
         lines.append(
             PENDING_ROW.format(
                 key=d.idempotency_key,
+                origin=origin,
                 item=d.item_code or "?",
                 user=d.recipient_user_id,
                 stars=stars,
             )
         )
+
     await message.answer("\n".join(lines) + PENDING_HINT)
 
 
