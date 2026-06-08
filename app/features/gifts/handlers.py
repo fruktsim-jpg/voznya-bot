@@ -322,9 +322,31 @@ GIFT_RETRY_REFUNDED = "↩️ Постоянная ошибка — достав
 
 
 
+def _pending_admin_keyboard(key: str) -> InlineKeyboardMarkup:
+    """Кнопки админ-действий под одной pending-доставкой (P6).
+
+    callback_data: ``gd:<action>:<key>`` (action: done|retry|refund). Ключ —
+    ``giftbuy:<uid>:<16hex>`` (~35 симв.), с префиксом укладывается в лимит 64Б.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔁 Повторить", callback_data=f"gd:retry:{key}"),
+                InlineKeyboardButton(text="✅ Выдать", callback_data=f"gd:done:{key}"),
+                InlineKeyboardButton(text="↩️ Возврат", callback_data=f"gd:refund:{key}"),
+            ]
+        ]
+    )
+
+
 @router.message(RuCommand("gifts_pending", "gifts_pending"))
 async def cmd_gifts_pending(message: Message, session: AsyncSession) -> None:
-    """Показывает оплаченные, но ещё не выданные подарки (только админ)."""
+    """Показывает оплаченные, но ещё не выданные подарки (только админ).
+
+    Каждая заявка отправляется отдельным сообщением со своими кнопками:
+    Повторить авто-выдачу / Выдать вручную / Возврат — чтобы админ завершал
+    цикл прямо в чате, без копирования ключей.
+    """
     if not _admin_ok(message):
         await message.answer(ADMIN_ONLY)
         return
@@ -334,28 +356,34 @@ async def cmd_gifts_pending(message: Message, session: AsyncSession) -> None:
         await message.answer(PENDING_EMPTY)
         return
 
-    lines = [PENDING_HEADER.format(n=len(pending))]
+    await message.answer(PENDING_HEADER.format(n=len(pending)))
     for d in pending:
         star_cost = int((d.meta or {}).get("star_cost") or 0)
         stars = f" · {star_cost} ⭐" if star_cost else ""
-        # Приз кейса (meta.source='case') vs покупка магазина — чтобы админ
-        # сразу видел происхождение и не путал выдачу.
+        # Причина задержки (если воркер/выдача её записали) — сразу видно админу.
+        reason_raw = (d.meta or {}).get("delivery_error")
+        reason = (
+            f"\n  ⚠️ причина: {DELIVERY_REASONS.get(reason_raw, reason_raw)}"
+            if reason_raw
+            else ""
+        )
         origin = (
             PENDING_ORIGIN_CASE
             if (d.meta or {}).get("source") == "case"
             else PENDING_ORIGIN_SHOP
         )
-        lines.append(
-            PENDING_ROW.format(
-                key=d.idempotency_key,
-                origin=origin,
-                item=d.item_code or "?",
-                user=d.recipient_user_id,
-                stars=stars,
-            )
+        row = PENDING_ROW.format(
+            key=d.idempotency_key,
+            origin=origin,
+            item=d.item_code or "?",
+            user=d.recipient_user_id,
+            stars=stars,
+        )
+        await message.answer(
+            row + reason,
+            reply_markup=_pending_admin_keyboard(d.idempotency_key or ""),
         )
 
-    await message.answer("\n".join(lines) + PENDING_HINT)
 
 
 
@@ -452,6 +480,85 @@ async def cmd_gifts_refund(
         await message.answer(GIFT_DELIVERY_NOT_FOUND)
     else:
         await message.answer(GIFT_DELIVERY_NOT_PENDING)
+
+
+@router.callback_query(F.data.startswith("gd:"))
+async def cb_gift_delivery_admin(
+    callback: CallbackQuery, session: AsyncSession
+) -> None:
+    """Админ-кнопки под pending-доставкой: Повторить / Выдать / Возврат (P6).
+
+    callback_data = ``gd:<action>:<key>``. Только админ. Выполняет то же, что
+    одноимённые команды, и отвечает всплывашкой + текстом, чтобы кнопки в
+    списке `/gifts_pending` закрывали цикл без копирования ключей.
+    """
+    if callback.from_user is None or not get_settings().is_admin(callback.from_user.id):
+        await callback.answer(ADMIN_ONLY, show_alert=True)
+        return
+    # gd:<action>:<key>  (key может содержать ':' — берём остаток как ключ)
+    parts = (callback.data or "").split(":", 2)
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    action, key = parts[1], parts[2]
+    if not key:
+        await callback.answer()
+        return
+
+    if action == "retry":
+        outcome = await deliver_gift(
+            session,
+            callback.bot,
+            idempotency_key=key,
+            enabled=get_settings().gifts_delivery_enabled,
+            channel="bot",
+        )
+        if outcome.status == "completed":
+            text = GIFT_RETRY_OK
+        elif outcome.status == "cancelled":
+            text = GIFT_RETRY_REFUNDED
+        elif outcome.status == "skip" and outcome.error == "delivery_not_found":
+            text = GIFT_DELIVERY_NOT_FOUND
+        else:
+            reason = DELIVERY_REASONS.get(outcome.error or "", outcome.error or "неизвестно")
+            text = GIFT_RETRY_PENDING.format(error=reason)
+    elif action == "done":
+        outcome = await complete_gift_manually(
+            session,
+            idempotency_key=key,
+            admin_user_id=callback.from_user.id,
+            channel="bot",
+        )
+        if outcome.status == "completed":
+            text = GIFT_DONE_OK
+        elif outcome.error == "delivery_not_found":
+            text = GIFT_DELIVERY_NOT_FOUND
+        else:
+            text = GIFT_DELIVERY_NOT_PENDING
+    elif action == "refund":
+        outcome = await refund_gift(
+            session, idempotency_key=key, channel="bot", reason="admin_manual"
+        )
+        if outcome.status == "cancelled":
+            text = GIFT_REFUND_OK
+        elif outcome.error == "delivery_not_found":
+            text = GIFT_DELIVERY_NOT_FOUND
+        else:
+            text = GIFT_DELIVERY_NOT_PENDING
+    else:
+        await callback.answer()
+        return
+
+    await callback.answer()
+    # Убираем кнопки у обработанной заявки (best-effort) и пишем результат.
+    if callback.message is not None:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+
+        except Exception:  # noqa: BLE001
+            pass
+        await callback.message.answer(text)
+
 
 
 
