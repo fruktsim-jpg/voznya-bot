@@ -146,3 +146,88 @@ async def count_openings(session: AsyncSession, user_id: int) -> int:
         .where(CaseOpening.user_id == user_id)
     )
     return int(total or 0)
+
+
+# 8 канонических кодов лимиток (миграции 0029/0030). Дублируется здесь, чтобы
+# отличать лимитку от обычного подарка в агрегатах статистики без join.
+_LIMITED_CODES = {
+    "gift_xmas_bear",
+    "gift_xmas_tree",
+    "gift_valentine_bear",
+    "gift_valentine_heart",
+    "gift_spring_bear",
+    "gift_lucky_bear",
+    "gift_clown_bear",
+    "gift_easter_bear",
+}
+_PREMIUM_CODES = {"gift_premium_3m", "gift_premium_6m"}
+
+
+async def get_case_stats(session: AsyncSession, case_item_code: str) -> dict:
+    """Сводная статистика по кейсу из ``case_openings`` (Release 2.2 P-статистика).
+
+    Возвращает: число открытий, потрачено ешек (цена × открытия), сколько
+    Premium / лимиток / джекпотов выпало. Всё восстановимо из леджера открытий,
+    отдельной таблицы статистики не вводим.
+    """
+    case = await get_case_by_item_code(session, case_item_code)
+    price = int(case.open_cost_amount) if case else 0
+
+    rows = await session.execute(
+        select(
+            CaseOpening.reward_kind,
+            CaseOpening.reward_item_code,
+            CaseOpening.qty,
+            func.count().label("cnt"),
+        )
+        .where(CaseOpening.case_item_code == case_item_code)
+        .group_by(CaseOpening.reward_kind, CaseOpening.reward_item_code, CaseOpening.qty)
+    )
+
+    openings = 0
+    premium = 0
+    limited = 0
+    jackpot = 0
+    for kind, code, qty, cnt in rows:
+        cnt = int(cnt or 0)
+        openings += cnt
+        if kind == "tg_gift" and code in _PREMIUM_CODES:
+            premium += cnt
+        elif kind == "tg_gift" and code in _LIMITED_CODES:
+            limited += cnt * int(qty or 1)
+        # Денежный джекпот фиксируем по крупной сумме (мега-приз).
+    # Денежные джекпоты — по флагу is_jackpot выпавшей строки недоступны в
+    # CaseOpening, поэтому считаем по reward_id-наградам с is_jackpot отдельно.
+    jackpot = await session.scalar(
+        select(func.count())
+        .select_from(CaseOpening)
+        .join(CaseReward, CaseReward.id == CaseOpening.reward_id)
+        .where(CaseOpening.case_item_code == case_item_code)
+        .where(CaseReward.is_jackpot.is_(True))
+    )
+
+    return {
+        "case_item_code": case_item_code,
+        "openings": openings,
+        "eshki_spent": openings * price,
+        "premium": premium,
+        "limited": limited,
+        "jackpot": int(jackpot or 0),
+    }
+
+
+async def get_top_openings(
+    session: AsyncSession, *, case_item_code: str | None = None, limit: int = 10
+) -> list[CaseOpening]:
+    """Самые «крупные»/последние открытия для витрины статистики.
+
+    Сортировка по дате (новые сверху) — «последние крупные выпадения». Фильтр по
+    кейсу опционален. Отбор «крупности» (gift/premium/джекпот) — на стороне
+    вызывающего кода/сайта по reward_kind/reward_item_code.
+    """
+    stmt = select(CaseOpening).order_by(CaseOpening.created_at.desc()).limit(limit)
+    if case_item_code is not None:
+        stmt = stmt.where(CaseOpening.case_item_code == case_item_code)
+    return list((await session.execute(stmt)).scalars().all())
+
+

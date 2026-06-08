@@ -67,35 +67,43 @@ def is_rare(drop: RareDrop) -> bool:
 
 
 def render(drop: RareDrop) -> str:
-    """Формирует текст анонса. Premium/лимитки получают свой акцент."""
-    # Заголовок: Premium и джекпот — отдельные акценты, иначе общий «крупная находка».
-    if drop.is_premium:
-        header = "⭐ <b>PREMIUM ВЫПАЛ!</b>"
-    elif drop.is_jackpot:
-        header = "💎 <b>ДЖЕКПОТ!</b>"
-    elif drop.is_gift:
-        header = "🎁 <b>РЕДКИЙ ПОДАРОК!</b>"
-    else:
-        header = "🎉 <b>КРУПНАЯ НАХОДКА</b>"
+    """Формирует текст анонса по утверждённым шаблонам (Release 2.2).
 
+    Три типа социальных событий: джекпот, Premium, лимитка. Денежный мега-приз
+    «Джекпот 25000» и любой is_jackpot-флаг → шаблон джекпота. Premium 6м/3м →
+    шаблон Premium. Лимитка → шаблон «редкая находка».
+    """
+    if drop.is_jackpot and not drop.is_gift:
+        # Денежный джекпот (мега-приз ешками).
+        return (
+            "💎 <b>ДЖЕКПОТ</b>\n\n"
+            f"{drop.user_mention} сорвал джекпот\n\n"
+            f"<b>{money(drop.value_eshki)}</b>"
+            if drop.value_eshki
+            else f"💎 <b>ДЖЕКПОТ</b>\n\n{drop.user_mention} сорвал джекпот"
+        )
+
+    if drop.is_premium:
+        return (
+            "⭐ <b>PREMIUM DROP</b>\n\n"
+            f"{drop.user_mention} выбил <b>{drop.item_name}</b>\n\n"
+            f"из кейса {drop.case_name}"
+        )
+
+    # Лимитка / иной редкий подарок — «редкая находка».
     lines = [
-        header,
+        "🎁 <b>РЕДКАЯ НАХОДКА</b>",
         "",
-        f"Игрок: {drop.user_mention}",
-        f"Кейс: {drop.case_name}",
-        f"Предмет: <b>{drop.item_name}</b>",
+        f"{drop.user_mention} выбил",
+        f"<b>{drop.item_name}</b>",
+        "",
+        f"из кейса {drop.case_name}",
     ]
     if drop.value_eshki:
+        lines.append("")
         lines.append(f"Стоимость: {money(drop.value_eshki)}")
-    if drop.chance_pct is not None:
-        # Мелкие шансы показываем точнее (0.05%), крупные — без хвоста.
-        pct = (
-            f"{drop.chance_pct:.2f}%"
-            if drop.chance_pct < 1
-            else f"{drop.chance_pct:.1f}%"
-        )
-        lines.append(f"Шанс: {pct}")
     return "\n".join(lines)
+
 
 
 async def announce_if_rare(bot: Bot, drop: RareDrop) -> bool:

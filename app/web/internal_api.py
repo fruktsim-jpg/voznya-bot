@@ -293,9 +293,51 @@ async def _handle_deliver_gift(request: web.Request) -> web.Response:
     )
 
 
+async def _handle_case_stats(request: web.Request) -> web.Response:
+    """GET /internal/cases/stats?case=<item_code> — статистика кейса (P-статистика).
+
+    Возвращает агрегаты из ``case_openings`` (открытия, потрачено ешек, Premium,
+    лимитки, джекпоты) + последние крупные выпадения. Для витрины статистики на
+    сайте. Только по секрету (как и остальные внутренние эндпоинты).
+    """
+    if not _require_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    case_code = request.query.get("case")
+    if not case_code:
+        return web.json_response({"error": "missing_case"}, status=400)
+
+    sessionmaker: async_sessionmaker[AsyncSession] = request.app["sessionmaker"]
+    session: AsyncSession = sessionmaker()
+    try:
+        stats = await cases_repo.get_case_stats(session, case_code)
+        recent = await cases_repo.get_top_openings(
+            session, case_item_code=case_code, limit=10
+        )
+        recent_payload = [
+            {
+                "userId": o.user_id,
+                "rewardKind": o.reward_kind,
+                "rewardItemCode": o.reward_item_code,
+                "amount": o.amount,
+                "qty": o.qty,
+                "createdAt": o.created_at.isoformat() if o.created_at else None,
+            }
+            for o in recent
+        ]
+    except Exception:  # noqa: BLE001
+        logger.exception("web case_stats failed for case=%s", case_code)
+        return web.json_response({"status": "error"}, status=500)
+    finally:
+        await session.close()
+
+    return web.json_response({**stats, "recent": recent_payload})
+
+
 async def _handle_health(request: web.Request) -> web.Response:
     """GET /internal/health — проверка живости (без секрета)."""
     return web.json_response({"ok": True})
+
 
 
 
@@ -320,7 +362,9 @@ async def start_internal_api(
 
     app.router.add_post("/internal/cases/open", _handle_open_case)
     app.router.add_post("/internal/gifts/deliver", _handle_deliver_gift)
+    app.router.add_get("/internal/cases/stats", _handle_case_stats)
     app.router.add_get("/internal/health", _handle_health)
+
 
 
     runner = web.AppRunner(app)
