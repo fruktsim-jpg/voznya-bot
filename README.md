@@ -8,6 +8,10 @@
 - **`v0-voznya`** — сайт и админ-панель на Next.js. По таблице `users` —
   **только чтение**; пишет лишь через явные админ-роуты и OIDC-флоу.
 
+> Источник истины — код, а не документация. Этот README описывает фактическое
+> состояние на момент правки. Завершённые планы и одноразовые отчёты лежат в
+> `docs/archive/` и НЕ отражают актуальное состояние.
+
 ---
 
 ## Архитектура
@@ -24,7 +28,7 @@
         └─────────────┘                                ▼
                                               ┌──────────────────┐
                                               │    PostgreSQL    │
-                                              │  (источник правды)│
+                                              │ (источник правды) │
                                               └────────┬─────────┘
                                        read-only (+admin write)│
                                                        ▼
@@ -40,68 +44,50 @@
 ```
 
 Бот — единственный, кто пишет в `users` и игровые таблицы. Сайт читает их для
-публичной статистики и профилей; запись возможна только через
+публичной статистики, профилей и витрин; запись возможна только через
 аутентифицированные админ-роуты (`/api/admin/*`) и OIDC-привязку.
 
 ---
 
-## Что есть (реализовано и работает)
+## Что реализовано и работает (live)
 
-| Система | Где |
-|---|---|
-| **Telegram Bot** — полный игровой цикл | `app/` (17 зарегистрированных роутеров) |
-| **Website** — публичная статистика, профили, лидерборды | `v0-voznya/app`, `v0-voznya/lib/queries.ts` |
-| **Admin Panel** — RBAC, управление игроками, экономикой, audit | `app/features/admin/`, `v0-voznya/app/admin/*` |
-| **OIDC** — привязка Telegram-аккаунта к сессии сайта | `app/features/linking/`, `v0-voznya/app/api/auth/telegram/oidc/*` |
-| **Reputation** — социальный рейтинг reply-фразами | `app/features/reputation/` |
-| **MMR** — единый игровой рейтинг + ранги | `app/features/mmr/` |
-| **Achievements** — достижения | `app/features/achievements/` |
-| **Economy** — ешки, транзакции | `app/core/economy_events.py`, `transactions` |
-| **Families / Marriages** — семьи и браки | `app/features/marriage/`, `app/features/para/` |
-| **Farm** — ферма со стриками | `app/features/farm/` |
-| **Treasure** — клады | `app/features/treasure/` |
-| **Casino, Duel, Pidor дня** — игровые механики | `app/features/{casino,duel,pidor}/` |
-| **Combot Import** — импорт исторических сообщений | `scripts/import_combot_history.py` |
+Бот регистрирует игровые роутеры в `app/features/__init__.py`
+(`get_feature_routers`). Полный список — там; ключевое:
 
-Подробности по подсистемам — в соответствующих `*_FOUNDATION.md`,
-`ADMIN_PLATFORM.md`, `COMBOT_IMPORT_PLAN.md`, `docs/ECONOMY.md`.
-
----
-
-## Что foundation-only (схема есть, рантайм-кода нет)
-
-Эти системы спроектированы (модели + миграции + доки), но НЕ имеют живого кода:
-ни хендлеров бота, ни API, ни UI. Не использовать как рабочие.
-
-| Система | Что есть | Чего нет | Док |
-|---|---|---|---|
-| **Inventory** | 3 модели + миграция 0009 | репозиторий, выдача/экипировка, хендлеры | `INVENTORY_FOUNDATION.md` |
-| **Shop** | 3 модели + миграция 0010 | логика покупки, витрина, API | `SHOP_FOUNDATION.md` |
-| **Gifts** | модель + миграция 0011 | хендлеры дарения, перевод предметов | `GIFT_FOUNDATION.md` |
-| **Cosmetics** (titles/badges/frames) | типы в каталоге, placeholder на сайте | выдача, экипировка, отрисовка | (часть inventory) |
-| **Mini App** | план | весь код Telegram WebApp | `MINI_APP_PLAN.md` |
-
-Полная картина состояния — в `PROJECT_STATE_REPORT.md`.
+| Система | Где (бот) | Где (сайт) |
+|---|---|---|
+| **Economy / transactions** — ешки, баланс, леджер | `app/core/`, `app/features/balance/` | read-only + admin write |
+| **Farm** — ферма со стриками | `app/features/farm/` | — |
+| **Casino / Duel / Pidor дня / Treasure** — игровые механики | `app/features/{casino,duel,pidor,treasure}/` | витрина казино `app/casino/` |
+| **Marriage / Para** — семьи и пары | `app/features/{marriage,para}/` | топ семей на `/live` |
+| **Reputation** — социальный рейтинг reply-фразами | `app/features/reputation/` | блок в профиле |
+| **MMR** — единый рейтинг + ранги | `app/features/mmr/` | блок в профиле, ранги |
+| **Achievements** — достижения | `app/features/achievements/` | каталог на `/live` |
+| **Inventory** — стековый инвентарь + история выдачи | `app/features/inventory/`, `app/services/inventory_grant.py` | статы/витрина в профиле |
+| **Cases** — кейсы (открытие, дроп-лист, append-only леджер) | `app/features/cases/` | витрина `/cases` + админка |
+| **Gifts Shop** — покупка за ешки + доставка Telegram-подарков | `app/features/gifts/` | коллекция `/gifts` + очередь доставки в админке |
+| **Stars** — пополнение баланса через Telegram Stars | `app/features/payments/` | — |
+| **Profile** — карточка игрока | `app/features/profile/` | `/profile/[id]`, `/profile/me` |
+| **Ratings / Social / Welcome / Help** | `app/features/{ratings,social,welcome,help}/` | топы на `/live` |
+| **OIDC** — привязка Telegram-аккаунта к сессии сайта | `app/features/linking/` | `/api/auth/telegram/oidc/*` |
+| **Admin platform** — RBAC + audit | `app/features/admin/`, `app/core/permissions.py` | `/admin/*` |
+| **Combot import** — импорт исторических сообщений (разовый скрипт) | `scripts/import_combot_history.py` | единый счётчик сообщений |
 
 ---
 
 ## Миграции
 
-Alembic, линейная цепочка `0001` → `0014`. Текущий HEAD:
-**`0014_mmr_foundation`**.
-
-```
-0001_initial → 0002_achievements → 0003_loss_counters → 0004_message_stats →
-0005_open_duels → 0006_account_links → 0007_account_links_unique_user →
-0008_admin_platform → 0009_inventory_foundation → 0010_shop_foundation →
-0011_gift_foundation → 0012_combot_import_foundation → 0013_reputation_foundation →
-0014_mmr_foundation
-```
+Alembic, линейная цепочка `0001` → `0027` (HEAD на момент правки —
+`0027_deactivate_vagabond_case`). Применять:
 
 ```bash
-docker compose exec bot alembic current       # текущая ревизия
-docker compose exec bot alembic upgrade head   # применить до HEAD
+docker compose exec bot alembic current        # текущая ревизия
+docker compose exec bot alembic upgrade head    # применить до HEAD
+docker compose exec bot alembic downgrade -1    # откатить одну ревизию
 ```
+
+Точная цепочка — в `migrations/versions/`. Прошлые ревизии не переписываются,
+только добавляются новые поверх HEAD.
 
 ---
 
@@ -123,23 +109,22 @@ docker compose logs -f bot
 
 Локально без Docker: Python 3.12, `pip install -r requirements.txt`, поднять
 PostgreSQL, прописать `DATABASE_URL`, затем `alembic upgrade head` и
-`python -m app.main`.
-
-Конфигурация — `app/config.py` (pydantic settings), переменные — в
-`.env.example`.
+`python -m app.main`. Конфигурация — `app/config.py` (pydantic settings),
+переменные — в `.env.example`.
 
 ---
 
 ## Документация
 
-- `PROJECT_STATE_REPORT.md` — честный аудит состояния всего проекта.
-- `REPOSITORY_CLEANUP_REPORT.md` — итог уборки репозитория.
-- `FOUNDATION_STATUS.md` — состояние auth/моделей/расширений.
-- `ADMIN_PLATFORM.md` — RBAC и audit.
-- `MMR_FOUNDATION.md`, `REPUTATION_FOUNDATION.md` — реализованные системы.
-- `INVENTORY_FOUNDATION.md`, `SHOP_FOUNDATION.md`, `GIFT_FOUNDATION.md` —
-  foundation-only.
-- `COMBOT_IMPORT_PLAN.md`, `COMBOT_MIGRATION.md` — импорт истории.
-- `MINI_APP_PLAN.md` — план Mini App (не реализован).
-- `docs/ECONOMY.md` — баланс экономики.
-- `docs/archive/` — устаревшие одноразовые отчёты (история, не актуальны).
+Актуальная (поддерживается):
+
+- `CHANGELOG.md` — история изменений.
+- `docs/ECONOMY.md` — баланс экономики (числа из реального конфига).
+- `docs/ADMIN_PLATFORM.md` — RBAC и audit.
+- `docs/DELETION_ARCHITECTURE.md` — архитектура удаления данных.
+- `docs/VOZNYA_RANKS.md`, `docs/VOZNYA_DICTIONARY.md` — справочники.
+- `docs/STARS_FLOW.md`, `docs/STARS_FUNDING_GUIDE.md` — Telegram Stars.
+- `docs/DEBUG_INSTRUCTIONS.md`, `docs/VPS_*.md` — операционные шпаргалки.
+
+Историческое (НЕ источник истины): `docs/archive/` — завершённые планы,
+foundation-доки, аудиты и одноразовые отчёты.
