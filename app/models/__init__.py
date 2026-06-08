@@ -6,7 +6,9 @@
 
 from app.models.account_link import AccountLink
 from app.models.admin_role import AdminRole
+from app.models.app_setting import AppSetting
 from app.models.audit_log import AuditLog
+
 from app.models.base import Base
 from app.models.case_definition import CaseDefinition
 from app.models.case_opening import CaseOpening
@@ -63,7 +65,9 @@ __all__ = [
     "AccountLink",
     "OidcLinkRequest",
     "AdminRole",
+    "AppSetting",
     "AuditLog",
+
     "InventoryItem",
     "Inventory",
     "InventoryHistory",

@@ -17,7 +17,8 @@ from app.core.responses import notify_and_cleanup
 from app.core.utils import format_cooldown, mention
 from app.features.achievements.service import check_award_and_notify, notify_specific
 from app.features.casino.service import CasinoResult, play_casino
-from app.settings import balance, texts
+from app.settings import balance, dynamic, texts
+
 
 router = Router(name="casino")
 
@@ -74,16 +75,20 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
         await notify_and_cleanup(session, message, texts.CASINO_USAGE)
         return
 
+    # Лимиты ставки редактируются из админки (app_settings) без деплоя;
+    # если ключей нет — берём дефолты из balance.py.
+    min_bet = await dynamic.get_int(session, "casino.min_bet", balance.CASINO_MIN_BET)
+    max_bet = await dynamic.get_int(session, "casino.max_bet", balance.CASINO_MAX_BET)
+
     bet = _parse_bet(arg)
-    if bet is None or bet < balance.CASINO_MIN_BET or bet > balance.CASINO_MAX_BET:
+    if bet is None or bet < min_bet or bet > max_bet:
         await notify_and_cleanup(
             session,
             message,
-            texts.CASINO_BAD_AMOUNT.format(
-                min=balance.CASINO_MIN_BET, max=balance.CASINO_MAX_BET
-            ),
+            texts.CASINO_BAD_AMOUNT.format(min=min_bet, max=max_bet),
         )
         return
+
 
 
     result = await play_casino(session, user.id, bet)
