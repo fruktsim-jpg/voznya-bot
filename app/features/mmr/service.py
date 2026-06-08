@@ -49,9 +49,40 @@ async def award_mmr(
         source=source,
         reason=reason,
     )
+    # Зеркалим то же изменение в СЕЗОННЫЙ MMR, если сейчас идёт активный сезон.
+    # Lifetime MMR (выше) копится всегда; season MMR — только в окне сезона и
+    # сбрасывается между сезонами. Изоляция импорта во избежание циклов.
+    await _mirror_to_season(
+        session, player_id=player_id, amount=amount, source=source, reason=reason
+    )
     if amount < 0:
         return None
     return _rankup_between(before, before + amount)
+
+
+async def _mirror_to_season(
+    session: AsyncSession,
+    *,
+    player_id: int,
+    amount: int,
+    source: str,
+    reason: str | None,
+) -> None:
+    """Дублирует начисление в сезонный MMR, если есть активный сезон."""
+    from app.repositories import season as season_repo
+
+    active = await season_repo.get_active_season(session)
+    if active is None:
+        return
+    await season_repo.add_season_mmr(
+        session,
+        season_id=active.id,
+        player_id=player_id,
+        amount=amount,
+        source=source,
+        reason=reason,
+    )
+
 
 
 def _rankup_between(before: int, after: int) -> mmr_settings.Rank | None:

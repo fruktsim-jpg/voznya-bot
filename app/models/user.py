@@ -74,8 +74,17 @@ class User(Base):
         Integer, default=0, nullable=False, index=True
     )
 
+    # Сезонный MMR (денормализованная проекция season_mmr_entries активного
+    # сезона). Копится с нуля каждый сезон, сбрасывается вайпом сезонных данных.
+    # Источник правды — журнал season_mmr_entries; здесь — быстрый снимок для
+    # карточки сезона/дивизиона/рейтинга. Lifetime MMR остаётся в поле mmr.
+    season_mmr: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, index=True
+    )
+
 
     created_at: Mapped[datetime] = mapped_column(
+
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 

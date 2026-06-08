@@ -21,8 +21,17 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.money import money
-from app.models import Marriage, User, UserAchievement
+from app.models import (
+    CaseOpening,
+    GiftTransaction,
+    Inventory,
+    LoginStreak,
+    Marriage,
+    User,
+    UserAchievement,
+)
 from app.services.economy import change_balance
+
 from app.settings import texts
 from app.settings.achievements import (
     ACHIEVEMENTS,
@@ -37,14 +46,55 @@ from app.settings.achievements import (
 
 
 async def _gather_stats(session: AsyncSession, user: User) -> dict[str, int]:
-    """Собирает значения метрик для проверки достижений."""
+    """Собирает значения метрик для проверки достижений.
+
+    Большинство метрик читаются прямо с ``users`` (денормализованные счётчики).
+    Кейсы/подарки/коллекция считаются агрегатами по существующим журналам/
+    таблицам (case_openings, gift_transactions, inventory) — новых таблиц/
+    счётчиков НЕ заводим. Серия входов берётся из login_streaks (best_streak).
+    """
     marriages_count = await session.scalar(
         select(func.count())
         .select_from(Marriage)
         .where(or_(Marriage.user_id_1 == user.user_id, Marriage.user_id_2 == user.user_id))
     )
+
+    # Кейсы: число открытий из append-only журнала case_openings.
+    cases_opened = await session.scalar(
+        select(func.count())
+        .select_from(CaseOpening)
+        .where(CaseOpening.user_id == user.user_id)
+    )
+
+    # Подарки: сколько получено (предметы и tg_gift; валютные подарки не в счёт).
+    gifts_received = await session.scalar(
+        select(func.count())
+        .select_from(GiftTransaction)
+        .where(
+            GiftTransaction.recipient_user_id == user.user_id,
+            GiftTransaction.kind.in_(("item", "tg_gift")),
+            GiftTransaction.status == "completed",
+        )
+    )
+
+    # Коллекция: число РАЗНЫХ предметов в инвентаре (по item_code).
+    distinct_items = await session.scalar(
+        select(func.count(func.distinct(Inventory.item_code)))
+        .where(Inventory.user_id == user.user_id, Inventory.quantity > 0)
+    )
+
+    # Серия входов: лучший достигнутый стрик (login_streaks.best_streak).
+    best_login_streak = await session.scalar(
+        select(LoginStreak.best_streak).where(
+            LoginStreak.player_id == user.user_id
+        )
+    )
+
     return {
         "total_earned": user.total_earned,
+        "total_spent": user.total_spent,
+        "messages_count": user.messages_count,
+        "season_mmr": user.season_mmr,
         "farm_success_count": user.farm_success_count,
         "casino_games_count": user.casino_games_count,
         "duels_won": user.duels_won,
@@ -55,7 +105,12 @@ async def _gather_stats(session: AsyncSession, user: User) -> dict[str, int]:
         "casino_loss_streak": user.casino_loss_streak,
         "duel_loss_streak": user.duel_loss_streak,
         "marriages_count": int(marriages_count or 0),
+        "cases_opened": int(cases_opened or 0),
+        "gifts_received": int(gifts_received or 0),
+        "distinct_items": int(distinct_items or 0),
+        "login_streak": int(best_login_streak or 0),
     }
+
 
 
 async def get_unlocked_codes(session: AsyncSession, user_id: int) -> set[str]:

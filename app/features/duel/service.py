@@ -182,22 +182,42 @@ async def accept_challenge(
     # MMR за дуэль (отдельный игровой рейтинг, не связан с банком/ешками):
     # оба получают за участие, победитель — ещё и за победу. award_mmr вернёт
     # новый ранг, если начисление подняло игрока на следующую ступень.
+    #
+    # АНТИ-ДУЭЛЬ-ФАРМ: MMR за УЧАСТИЕ начисляется ограниченное число раз в день
+    # и только с РАЗНЫМИ оппонентами (повтор с тем же оппонентом или превышение
+    # дневного лимита участия → 0 MMR за участие). Победа (MMR_DUEL_WIN) при
+    # этом всё равно засчитывается — она требует реального исхода и капается
+    # кулдауном дуэли. Оппонент кодируется в reason для проверки «разные».
     from app.features.mmr.service import award_mmr
+
+    winner_part = await _participation_mmr(session, winner_id, loser_id)
+    loser_part = await _participation_mmr(session, loser_id, winner_id)
 
     winner_rankup = await award_mmr(
         session,
         player_id=winner_id,
-        amount=mmr_settings.MMR_DUEL_PARTICIPATION + mmr_settings.MMR_DUEL_WIN,
+        amount=winner_part + mmr_settings.MMR_DUEL_WIN,
         source=mmr_settings.SOURCE_DUEL,
-        reason="win",
+        reason=f"win:{loser_id}",
     )
     loser_rankup = await award_mmr(
         session,
         player_id=loser_id,
-        amount=mmr_settings.MMR_DUEL_PARTICIPATION,
+        amount=loser_part,
         source=mmr_settings.SOURCE_DUEL,
-        reason="participation",
+        reason=f"participation:{winner_id}",
     )
+
+    # Прогресс недельной миссии «выиграй N дуэлей» (если идёт сезон).
+    from app.features.season.service import progress_mission
+    from app.settings import season as season_cfg
+
+    await progress_mission(
+        session,
+        user_id=winner_id,
+        metric=season_cfg.MISSION_METRIC_DUEL_WIN,
+    )
+
 
     pending.status = STATUS_ACCEPTED
 
@@ -259,9 +279,33 @@ async def decline_challenge(
     )
 
 
+async def _participation_mmr(
+    session: AsyncSession, player_id: int, opponent_id: int
+) -> int:
+    """MMR за участие в дуэли с учётом анти-фарма.
+
+    Возвращает ``MMR_DUEL_PARTICIPATION``, только если за сегодня (UTC) игрок
+    ещё не превысил дневной лимит начислений за дуэли И ещё не дрался с этим
+    оппонентом. Иначе 0 (победа всё равно начисляется отдельно).
+    """
+    from app.repositories import season as season_repo
+    from app.settings import season as season_cfg
+
+    day_start = now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+    count, opponents = await season_repo.duel_mmr_grants_today(
+        session, player_id=player_id, since=day_start
+    )
+    if count >= season_cfg.DUEL_MMR_PARTICIPATION_MAX_PER_DAY:
+        return 0
+    if opponent_id in opponents:
+        return 0
+    return mmr_settings.MMR_DUEL_PARTICIPATION
+
+
 async def expire_challenge_if_pending(
     session: AsyncSession, pending_id: int
 ) -> bool:
+
     """Помечает вызов просроченным, если он ещё висит в статусе pending.
 
     Возвращает True, если вызов был именно просрочен этим вызовом (т.е. его

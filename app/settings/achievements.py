@@ -37,6 +37,13 @@ METRIC_EVENT = "event"
 # Категории и их подписи (порядок отображения в /ачивки).
 CATEGORY_ORDER = [
     ("economy", "💰 Экономика"),
+    ("messages", "💬 Сообщения"),
+    ("cases", "📦 Кейсы"),
+    ("farm", "🌱 Ферма"),
+    ("gifts", "🎁 Подарки"),
+    ("spending", "💸 Траты"),
+    ("collection", "🗃 Коллекционер"),
+    ("season", "🏆 Сезон"),
     ("casino", "🎰 Казино"),
     ("duel", "⚔️ Дуэли"),
     ("treasure", "📦 Клады"),
@@ -45,6 +52,12 @@ CATEGORY_ORDER = [
     ("legend", "👑 Легенды Возни"),
 ]
 SECRET_CATEGORY = "secret"
+
+# Категории, которые НЕ входят в требование «открыть все» (метрика all,
+# достижение «Меллстрой Возни»). Сезонные достижения зависят от season_mmr,
+# который обнуляется каждый сезон — иначе «открыть всё» стало бы недостижимым.
+CORE_EXCLUDED_CATEGORIES = {"season"}
+
 
 
 @dataclass(frozen=True)
@@ -77,7 +90,74 @@ ACHIEVEMENTS: list[Achievement] = [
     Achievement("magnate", "💰", "Магнат аптеки", "Поднял 10 000 ешек за всё время",
                 "economy", "total_earned", 10000, reward=400),
 
+    # --- 💬 Сообщения (метрика messages_count, БЕЗ MMR) ---------------------
+    Achievement("chatter_100", "💬", "Разговорился", "Написал 100 сообщений",
+                "messages", "messages_count", 100, reward=20),
+    Achievement("chatter_1k", "💬", "Болтун Возни", "Написал 1 000 сообщений",
+                "messages", "messages_count", 1000, reward=75),
+    Achievement("chatter_5k", "💬", "Голос двора", "Написал 5 000 сообщений",
+                "messages", "messages_count", 5000, reward=200),
+    Achievement("chatter_10k", "💬", "Старожил чата", "Написал 10 000 сообщений",
+                "messages", "messages_count", 10000, reward=400),
+    Achievement("chatter_50k", "💬", "Легенда трёпа", "Написал 50 000 сообщений",
+                "messages", "messages_count", 50000, reward=1000),
+
+    # --- 📦 Кейсы (метрика cases_opened) ------------------------------------
+    Achievement("opener_10", "📦", "Первый дроп", "Открыл 10 кейсов",
+                "cases", "cases_opened", 10, reward=40),
+    Achievement("opener_50", "📦", "Любитель кейсов", "Открыл 50 кейсов",
+                "cases", "cases_opened", 50, reward=120),
+    Achievement("opener_100", "📦", "Кейсовый маньяк", "Открыл 100 кейсов",
+                "cases", "cases_opened", 100, reward=250),
+    Achievement("opener_500", "📦", "Машина открытий", "Открыл 500 кейсов",
+                "cases", "cases_opened", 500, reward=700),
+
+    # --- 🌱 Ферма (метрика farm_success_count, отдельно от легенды на 500) ---
+    Achievement("farmer_50", "🌱", "Начинающий аптекарь", "50 удачных ферм",
+                "farm", "farm_success_count", 50, reward=40),
+    Achievement("farmer_250", "🌿", "Опытный аптекарь", "250 удачных ферм",
+                "farm", "farm_success_count", 250, reward=150),
+    Achievement("farmer_1000", "🌾", "Король грядки", "1 000 удачных ферм",
+                "farm", "farm_success_count", 1000, reward=600),
+
+    # --- 🎁 Подарки (метрика gifts_received) --------------------------------
+    Achievement("gifted_1", "🎁", "Получил подарок", "Получил первый подарок",
+                "gifts", "gifts_received", 1, reward=25),
+    Achievement("gifted_10", "🎁", "Любимчик Возни", "Получил 10 подарков",
+                "gifts", "gifts_received", 10, reward=100),
+    Achievement("gifted_50", "🎁", "Гора подарков", "Получил 50 подарков",
+                "gifts", "gifts_received", 50, reward=300),
+
+    # --- 💸 Траты (метрика total_spent) -------------------------------------
+    Achievement("spender_1k", "💸", "Транжира", "Потратил 1 000 ешек",
+                "spending", "total_spent", 1000, reward=30),
+    Achievement("spender_5k", "💸", "Мот", "Потратил 5 000 ешек",
+                "spending", "total_spent", 5000, reward=100),
+    Achievement("spender_25k", "💸", "Кутёж по-аптечному", "Потратил 25 000 ешек",
+                "spending", "total_spent", 25000, reward=400),
+
+    # --- 🗃 Коллекционер (метрика distinct_items) ---------------------------
+    Achievement("collector_5", "🗃", "Начало коллекции", "Собрал 5 разных предметов",
+                "collection", "distinct_items", 5, reward=50),
+    Achievement("collector_10", "🗃", "Коллекционер", "Собрал 10 разных предметов",
+                "collection", "distinct_items", 10, reward=150),
+    Achievement("collector_25", "🗃", "Хранитель Возни", "Собрал 25 разных предметов",
+                "collection", "distinct_items", 25, reward=500),
+
+    # --- 🏆 Сезон (метрика season_mmr; вне «открыть всё», см. CORE_EXCLUDED) -
+    Achievement("season_silver", "🥈", "Серебро сезона", "Достиг дивизиона Silver",
+                "season", "season_mmr", 500, reward=50),
+    Achievement("season_gold", "🥇", "Золото сезона", "Достиг дивизиона Gold",
+                "season", "season_mmr", 1500, reward=120),
+    Achievement("season_platinum", "💠", "Платина сезона", "Достиг дивизиона Platinum",
+                "season", "season_mmr", 3500, reward=250),
+    Achievement("season_diamond", "💎", "Алмаз сезона", "Достиг дивизиона Diamond",
+                "season", "season_mmr", 7000, reward=500),
+    Achievement("season_master", "🏅", "Мастер сезона", "Достиг дивизиона Master",
+                "season", "season_mmr", 12000, reward=1000),
+
     # --- 🎰 Казино ----------------------------------------------------------
+
     Achievement("ludoman", "🎰", "Лудоман", "Крутанул казино 10 раз",
                 "casino", "casino_games_count", 10, reward=50),
     Achievement("casino_grandpa", "🎰", "Казиношный дед", "Крутанул казино 100 раз",
@@ -190,5 +270,9 @@ ACHIEVEMENTS_BY_CODE: dict[str, Achievement] = {a.code: a for a in ACHIEVEMENTS}
 CORE_ACHIEVEMENT_CODES: set[str] = {
     a.code
     for a in ACHIEVEMENTS
-    if a.metric not in (METRIC_ALL, METRIC_EVENT) and not a.hidden
+    if a.metric not in (METRIC_ALL, METRIC_EVENT)
+    and not a.hidden
+    and a.category not in CORE_EXCLUDED_CATEGORIES
 }
+
+

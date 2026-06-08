@@ -22,7 +22,20 @@ logger = get_logger(__name__)
 # и, как следствие, титулы). Азартные игры (казино, дуэли) перераспределяют
 # валюту и НЕ должны раздувать прогрессию — они влияют только на баланс
 # и недельный рейтинг. Это сознательное экономическое решение (см. ECONOMY.md).
-PRODUCTIVE_REASONS = {"farm", "treasure", "achievement", "nomination", "admin"}
+PRODUCTIVE_REASONS = {
+    "farm",
+    "treasure",
+    "achievement",
+    "nomination",
+    "admin",
+    # Сезонные продуктивные источники (Сезон 1): ежедневная награда, недельные
+    # задания, сезонные награды в финале. Идут в прогрессию, но закапаны
+    # дизайном (см. app/settings/season.py) — не печатают бесконечно.
+    "daily",
+    "mission",
+    "season_reward",
+}
+
 
 
 class InsufficientFunds(Exception):

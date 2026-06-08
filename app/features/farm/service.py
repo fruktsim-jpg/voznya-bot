@@ -107,8 +107,19 @@ async def do_farm(session: AsyncSession, user_id: int) -> FarmResult:
             source=mmr_settings.SOURCE_FARM,
         )
 
+        # Прогресс недельной миссии «ферми N раз» (если идёт сезон).
+        from app.features.season.service import progress_mission
+        from app.settings import season as season_cfg
+
+        await progress_mission(
+            session,
+            user_id=user_id,
+            metric=season_cfg.MISSION_METRIC_FARM,
+        )
+
 
     user.last_farm_at = now_utc()
+
     user.farm_streak = new_streak
     if new_streak > user.max_farm_streak:
         user.max_farm_streak = new_streak
