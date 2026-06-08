@@ -316,6 +316,10 @@ GIFT_DELIVERY_NOT_FOUND = "🤷 Доставки с таким ключом не
 GIFT_DELIVERY_NOT_PENDING = "⚠️ Эта доставка уже обработана (не pending)."
 GIFT_DONE_OK = "✅ Подарок отмечен как выданный вручную. Статистика обновлена."
 GIFT_REFUND_OK = "↩️ Доставка отменена, ешки возвращены игроку."
+GIFT_RETRY_OK = "✅ Авто-выдача удалась — подарок отправлен."
+GIFT_RETRY_PENDING = "⏳ Снова временная ошибка ({error}). Оставил pending — попробуй позже или /gifts_done."
+GIFT_RETRY_REFUNDED = "↩️ Постоянная ошибка — доставка отменена, ешки возвращены."
+
 
 
 @router.message(RuCommand("gifts_pending", "gifts_pending"))
@@ -387,8 +391,47 @@ async def cmd_gifts_done(
         await message.answer(GIFT_DELIVERY_NOT_PENDING)
 
 
+@router.message(RuCommand("gifts_retry", "gifts_retry"))
+async def cmd_gifts_retry(
+    message: Message, session: AsyncSession, command_args: str
+) -> None:
+    """Повторяет АВТО-выдачу pending-доставки (только админ) — P6.
+
+    Тот же конвейер ``deliver_gift``, что и при покупке/выводе. Полезно, когда
+    ошибка была временной (мало Stars, сбой Telegram API): после устранения
+    причины админ жмёт retry и подарок уходит без ручной отправки. Постоянная
+    ошибка приведёт к отмене с возвратом (логика внутри deliver_gift).
+    """
+    if not _admin_ok(message):
+        await message.answer(ADMIN_ONLY)
+        return
+    key = (command_args or "").strip()
+    if not key:
+        await message.answer(GIFT_KEY_USAGE.format(cmd="gifts_retry"))
+        return
+
+    settings = get_settings()
+    outcome = await deliver_gift(
+        session,
+        message.bot,
+        idempotency_key=key,
+        enabled=settings.gifts_delivery_enabled,
+        channel="bot",
+    )
+    if outcome.status == "completed":
+        await message.answer(GIFT_RETRY_OK)
+    elif outcome.status == "cancelled":
+        await message.answer(GIFT_RETRY_REFUNDED)
+    elif outcome.status == "skip" and outcome.error == "delivery_not_found":
+        await message.answer(GIFT_DELIVERY_NOT_FOUND)
+    else:
+        reason = DELIVERY_REASONS.get(outcome.error or "", outcome.error or "неизвестно")
+        await message.answer(GIFT_RETRY_PENDING.format(error=reason))
+
+
 @router.message(RuCommand("gifts_refund", "gifts_refund"))
 async def cmd_gifts_refund(
+
     message: Message, session: AsyncSession, command_args: str
 ) -> None:
     """Отменяет pending-доставку с возвратом ешек игроку (только админ)."""
