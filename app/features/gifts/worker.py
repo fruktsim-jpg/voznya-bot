@@ -62,13 +62,16 @@ async def process_withdraw_queue(
             (
                 d.idempotency_key,
                 d.recipient_user_id,
-                d.item_code or "подарок",
+                # Человекочитаемое имя подарка для уведомлений: НИКОГДА не
+                # показываем внутренний код (gift_bear) — резолвим через каталог.
+                await _display_name(session, d.item_code),
                 # «Подарить другу» через очередь (бот был недоступен с сайта):
                 # meta.gift_to = @username|id получателя реального подарка.
                 (d.meta or {}).get("gift_to"),
             )
             for d in pending
         ]
+
 
     for idem, user_id, gift_name, gift_to in keys:
         async with sessionmaker() as session:
@@ -111,9 +114,25 @@ async def process_withdraw_queue(
                 await session.commit()
 
 
+async def _display_name(session: AsyncSession, item_code: str | None) -> str:
+    """Человекочитаемое имя подарка по коду каталога (фолбэк — «подарок»).
+
+    Релизное требование: пользователь НИКОГДА не видит внутренний код
+    (``gift_bear``/``premium_3m``). Имя берём из ``gift_catalog`` (там же лежат
+    Premium-позиции). Если код пуст или не нашёлся — нейтральное «подарок».
+    """
+    if not item_code:
+        return "подарок"
+    gift = await gifts_repo.get_gift_by_code(session, item_code)
+    if gift is not None and gift.name:
+        return gift.name
+    return "подарок"
+
+
 async def _resolve_gift_to(
     session: AsyncSession, gift_to: str | None
 ) -> int | None:
+
     """@username|id из meta.gift_to → user_id получателя (или None).
 
     Числовой id берём как есть; username ищем по таблице users (получатель

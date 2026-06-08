@@ -211,11 +211,17 @@ async def cmd_my_gifts(message: Message, session: AsyncSession) -> None:
         await notify_and_cleanup(session, message, MY_GIFTS_EMPTY)
         return
 
+    # Имена одним запросом — игроку показываем название подарка, не код.
+    names = await gifts_repo.get_names_by_codes(
+        session, [d.item_code or "" for d in deliveries]
+    )
     lines = [MY_GIFTS_HEADER]
     for d in deliveries:
         status = MY_GIFTS_STATUS.get(d.status, d.status)
-        lines.append(MY_GIFTS_ROW.format(item=d.item_code or "?", status=status))
+        item_label = names.get(d.item_code or "") or "подарок"
+        lines.append(MY_GIFTS_ROW.format(item=item_label, status=status))
     await message.answer("\n".join(lines))
+
 
 
 # --- Админ: подключение реальных Telegram gift_id ---------------------------
@@ -357,6 +363,12 @@ async def cmd_gifts_pending(message: Message, session: AsyncSession) -> None:
         return
 
     await message.answer(PENDING_HEADER.format(n=len(pending)))
+    # Имена подарков одним запросом — админ видит человекочитаемое название, а не
+    # внутренний код (релизное требование). Код оставляем мелким техническим
+    # суффиксом, т.к. он нужен для ручных команд.
+    names = await gifts_repo.get_names_by_codes(
+        session, [d.item_code or "" for d in pending]
+    )
     for d in pending:
         star_cost = int((d.meta or {}).get("star_cost") or 0)
         stars = f" · {star_cost} ⭐" if star_cost else ""
@@ -372,13 +384,15 @@ async def cmd_gifts_pending(message: Message, session: AsyncSession) -> None:
             if (d.meta or {}).get("source") == "case"
             else PENDING_ORIGIN_SHOP
         )
+        item_label = names.get(d.item_code or "") or (d.item_code or "?")
         row = PENDING_ROW.format(
             key=d.idempotency_key,
             origin=origin,
-            item=d.item_code or "?",
+            item=item_label,
             user=d.recipient_user_id,
             stars=stars,
         )
+
         await message.answer(
             row + reason,
             reply_markup=_pending_admin_keyboard(d.idempotency_key or ""),

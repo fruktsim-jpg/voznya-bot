@@ -40,9 +40,32 @@ async def get_gift_by_code(
     )
 
 
+async def get_names_by_codes(
+    session: AsyncSession, codes: list[str]
+) -> dict[str, str]:
+    """Карта ``code -> человекочитаемое имя`` для набора кодов каталога.
+
+    Используется везде, где нужно показать имя подарка по коду без N+1 запросов
+    (списки доставок, история, уведомления). Релизное правило: пользователю
+    показываем имя, НИКОГДА не код.
+    """
+    wanted = [c for c in {c for c in codes if c}]
+    if not wanted:
+        return {}
+    rows = (
+        await session.execute(
+            select(GiftCatalog.code, GiftCatalog.name).where(
+                GiftCatalog.code.in_(wanted)
+            )
+        )
+    ).all()
+    return {code: name for code, name in rows if name}
+
+
 async def get_gift_for_update(
     session: AsyncSession, code: str
 ) -> GiftCatalog | None:
+
     """Позиция каталога ПОД БЛОКИРОВКОЙ строки (для атомарной покупки)."""
     return await session.scalar(
         select(GiftCatalog).where(GiftCatalog.code == code).with_for_update()

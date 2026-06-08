@@ -28,7 +28,9 @@ from app.features.gifts.service import deliver_gift, sell_gift
 
 from app.models import CaseReward, Inventory
 from app.repositories import cases as cases_repo
+from app.repositories import gifts as gifts_repo
 from app.settings import inventory as inv_texts
+
 from app.settings import texts
 
 
@@ -293,8 +295,10 @@ def _render_open(
         )
     elif result.reward_kind == "tg_gift":
         # Реальный Telegram Gift / Premium: экран выбора (оставить/продать).
-        gift = result.reward_item_name or result.reward_item_code or "подарок"
+        # Только человекочитаемое имя; код (gift_bear) пользователю не показываем.
+        gift = result.reward_item_name or "подарок"
         value = money(result.reward_value or 0)
+
         line = texts.CASE_OPEN_WIN_GIFT.format(
             case=result.case_name, gift=gift, value=value
         )
@@ -323,9 +327,11 @@ def _render_open(
         line = texts.CASE_OPEN_WIN_ITEM.format(
             case=result.case_name,
             rarity=rarity,
-            item=result.reward_item_name or result.reward_item_code or "предмет",
+            # Только название; внутренний код предмета пользователю не показываем.
+            item=result.reward_item_name or "предмет",
             qty=qty,
         )
+
 
     if result.is_jackpot:
         line = texts.CASE_OPEN_JACKPOT.format(line=line)
@@ -536,11 +542,17 @@ async def cb_gift_sell(callback: CallbackQuery, session: AsyncSession) -> None:
     )
 
     if outcome.status == "ok":
+        # Имя из каталога, не внутренний код (релизное требование).
+        names = await gifts_repo.get_names_by_codes(
+            session, [outcome.gift_code or ""]
+        )
+        gift_name = names.get(outcome.gift_code or "") or "подарок"
         text = texts.GIFT_SOLD.format(
-            gift=outcome.gift_code or "подарок",
+            gift=gift_name,
             amount=money(outcome.amount),
             balance=money(outcome.balance or 0),
         )
+
     elif outcome.status == "not_pending":
         text = texts.GIFT_SELL_NOT_PENDING
     elif outcome.status == "no_value":
