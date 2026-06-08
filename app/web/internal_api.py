@@ -35,6 +35,8 @@ from app.features.cases.service import open_case
 from app.features.gifts.service import deliver_gift
 from app.repositories import cases as cases_repo
 from app.repositories import gifts as gifts_repo
+from app.repositories import users as users_repo
+
 
 
 logger = get_logger(__name__)
@@ -172,6 +174,10 @@ async def _handle_deliver_gift(request: web.Request) -> web.Response:
 
     user_id = body.get("user_id")
     delivery_key = body.get("delivery_key")
+    # Опционально: подарить РЕАЛЬНЫЙ подарок другому Telegram-юзеру по @username
+    # или числовому id («Подарить другу»). sendGift требует user_id, поэтому
+    # username резолвим по нашей таблице users (получатель должен быть в Возне).
+    recipient_raw = body.get("recipient")
     if not isinstance(user_id, int) or user_id <= 0:
         return web.json_response({"error": "invalid_user_id"}, status=400)
     if not isinstance(delivery_key, str) or not delivery_key:
@@ -195,14 +201,34 @@ async def _handle_deliver_gift(request: web.Request) -> web.Response:
                 status=409,
             )
 
+        # Резолв получателя для «Подарить другу» (опционально).
+        recipient_override: int | None = None
+        if isinstance(recipient_raw, str) and recipient_raw.strip():
+            raw = recipient_raw.strip()
+            if raw.lstrip("@").isdigit():
+                recipient_override = int(raw.lstrip("@"))
+            else:
+                target = await users_repo.get_user_by_username(session, raw)
+                if target is None:
+                    await session.rollback()
+                    return web.json_response(
+                        {"status": "recipient_not_found"}, status=404
+                    )
+                recipient_override = target.user_id
+            if recipient_override == user_id:
+                await session.rollback()
+                return web.json_response({"status": "self_transfer"}, status=400)
+
         outcome = await deliver_gift(
             session,
             bot,
             idempotency_key=delivery_key,
             enabled=settings.gifts_delivery_enabled,
             channel="site",
+            recipient_override=recipient_override,
         )
         await session.commit()
+
     except Exception:  # noqa: BLE001
         await session.rollback()
         logger.exception("web deliver_gift failed for user=%s key=%s", user_id, delivery_key)

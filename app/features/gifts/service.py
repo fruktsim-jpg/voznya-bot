@@ -323,6 +323,7 @@ async def deliver_gift(
     idempotency_key: str,
     enabled: bool,
     channel: str = "bot",
+    recipient_override: int | None = None,
 ) -> DeliverOutcome:
     """Пытается выдать оплаченный подарок (pending → completed/cancelled).
 
@@ -330,6 +331,12 @@ async def deliver_gift(
     выходим. Внешний вызов sendGift делается ПОСЛЕ блокировки, но его результат
     применяется здесь же (одна транзакция). При временной ошибке оставляем
     pending; при постоянной — отменяем с возвратом ешек.
+
+    ``recipient_override`` — отправить РЕАЛЬНЫЙ подарок другому Telegram-юзеру
+    («Подарить другу по @username»). Сам подарок уходит на этот user_id, но
+    владение/возврат/леджер остаются у плательщика (delivery.recipient_user_id):
+    при постоянной ошибке ешки вернутся плательщику, а в meta фиксируется
+    ``gifted_to``. None — обычная выдача себе.
     """
     delivery = await gifts_repo.get_delivery_for_update(session, idempotency_key)
     if delivery is None:
@@ -346,10 +353,13 @@ async def deliver_gift(
     )
     price = gift.price_eshki if gift else 0
 
+    # Кому реально шлём: другу (override) или себе (плательщику).
+    target_user_id = recipient_override or delivery.recipient_user_id
+
     # Внешний вызов (вне транзакции БД по смыслу; ошибки изолированы адаптером).
     result: DeliveryResult = await send_gift(
         bot,
-        user_id=delivery.recipient_user_id,
+        user_id=target_user_id,
         telegram_gift_id=telegram_gift_id or "",
         star_cost=star_cost,
         enabled=enabled,
@@ -364,8 +374,11 @@ async def deliver_gift(
                 "star_balance_after": result.star_balance_after,
             }
         )
+        if recipient_override:
+            meta["gifted_to"] = recipient_override
         delivery.status = "completed"
         delivery.meta = meta
+
         # Реализовать единицу: reserved-1, sold_count+1 — ТОЛЬКО для покупки
         # магазина. Приз кейса резерв не занимал и в продажах каталога не
         # учитывается — пул не трогаем (иначе reserved уйдёт в минус / в
