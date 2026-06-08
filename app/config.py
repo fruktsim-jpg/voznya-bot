@@ -52,9 +52,19 @@ class Settings(BaseSettings):
     # подключённого доступа/баланса Stars. См. TELEGRAM_GIFTS_AUDIT.md.
     gifts_delivery_enabled: bool = False
 
+    # Внутренний HTTP-API бота для сайта (открытие кейсов через веб тем же
+    # open_case, без дублирования логики). Поднимается рядом с polling.
+    # Включается только при заданном секрете; слушает внутренний адрес
+    # (в docker-сети), наружу публиковать НЕЛЬЗЯ. См. app/web/internal_api.py.
+    internal_api_enabled: bool = False
+    internal_api_host: str = "0.0.0.0"
+    internal_api_port: int = 8081
+    internal_api_secret: str = Field(default="", validation_alias="INTERNAL_API_SECRET")
+
 
     @property
     def admin_ids(self) -> list[int]:
+
         """Список ID администраторов, разобранный из строки ADMIN_IDS."""
         raw = self.admin_ids_raw or ""
         return [int(part.strip()) for part in raw.split(",") if part.strip()]

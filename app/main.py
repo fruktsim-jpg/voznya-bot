@@ -31,6 +31,8 @@ from app.middlewares import (
 )
 from app.services.deletion import init_deletion_service
 from app.services.link_maintenance import setup_link_maintenance
+from app.web import start_internal_api
+
 
 
 logger = get_logger(__name__)
@@ -125,15 +127,36 @@ async def main() -> None:
     dp = create_dispatcher()
     dp.startup.register(on_startup)
 
+    # Внутренний HTTP-API для сайта (открытие кейсов через веб). Поднимается
+    # рядом с polling, только если задан секрет — иначе пропускаем (бот живёт
+    # как раньше). Это НЕ публичный порт: слушаем внутренний адрес docker-сети.
+    api_runner = None
+    if settings.internal_api_enabled and settings.internal_api_secret:
+        api_runner = await start_internal_api(
+            bot,
+            get_sessionmaker(),
+            host=settings.internal_api_host,
+            port=settings.internal_api_port,
+            secret=settings.internal_api_secret,
+        )
+    elif settings.internal_api_enabled:
+        logger.warning(
+            "INTERNAL_API_ENABLED=true, но INTERNAL_API_SECRET пуст — "
+            "внутренний API не поднят (нужен секрет)."
+        )
+
     try:
         await dp.start_polling(
             bot, allowed_updates=dp.resolve_used_update_types()
         )
     finally:
+        if api_runner is not None:
+            await api_runner.cleanup()
         shutdown_scheduler()
         await dispose_engine()
         await bot.session.close()
         logger.info("Бот остановлен.")
+
 
 
 if __name__ == "__main__":

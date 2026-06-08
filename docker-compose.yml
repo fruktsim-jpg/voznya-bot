@@ -28,6 +28,13 @@ services:
       # Реальная выдача Telegram Gifts (sendGift). По умолчанию выключена;
       # включить = GIFTS_DELIVERY_ENABLED=true в .env. См. STARS_FLOW.md.
       GIFTS_DELIVERY_ENABLED: ${GIFTS_DELIVERY_ENABLED:-false}
+      # Внутренний API для сайта (открытие кейсов через веб). НЕ публикуем
+      # порт наружу: сайт ходит сюда по имени сервиса "bot" внутри docker-сети
+      # (http://bot:8081). Включается только при заданном INTERNAL_API_SECRET.
+      INTERNAL_API_ENABLED: ${INTERNAL_API_ENABLED:-false}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
+      INTERNAL_API_PORT: ${INTERNAL_API_PORT:-8081}
+
 
 volumes:
 
