@@ -105,31 +105,66 @@ def case_open(case_item_code: str, user_id: int) -> InlineKeyboardMarkup:
 
 
 def case_gift_choice(
-    delivery_key: str, user_id: int, sell_amount: int, *, keep_label: str, sell_label: str
+    delivery_key: str,
+    user_id: int,
+    sell_amount: int,
+    *,
+    keep_label: str,
+    sell_label: str,
+    withdraw_label: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Кнопки выбора после выпадения подарка из кейса (P1/P7).
+    """Кнопки выбора после выпадения подарка из кейса (P1/P2/P7).
 
-    «Оставить» — подарок остаётся pending-доставкой (выдаст админ). «Продать» —
-    мгновенная продажа за ешки (P5). Callback несёт ключ доставки и id игрока:
-    действовать может только владелец приза (проверка в хендлере), а сама
-    продажа защищена блокировкой строки доставки.
+    «Оставить» — подарок остаётся в инвентаре (pending-доставка). «Продать» —
+    мгновенная продажа за ешки (P5). «Вывести» — попытка авто-выдачи через
+    Telegram (P2); при сбое подарок остаётся pending и появляется кнопка
+    повтора. Callback несёт ключ доставки и id игрока: действовать может только
+    владелец приза (проверка в хендлере), а операции защищены блокировкой
+    строки доставки.
+    """
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=keep_label,
+                callback_data=f"gift:keep:{delivery_key}:{user_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=sell_label.format(amount=sell_amount),
+                callback_data=f"gift:sell:{delivery_key}:{user_id}",
+            )
+        ],
+    ]
+    if withdraw_label is not None:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=withdraw_label,
+                    callback_data=f"gift:withdraw:{delivery_key}:{user_id}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def gift_retry(delivery_key: str, user_id: int, *, retry_label: str) -> InlineKeyboardMarkup:
+    """Кнопка «Попробовать выдать ещё раз» после неудачной авто-выдачи (P6).
+
+    Появляется, когда выдача не прошла по временной причине (нет Stars, ошибка
+    Telegram API) и подарок остался pending. Повтор бьёт в ту же deliver_gift.
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=keep_label,
-                    callback_data=f"gift:keep:{delivery_key}:{user_id}",
+                    text=retry_label,
+                    callback_data=f"gift:withdraw:{delivery_key}:{user_id}",
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=sell_label.format(amount=sell_amount),
-                    callback_data=f"gift:sell:{delivery_key}:{user_id}",
-                )
-            ],
+            ]
         ]
     )
+
 
 
 def divorce_confirm(user_id: int, partner_id: int) -> InlineKeyboardMarkup:

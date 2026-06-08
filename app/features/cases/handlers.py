@@ -18,12 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 
-from app.core.keyboards import case_gift_choice, case_open
+from app.config import get_settings
+from app.core.keyboards import case_gift_choice, case_open, gift_retry
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
 from app.features.cases.events import CaseOpenEvent, emit_case_opened
 from app.features.cases.service import OpenResult, open_case
-from app.features.gifts.service import sell_gift
+from app.features.gifts.service import deliver_gift, sell_gift
+
 from app.models import CaseReward, Inventory
 from app.repositories import cases as cases_repo
 from app.settings import inventory as inv_texts
@@ -304,7 +306,9 @@ def _render_open(
                 result.reward_sell_amount or 0,
                 keep_label=texts.CASE_GIFT_KEEP_BTN,
                 sell_label=texts.CASE_GIFT_SELL_BTN,
+                withdraw_label=texts.CASE_GIFT_WITHDRAW_BTN,
             )
+
     else:
 
 
@@ -551,5 +555,73 @@ async def cb_gift_sell(callback: CallbackQuery, session: AsyncSession) -> None:
         except TelegramBadRequest:
             pass
         await callback.message.answer(text)
+
+
+@router.callback_query(F.data.startswith("gift:withdraw:"))
+async def cb_gift_withdraw(callback: CallbackQuery, session: AsyncSession) -> None:
+    """«Вывести» выпавший подарок (P2/P6): попытка авто-выдачи через Telegram.
+
+    Сценарий: игрок выбрал вывести подарок. Пытаемся выдать сразу
+    (:func:`deliver_gift`, тот же конвейер, что у магазина). Успех — подарок
+    отправлен, кнопки убираем. Временная неудача (нет Stars, ошибка API, выдача
+    выключена) — подарок остаётся pending, показываем кнопку «Попробовать ещё
+    раз» (P6). Постоянная неудача — доставка отменена с возвратом стоимости
+    (логика внутри deliver_gift). Защита: действовать может только владелец.
+    """
+    parsed = _parse_gift_action(callback.data or "")
+    if parsed is None:
+        await callback.answer()
+        return
+    delivery_key, owner_id = parsed
+    if callback.from_user is None or callback.from_user.id != owner_id:
+        await callback.answer(texts.GIFT_ACTION_NOT_YOURS, show_alert=False)
+        return
+
+    # Фиксируем «намерение вывести» прежде внешнего вызова не нужно — deliver_gift
+    # сам берёт доставку FOR UPDATE и идемпотентен (повторный клик безопасен).
+    settings = get_settings()
+    outcome = await deliver_gift(
+        session,
+        callback.bot,
+        idempotency_key=delivery_key,
+        enabled=settings.gifts_delivery_enabled,
+        channel="bot",
+    )
+
+    await callback.answer()
+    if callback.message is None:
+        return
+
+    if outcome.status == "completed":
+        # Успех — подарок отправлен, кнопки больше не нужны.
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(texts.GIFT_WITHDRAW_SENT.format(gift="подарок"))
+    elif outcome.status == "skip":
+        # Уже обработана (продали/выдали ранее) — повторно ничего не делаем.
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(texts.GIFT_WITHDRAW_NOT_PENDING)
+    elif outcome.status == "cancelled":
+        # Постоянная ошибка: доставка отменена, стоимость возвращена внутри
+        # deliver_gift. Кнопки убираем — повторять нечего.
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(texts.GIFT_WITHDRAW_NOT_PENDING)
+    else:
+        # pending (временная неудача): оставляем подарок, даём кнопку повтора.
+        retry = gift_retry(delivery_key, owner_id, retry_label=texts.CASE_GIFT_RETRY_BTN)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=retry)
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(texts.GIFT_WITHDRAW_PENDING.format(gift="подарок"))
+
 
 
