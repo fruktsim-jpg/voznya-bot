@@ -35,6 +35,21 @@ class Settings(BaseSettings):
     # Сайт
     website_url: str = Field(default="https://voznya.nl")
 
+    # Глобальные уведомления о редких дропах (Release 2.2). Когда кто-то выбивает
+    # действительно редкое — это событие сообщества: бот шлёт сообщение в общий
+    # чат (chat_id). Чтобы не спамить, срабатывает ТОЛЬКО при выполнении хотя бы
+    # одного из условий ниже. Любой порог можно отключить, выставив его в 0/false.
+    rare_drop_announce_enabled: bool = True
+    # Анонсировать любой джекпот (is_jackpot).
+    rare_drop_announce_jackpot: bool = True
+    # Анонсировать любой реальный Telegram Gift / Premium (reward_kind=tg_gift).
+    rare_drop_announce_gift: bool = True
+    # Анонсировать, если шанс выпадения ниже порога (в процентах). 0 = выключено.
+    rare_drop_chance_pct: float = 1.0
+    # Анонсировать, если стоимость дропа в ешках не ниже порога. 0 = выключено.
+    rare_drop_min_value: int = 1000
+
+
     # Время
     timezone: str = "Europe/Amsterdam"
     # Час сброса номинаций (Пидор/Пара дня). 0 = смена в 00:00.

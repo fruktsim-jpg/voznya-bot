@@ -30,12 +30,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import get_settings
 from app.core.logger import get_logger
+from app.core.utils import mention
 from app.features.cases.events import CaseOpenEvent, emit_case_opened
+from app.features.cases.rare_drop import RareDrop, announce_if_rare
 from app.features.cases.service import open_case
 from app.features.gifts.service import deliver_gift
 from app.repositories import cases as cases_repo
 from app.repositories import gifts as gifts_repo
 from app.repositories import users as users_repo
+
 
 
 
@@ -86,6 +89,8 @@ async def _handle_open_case(request: web.Request) -> web.Response:
     sessionmaker: async_sessionmaker[AsyncSession] = request.app["sessionmaker"]
     session: AsyncSession = sessionmaker()
     total_openings = 0
+    opener_name: str | None = None
+    opener_username: str | None = None
     try:
         result = await open_case(
             session, user_id=user_id, case_item_code=case_item_code
@@ -97,8 +102,17 @@ async def _handle_open_case(request: web.Request) -> web.Response:
                 total_openings = await cases_repo.count_openings(session, user_id)
             except Exception:  # noqa: BLE001
                 total_openings = 0
+            # Имя/username игрока — для глобального анонса редкого дропа.
+            try:
+                opener = await users_repo.get_user(session, user_id)
+                if opener is not None:
+                    opener_name = opener.first_name
+                    opener_username = opener.username
+            except Exception:  # noqa: BLE001
+                pass
         # Коммитим сами (здесь нет DbSessionMiddleware). Та же атомарность.
         await session.commit()
+
     except Exception:  # noqa: BLE001
         await session.rollback()
         logger.exception("web open_case failed for user=%s case=%s", user_id, case_item_code)
@@ -143,7 +157,36 @@ async def _handle_open_case(request: web.Request) -> web.Response:
         except Exception:  # noqa: BLE001
             logger.debug("emit_case_opened (web) failed", exc_info=True)
 
+        # Глобальный анонс редкого дропа (P0): джекпот / Telegram Gift / Premium
+        # / низкий шанс / высокая стоимость. Best-effort, в общий чат.
+        try:
+            is_gift = result.reward_kind == "tg_gift"
+            is_premium = is_gift and (result.reward_item_code or "").startswith(
+                "premium"
+            )
+            # Для предметов стоимости в OpenResult нет — берём ешки-награду как
+            # ориентир (валюта) либо внутреннюю стоимость подарка.
+            value = result.reward_value or result.amount
+            bot: Bot = request.app["bot"]
+            await announce_if_rare(
+                bot,
+                RareDrop(
+                    user_mention=mention(user_id, opener_name, opener_username),
+                    case_name=result.case_name,
+                    item_name=result.reward_item_name
+                    or (f"{result.amount} ешек" if result.amount else "награда"),
+                    is_jackpot=result.is_jackpot,
+                    is_gift=is_gift,
+                    is_premium=is_premium,
+                    value_eshki=value,
+                    chance_pct=result.reward_chance_pct,
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("rare drop announce (web) failed", exc_info=True)
+
     return web.json_response(payload, status=http_status)
+
 
 
 

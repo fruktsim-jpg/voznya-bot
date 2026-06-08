@@ -69,7 +69,11 @@ class OpenResult:
     # выбора «Оставить / Продать», P1/P7) и сумма продажи (P5).
     reward_value: int | None = None
     reward_sell_amount: int | None = None
+    # Шанс выпавшей награды в процентах (вес/сумма весов × 100) — для глобальных
+    # уведомлений о редких дропах (Release 2.2). None, если посчитать нельзя.
+    reward_chance_pct: float | None = None
     error: str | None = None
+
 
 
 
@@ -268,6 +272,11 @@ async def open_case(
             reward_value = max(0, int(gift.star_cost or 0)) * ESHKI_PER_STAR
             reward_sell_amount = int(reward_value * ITEM_SELL_RATE)
 
+    # Шанс выпавшей награды (для глобальных уведомлений о редких дропах).
+    reward_chance_pct = (
+        reward.weight / total_weight * 100 if total_weight > 0 else None
+    )
+
     return OpenResult(
         status="ok",
         case_name=case.name,
@@ -282,7 +291,9 @@ async def open_case(
         delivery_key=result.delivery_key,
         reward_value=reward_value,
         reward_sell_amount=reward_sell_amount,
+        reward_chance_pct=reward_chance_pct,
     )
+
 
 
 

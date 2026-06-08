@@ -29,9 +29,14 @@ def _sort_rows(rows: list[InventoryRow]) -> list[InventoryRow]:
 
 
 def _format_row(row: InventoryRow) -> str:
-    """Форматирует одну строку предмета (+ строку описания, если есть)."""
+    """Форматирует одну строку предмета — ровно одна строка на предмет.
+
+    Site-first (Release 2.2): инвентарь в боте — быстрый компактный просмотр,
+    описание предмета не дублируем (полные детали — на сайте). Это убирает
+    лишнюю строку с каждого предмета и держит сообщение коротким.
+    """
     style = inv_texts.rarity_style(row.rarity)
-    line = inv_texts.INV_ROW.format(
+    return inv_texts.INV_ROW.format(
         rarity_emoji=style.emoji,
         type_emoji=inv_texts.type_emoji(row.type),
         name=row.name,
@@ -40,9 +45,7 @@ def _format_row(row: InventoryRow) -> str:
         else "",
         equipped=inv_texts.INV_ROW_EQUIPPED if row.equipped else "",
     )
-    if row.description:
-        line += "\n" + inv_texts.INV_ROW_DESC.format(description=row.description)
-    return line
+
 
 
 def render_inventory(

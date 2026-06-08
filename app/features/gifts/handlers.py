@@ -132,64 +132,21 @@ def _render_buy_failure(result) -> str | None:
 
 @router.callback_query(F.data.startswith("gift:buy:"))
 async def cb_gift_buy(callback: CallbackQuery, session: AsyncSession) -> None:
-    """Покупка подарка по кнопке: списать ешки, затем попытаться выдать."""
-    if callback.from_user is None or callback.message is None:
-        await callback.answer()
-        return
-    parts = (callback.data or "").split(":")
-    # gift:buy:<code>
-    if len(parts) != 3:
-        await callback.answer()
-        return
-    code = parts[2]
-    user_id = callback.from_user.id
+    """Site-first (Release 2.2): покупка подарков перенесена на сайт.
 
-    result = await buy_gift(session, user_id=user_id, code=code, channel="bot")
-    failure = _render_buy_failure(result)
-    if failure is not None:
-        await callback.answer()
-        await callback.message.answer(failure)
-        return
-
-    # Фиксируем покупку (списание + резерв + pending-доставка) ДО внешней выдачи.
-    await session.commit()
-
-    # Попытка выдачи (внешний вызов Telegram). enabled из настроек: пока выдача
-    # не подключена — доставка останется pending (ешки не теряются).
-    settings = get_settings()
-    outcome = await deliver_gift(
-        session,
-        callback.bot,
-        idempotency_key=result.idempotency_key or "",
-        enabled=settings.gifts_delivery_enabled,
-        channel="bot",
-    )
-    # Результат выдачи коммитит middleware при возврате из хендлера.
-
-    if outcome.status == "completed":
-        delivery_line = DELIVERY_SENT
-    elif outcome.status == "cancelled":
-        delivery_line = DELIVERY_REFUNDED
-        if get_settings().is_admin(user_id) and outcome.error:
-            delivery_line += f"\n(ошибка: {outcome.error})"
-    elif get_settings().is_admin(user_id):
-
-        # Админу показываем точную причину задержки (не гадаем).
-        reason = DELIVERY_REASONS.get(outcome.error or "", outcome.error or "неизвестно")
-        delivery_line = DELIVERY_PENDING_ADMIN.format(reason=reason)
-    else:
-        delivery_line = DELIVERY_PENDING
-
+    Кнопка `gift:buy` больше не вешается на новые сообщения, но старые сообщения
+    в чате могут её ещё содержать. Чтобы НИГДЕ не осталось сценария покупки
+    внутри Telegram, при нажатии ведём игрока в магазин на сайте, а не списываем
+    ешки. Конвейер `buy_gift`/`deliver_gift` остаётся только для сайта и админа.
+    """
     await callback.answer()
-
-    await callback.message.answer(
-        BUY_OK.format(
-            name=result.gift_name,
-            price=money(result.price),
-            balance=money(result.balance or 0),
-            delivery=delivery_line,
+    if callback.message is not None:
+        url = f"{get_settings().website_url}/gifts"
+        await callback.message.answer(
+            SHOP_SITE_CARD,
+            reply_markup=open_on_site(SHOP_SITE_BTN, url),
         )
-    )
+
 
 
 # --- Игрок: статус своих покупок --------------------------------------------

@@ -440,35 +440,22 @@ async def cmd_open(message: Message, session: AsyncSession, command_args: str) -
 
 @router.callback_query(F.data.startswith("case:open:"))
 async def cb_case_open(callback: CallbackQuery, session: AsyncSession) -> None:
-    """Открытие кейса по кнопке.
+    """Site-first (Release 2.2): открытие кейсов перенесено на сайт.
 
-    Защита от чужих нажатий: callback несёт user_id адресата. Защита от двойного
-    клика/гонок — внутри open_case (блокировки строк), здесь только UX.
+    Кнопка `case:open` больше не вешается на новые сообщения, но старые
+    сообщения в чате могут её ещё содержать. Чтобы НИГДЕ не осталось сценария
+    открытия внутри Telegram, при нажатии ведём игрока на сайт, а не вскрываем
+    кейс. Открытие (`_open_with_animation`/`open_case`) больше не вызывается из
+    бота — остаётся только как внутренний конвейер для сайта.
     """
-    data = callback.data or ""
-    parts = data.split(":")
-    # case:open:<item_code>:<user_id>
-    if len(parts) != 4:
-        await callback.answer()
-        return
-    code = parts[2]
-    try:
-        target_id = int(parts[3])
-    except ValueError:
-        await callback.answer()
-        return
-
-    if callback.from_user is None or callback.from_user.id != target_id:
-        await callback.answer(texts.CASE_NOT_YOURS, show_alert=False)
-        return
-
     await callback.answer()
     if callback.message is not None:
-        await _open_with_animation(session, callback.message, target_id, code)
-    else:
-        # Нет сообщения-якоря (редко) — отдаём результат без анимации.
-        text, markup, _ = await _do_open_and_render(session, target_id, code)
-        await callback.bot.send_message(target_id, text, reply_markup=markup)
+        url = f"{get_settings().website_url}/cases"
+        await callback.message.answer(
+            texts.CASES_SITE_CARD,
+            reply_markup=open_on_site(texts.CASES_SITE_BTN, url),
+        )
+
 
 
 def _parse_gift_action(data: str) -> tuple[str, int] | None:
