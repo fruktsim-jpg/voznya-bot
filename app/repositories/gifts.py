@@ -8,9 +8,11 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GiftCatalog, GiftTransaction
+
 
 
 async def get_active_gifts(session: AsyncSession) -> list[GiftCatalog]:
@@ -90,5 +92,55 @@ async def get_pending_deliveries(
         .limit(limit)
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def get_pending_gifts_for_user(
+    session: AsyncSession, user_id: int, *, limit: int = 50
+) -> list[tuple[GiftTransaction, GiftCatalog | None]]:
+    """Pending Telegram Gifts/Premium игрока + позиция каталога (для инвентаря).
+
+    Это те же подарки, что показывает сайт в разделе «Инвентарь»: подарок живёт
+    в ``gift_transactions`` (status='pending'), пока его не выдадут/продадут. Бот
+    обязан показывать их в ``/инвентарь``, иначе инвентарь сайта и бота
+    расходятся (единый источник правды — БД). Каталог нужен для ценности/продажи;
+    при рассинхроне (позицию удалили) вернём None — рендер деградирует мягко.
+    """
+    stmt = (
+        select(GiftTransaction, GiftCatalog)
+        .join(GiftCatalog, GiftCatalog.code == GiftTransaction.item_code, isouter=True)
+        .where(GiftTransaction.kind == "tg_gift")
+        .where(GiftTransaction.recipient_user_id == user_id)
+        .where(GiftTransaction.status == "pending")
+        .order_by(GiftTransaction.created_at.desc())
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [(row[0], row[1]) for row in rows]
+
+
+async def get_withdraw_requested(
+
+    session: AsyncSession, *, limit: int = 50
+) -> list[GiftTransaction]:
+    """Pending-доставки, явно отправленные игроком на ВЫВОД (P2).
+
+    Игрок нажал «Вывести» на сайте/в мини-аппе — действие пометило доставку
+    ``meta.withdraw_requested = true`` (см. lib/inventory-actions.withdraw).
+    Эти и только эти доставки авто-воркер пытается выдать. Подарки, которые
+    игрок решил «оставить» в инвентаре, флага не имеют и воркером не трогаются.
+
+    Фильтр по JSONB-флагу делаем в БД (``meta @> '{"withdraw_requested": true}'``),
+    старые сверху — выдаём по очереди.
+    """
+    stmt = (
+        select(GiftTransaction)
+        .where(GiftTransaction.kind == "tg_gift")
+        .where(GiftTransaction.status == "pending")
+        .where(GiftTransaction.meta.cast(JSONB).contains({"withdraw_requested": True}))
+        .order_by(GiftTransaction.created_at.asc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
 
 

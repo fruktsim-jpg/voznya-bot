@@ -54,16 +54,26 @@ def render_inventory(
     username: str | None,
     page: int = 1,
     pages: int = 1,
+    has_gifts: bool = False,
 ) -> str:
     """Собирает текст инвентаря для одной страницы.
 
     ``rows`` — уже выбранная страница (или весь инвентарь, если пагинации нет);
-    ``total_count`` — суммарное число предметов игрока (для заголовка).
+    ``total_count`` — суммарное число стековых предметов игрока (для заголовка).
+    ``has_gifts`` — есть ли pending-подарки/Premium (рендерятся отдельным блоком
+    в хендлере): если стековых предметов нет, но подарки есть, НЕ показываем
+    «инвентарь пуст» — секцию подарков допишет вызывающий код.
     """
     who = mention(user_id, first_name, username)
 
-    if total_count == 0:
+    if total_count == 0 and not has_gifts:
         return inv_texts.INV_EMPTY.format(mention=who)
+
+    if total_count == 0 and has_gifts:
+        # Стеков нет, но есть подарки/Premium — отдаём только шапку, секцию
+        # подарков допишет хендлер. Без «пусто» и без списка стеков.
+        return inv_texts.INV_HEADER.format(mention=who, count=0)
+
 
     parts = [inv_texts.INV_HEADER.format(mention=who, count=total_count), ""]
     parts.extend(_format_row(r) for r in _sort_rows(rows))

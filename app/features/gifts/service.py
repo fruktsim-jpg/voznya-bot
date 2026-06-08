@@ -58,15 +58,22 @@ def _case_prize_value(delivery: GiftTransaction, gift: GiftCatalog | None) -> in
 
 
 def _item_full_value(delivery: GiftTransaction, gift: GiftCatalog | None) -> int:
-    """Полная внутренняя стоимость предмета в ешках (база для продажи, P5).
+    """Полная стоимость предмета в ешках — ЕДИНАЯ база для продажи (P5/Release 2.2).
 
-    Для покупки магазина базой считаем уплаченную цену (``price_eshki``), для
-    приза кейса — внутреннюю стоимость (``star_cost × ESHKI_PER_STAR``). Так
-    продать предмет дороже, чем он стоит, нельзя.
+    Один понятный игроку курс независимо от источника предмета: базой всегда
+    является ЦЕНА МАГАЗИНА (``gift_catalog.price_eshki``) — та же сумма, что
+    показывается как «ценность» в инвентаре и цена в магазине. Продать предмет
+    можно за ``ITEM_SELL_RATE`` (70%) от этой цены — одинаково для приза кейса и
+    покупки магазина. Так не возникает ситуации «в магазине одна цифра, при
+    продаже другая».
+
+    Фолбэк (каталог удалён/переименован или price_eshki не задан): внутренняя
+    стоимость ``star_cost × ESHKI_PER_STAR`` (из каталога, затем из слепка meta).
     """
-    if _is_shop_purchase(delivery) and gift is not None:
-        return int(gift.price_eshki or 0)
+    if gift is not None and (gift.price_eshki or 0) > 0:
+        return int(gift.price_eshki)
     return _case_prize_value(delivery, gift)
+
 
 
 def _sell_value(full_value: int) -> int:

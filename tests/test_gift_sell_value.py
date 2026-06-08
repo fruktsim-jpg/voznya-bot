@@ -51,17 +51,20 @@ def test_sell_value_floors() -> None:
     assert _sell_value(-100) == 0
 
 
-def test_full_value_shop_purchase_uses_price() -> None:
-    # Покупка магазина (есть transaction_id): база = уплаченная цена.
-    delivery = FakeDelivery(transaction_id=42, meta={"star_cost": 999})
-    gift = FakeGift(star_cost=999, price_eshki=300)
-    assert _item_full_value(delivery, gift) == 300
-
-
-def test_full_value_case_prize_uses_internal_value() -> None:
-    # Приз кейса (transaction_id is None): база = star_cost × ESHKI_PER_STAR.
-    delivery = FakeDelivery(transaction_id=None, meta=None)
+def test_full_value_uses_shop_price_for_both_sources() -> None:
+    # Release 2.2: ЕДИНЫЙ курс — база всегда цена магазина (price_eshki),
+    # независимо от источника предмета (покупка магазина ИЛИ приз кейса).
+    shop = FakeDelivery(transaction_id=42, meta={"star_cost": 999})
+    prize = FakeDelivery(transaction_id=None, meta=None)
     gift = FakeGift(star_cost=25, price_eshki=300)
+    assert _item_full_value(shop, gift) == 300
+    assert _item_full_value(prize, gift) == 300  # тот же курс, что в магазине
+
+
+def test_full_value_falls_back_to_internal_when_no_price() -> None:
+    # price_eshki не задан → фолбэк на внутреннюю стоимость star_cost × курс.
+    delivery = FakeDelivery(transaction_id=None, meta=None)
+    gift = FakeGift(star_cost=25, price_eshki=None)
     assert _item_full_value(delivery, gift) == 25 * ESHKI_PER_STAR
 
 
@@ -69,3 +72,5 @@ def test_full_value_case_prize_falls_back_to_meta() -> None:
     # Каталог удалён — star_cost берётся из слепка meta.
     delivery = FakeDelivery(transaction_id=None, meta={"star_cost": 50})
     assert _item_full_value(delivery, None) == 50 * ESHKI_PER_STAR
+
+

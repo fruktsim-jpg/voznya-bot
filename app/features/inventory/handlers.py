@@ -12,17 +12,52 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
+from app.core.money import money
 from app.core.targets import resolve_target
 from app.features.inventory.service import render_inventory
+from app.repositories import gifts as gifts_repo
 from app.repositories import inventory as inv_repo
 from app.repositories import users as users_repo
 from app.services.deletion import get_deletion_service
 from app.settings import inventory as inv_texts
+from app.settings.balance import ESHKI_PER_STAR, ITEM_SELL_RATE
+
 
 router = Router(name="inventory")
 
 
+def _gift_value(gift) -> int:
+    """Стоимость подарка в ешках — единый курс (price_eshki, фолбэк star×курс).
+
+    Совпадает с ``_item_full_value`` сервиса: база — цена магазина; если её нет
+    (рассинхрон каталога) — внутренняя стоимость ``star_cost × ESHKI_PER_STAR``.
+    """
+    if gift is not None and (gift.price_eshki or 0) > 0:
+        return int(gift.price_eshki)
+    star_cost = int(gift.star_cost or 0) if gift is not None else 0
+    return max(0, star_cost) * ESHKI_PER_STAR
+
+
+def _render_gifts_section(gifts: list) -> str:
+    """Блок «Подарки и Premium» для текста инвентаря (пусто → пустая строка)."""
+    if not gifts:
+        return ""
+    lines = [inv_texts.INV_GIFTS_HEADER.format(count=len(gifts))]
+    for delivery, gift in gifts:
+        name = (gift.name if gift else None) or delivery.item_code or "подарок"
+        value = _gift_value(gift)
+        sell = int(max(0, value) * ITEM_SELL_RATE)
+        lines.append(
+            inv_texts.INV_GIFTS_ROW.format(
+                name=name, value=money(value), sell=money(sell)
+            )
+        )
+    lines.append(inv_texts.INV_GIFTS_HINT)
+    return "\n" + "\n".join(lines)
+
+
 def _parse_page(args: str) -> int:
+
     """Достаёт номер страницы из аргументов (последний числовой токен).
 
     «инв», «инв @user», «инв @user 2», «инв 2» — всё корректно. Любой мусор →
@@ -65,6 +100,17 @@ async def cmd_inventory(
     rows = await inv_repo.get_inventory(
         session, user_id, limit=page_size, offset=offset
     )
+
+    # Подарки/Premium живут отдельно от стековых предметов (в gift_transactions,
+    # status='pending') — это та же сущность, что показывает сайт. Показываем их,
+    # чтобы инвентарь бота и сайта совпадал (единый источник правды). Только на
+    # первой странице, чтобы не дублировать на каждой.
+    gifts = (
+        await gifts_repo.get_pending_gifts_for_user(session, user_id)
+        if page == 1
+        else []
+    )
+
     text = render_inventory(
         rows,
         total,
@@ -73,9 +119,12 @@ async def cmd_inventory(
         username=username,
         page=page,
         pages=pages,
+        has_gifts=bool(gifts),
     )
+    text += _render_gifts_section(gifts)
 
     sent = await message.answer(text)
+
 
     # Автоудаление информационного сообщения (чистота чата) — как в profile.
     deletion = get_deletion_service()
