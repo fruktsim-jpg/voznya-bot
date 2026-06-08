@@ -429,7 +429,44 @@ async def deliver_gift(
     return DeliverOutcome(status="cancelled", refunded=True, error=result.error)
 
 
+async def claim_gift_by_token(
+    session: AsyncSession,
+    bot: Bot,
+    *,
+    claim_token: str,
+    claimer_user_id: int,
+    enabled: bool,
+    channel: str = "bot",
+) -> DeliverOutcome:
+    """Выдаёт подарок по claim-ссылке тому, кто открыл `/start gift_<token>`.
+
+    Сценарий «Подарить другу по ссылке» (для тех, кто НЕ запускал бота заранее):
+    отправитель создал pending-доставку с ``meta.claim_token``; получатель
+    открывает бота по ссылке, мы находим доставку по токену и реально шлём
+    подарок ему (``recipient_override = claimer``). Владение/возврат остаются у
+    плательщика. Идемпотентно: доставка берётся FOR UPDATE по токену.
+
+    Возврат:
+      * skip + 'claim_not_found' — токена нет или подарок уже забран/обработан;
+      * далее как deliver_gift (completed/pending/cancelled).
+    """
+    delivery = await gifts_repo.get_delivery_by_claim_token(session, claim_token)
+    if delivery is None:
+        return DeliverOutcome(status="skip", error="claim_not_found")
+
+    # Доставку нашли по токену — выдаём её получателю через общий конвейер.
+    return await deliver_gift(
+        session,
+        bot,
+        idempotency_key=delivery.idempotency_key,
+        enabled=enabled,
+        channel=channel,
+        recipient_override=claimer_user_id,
+    )
+
+
 async def refund_gift(
+
     session: AsyncSession,
     *,
     idempotency_key: str,

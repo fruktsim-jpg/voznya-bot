@@ -118,7 +118,26 @@ async def get_pending_gifts_for_user(
     return [(row[0], row[1]) for row in rows]
 
 
+async def get_delivery_by_claim_token(
+    session: AsyncSession, claim_token: str
+) -> GiftTransaction | None:
+    """Pending-доставка с данным ``meta.claim_token`` ПОД БЛОКИРОВКОЙ.
+
+    Используется claim-flow «Подарить другу по ссылке»: получатель открывает
+    ``/start gift_<token>``, мы находим ожидающую доставку по токену и выдаём её
+    ему. Блокировка строки — защита от двойного клейма (две вкладки/гонка).
+    """
+    return await session.scalar(
+        select(GiftTransaction)
+        .where(GiftTransaction.kind == "tg_gift")
+        .where(GiftTransaction.status == "pending")
+        .where(GiftTransaction.meta.cast(JSONB).contains({"claim_token": claim_token}))
+        .with_for_update()
+    )
+
+
 async def get_withdraw_requested(
+
 
     session: AsyncSession, *, limit: int = 50
 ) -> list[GiftTransaction]:

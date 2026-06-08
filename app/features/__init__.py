@@ -24,7 +24,9 @@ def get_feature_routers() -> list[Router]:
 
     from app.features.duel.handlers import router as duel_router
     from app.features.farm.handlers import router as farm_router
+    from app.features.gifts.claim_handlers import router as gift_claim_router
     from app.features.gifts.handlers import router as gifts_router
+
 
     from app.features.help.handlers import router as help_router
     from app.features.inventory.handlers import router as inventory_router
@@ -47,10 +49,13 @@ def get_feature_routers() -> list[Router]:
     from app.features.welcome.handlers import router as welcome_router
 
     return [
-        # Привязка сайта (/start link_<token>) — ДО help_router, который
-        # перехватывает любой /start.
+        # Привязка сайта (/start link_<token>) и приём подарка по ссылке
+        # (/start gift_<token>) — ДО help_router, который перехватывает любой
+        # /start своим общим фильтром.
         linking_router,
+        gift_claim_router,
         welcome_router,
+
         # Репутация — РАНЬШЕ командных роутеров: reply-фраза («топ», «+», ...)
         # должна срабатывать как репутация. Фильтр требует reply + точный
         # алиас, поэтому обычные команды (не-reply «топ» и т.п.) спокойно
