@@ -30,7 +30,9 @@ from app.config import get_settings
 from app.core.logger import get_logger
 from app.features.gifts.service import deliver_gift
 from app.repositories import gifts as gifts_repo
+from app.repositories import users as users_repo
 from app.settings import texts
+
 
 logger = get_logger(__name__)
 
@@ -57,24 +59,42 @@ async def process_withdraw_queue(
     async with sessionmaker() as session:
         pending = await gifts_repo.get_withdraw_requested(session, limit=WITHDRAW_BATCH)
         keys = [
-            (d.idempotency_key, d.recipient_user_id, d.item_code or "подарок")
+            (
+                d.idempotency_key,
+                d.recipient_user_id,
+                d.item_code or "подарок",
+                # «Подарить другу» через очередь (бот был недоступен с сайта):
+                # meta.gift_to = @username|id получателя реального подарка.
+                (d.meta or {}).get("gift_to"),
+            )
             for d in pending
         ]
 
-    for idem, user_id, gift_name in keys:
+    for idem, user_id, gift_name, gift_to in keys:
         async with sessionmaker() as session:
             try:
+                # Резолвим получателя «Подарить другу» (если задан). Не нашли —
+                # снимаем флаг очереди, чтобы не зацикливаться, и идём дальше.
+                recipient_override = await _resolve_gift_to(session, gift_to)
+                if gift_to and recipient_override is None:
+                    await _drop_unresolved_gift_to(session, idem)
+                    await session.commit()
+                    await _notify(bot, user_id, texts.GIFT_FRIEND_NOT_FOUND.format(gift=gift_name))
+                    continue
+
                 outcome = await deliver_gift(
                     session,
                     bot,
                     idempotency_key=idem,
                     enabled=settings.gifts_delivery_enabled,
                     channel="site",
+                    recipient_override=recipient_override,
                 )
             except Exception:  # noqa: BLE001 — одна доставка не должна валить воркер
                 logger.exception("auto-withdraw failed for %s", idem)
                 await session.rollback()
                 continue
+
 
             if outcome.status == "completed":
                 await session.commit()
@@ -91,7 +111,41 @@ async def process_withdraw_queue(
                 await session.commit()
 
 
+async def _resolve_gift_to(
+    session: AsyncSession, gift_to: str | None
+) -> int | None:
+    """@username|id из meta.gift_to → user_id получателя (или None).
+
+    Числовой id берём как есть; username ищем по таблице users (получатель
+    должен быть в Возне — sendGift умеет только по user_id). None, если не
+    задан или не нашли.
+    """
+    if not gift_to:
+        return None
+    raw = str(gift_to).strip()
+    if raw.lstrip("@").isdigit():
+        return int(raw.lstrip("@"))
+    target = await users_repo.get_user_by_username(session, raw)
+    return target.user_id if target else None
+
+
+async def _drop_unresolved_gift_to(session: AsyncSession, idem: str) -> None:
+    """Снимает флаг очереди, если получателя «Подарить другу» не нашли.
+
+    Предмет остаётся pending в инвентаре отправителя (он сам решит судьбу), но
+    больше не дёргается воркером впустую.
+    """
+    delivery = await gifts_repo.get_delivery_for_update(session, idem)
+    if delivery is None or delivery.status != "pending":
+        return
+    meta = dict(delivery.meta or {})
+    meta["withdraw_requested"] = False
+    meta["gift_to_unresolved"] = True
+    delivery.meta = meta
+
+
 async def _maybe_give_up(
+
     session: AsyncSession,
     idem: str,
     user_id: int,
