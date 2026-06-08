@@ -65,7 +65,12 @@ class OpenResult:
     balance: int | None = None
     # Для tg_gift — idempotency_key созданной pending-доставки (уведомления).
     delivery_key: str | None = None
+    # Для tg_gift — полная внутренняя стоимость подарка в ешках (для экрана
+    # выбора «Оставить / Продать», P1/P7) и сумма продажи (P5).
+    reward_value: int | None = None
+    reward_sell_amount: int | None = None
     error: str | None = None
+
 
 
 
@@ -245,12 +250,23 @@ async def open_case(
         if item is not None:
             reward_item_name = item[0]
             reward_rarity = item[1]
-    elif result.reward_kind == "tg_gift" and result.reward_item_code:
-        # Реальный Telegram Gift / Premium: показываем НАЗВАНИЕ из каталога.
-        gift_meta = await cases_repo.get_gift_meta_by_codes(
-            session, [result.reward_item_code]
+    reward_value: int | None = None
+    reward_sell_amount: int | None = None
+    if result.reward_kind == "tg_gift" and result.reward_item_code:
+        # Реальный Telegram Gift / Premium: имя + полная внутренняя стоимость
+        # (star_cost × ESHKI_PER_STAR) для экрана выбора «Оставить / Продать».
+        from app.models import GiftCatalog
+        from app.settings.balance import ESHKI_PER_STAR, ITEM_SELL_RATE
+
+        gift = await session.scalar(
+            select(GiftCatalog).where(
+                GiftCatalog.code == result.reward_item_code
+            )
         )
-        reward_item_name = gift_meta.get(result.reward_item_code)
+        if gift is not None:
+            reward_item_name = gift.name
+            reward_value = max(0, int(gift.star_cost or 0)) * ESHKI_PER_STAR
+            reward_sell_amount = int(reward_value * ITEM_SELL_RATE)
 
     return OpenResult(
         status="ok",
@@ -264,6 +280,9 @@ async def open_case(
         is_jackpot=reward.is_jackpot,
         balance=result.new_balance,
         delivery_key=result.delivery_key,
+        reward_value=reward_value,
+        reward_sell_amount=reward_sell_amount,
     )
+
 
 

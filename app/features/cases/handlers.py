@@ -12,20 +12,23 @@ import asyncio
 from aiogram import F, Router
 
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
-from app.core.keyboards import case_open
+
+from app.core.keyboards import case_gift_choice, case_open
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
 from app.features.cases.events import CaseOpenEvent, emit_case_opened
 from app.features.cases.service import OpenResult, open_case
+from app.features.gifts.service import sell_gift
 from app.models import CaseReward, Inventory
 from app.repositories import cases as cases_repo
 from app.settings import inventory as inv_texts
 from app.settings import texts
+
 
 router = Router(name="cases")
 
@@ -271,8 +274,15 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
 
 
 
-def _render_open(result: OpenResult) -> str:
-    """Рендерит результат успешного открытия."""
+def _render_open(
+    result: OpenResult, user_id: int
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Рендерит результат успешного открытия: текст + опц. клавиатура выбора.
+
+    Для tg_gift показываем экран выбора «Оставить / Продать» (P1/P7): игрок
+    решает судьбу подарка сразу, не уходя из чата.
+    """
+    markup: InlineKeyboardMarkup | None = None
     if result.reward_kind == "currency":
         line = texts.CASE_OPEN_WIN_CURRENCY.format(
             case=result.case_name,
@@ -280,10 +290,23 @@ def _render_open(result: OpenResult) -> str:
             balance=money(result.balance or 0),
         )
     elif result.reward_kind == "tg_gift":
-        # Реальный Telegram Gift / Premium: создана pending-заявка на выдачу.
+        # Реальный Telegram Gift / Premium: экран выбора (оставить/продать).
         gift = result.reward_item_name or result.reward_item_code or "подарок"
-        line = texts.CASE_OPEN_WIN_GIFT.format(case=result.case_name, gift=gift)
+        value = money(result.reward_value or 0)
+        line = texts.CASE_OPEN_WIN_GIFT.format(
+            case=result.case_name, gift=gift, value=value
+        )
+        # Кнопки выбора привязаны к ключу pending-доставки и владельцу.
+        if result.delivery_key:
+            markup = case_gift_choice(
+                result.delivery_key,
+                user_id,
+                result.reward_sell_amount or 0,
+                keep_label=texts.CASE_GIFT_KEEP_BTN,
+                sell_label=texts.CASE_GIFT_SELL_BTN,
+            )
     else:
+
 
         qty = f" ×{result.qty}" if result.qty > 1 else ""
         # Показываем редкость предмета (эмодзи + название) — игроку важно
@@ -301,8 +324,9 @@ def _render_open(result: OpenResult) -> str:
         )
 
     if result.is_jackpot:
-        return texts.CASE_OPEN_JACKPOT.format(line=line)
-    return line
+        line = texts.CASE_OPEN_JACKPOT.format(line=line)
+    return line, markup
+
 
 
 def _render_failure(result: OpenResult) -> str | None:
@@ -322,12 +346,12 @@ def _render_failure(result: OpenResult) -> str | None:
 
 async def _do_open_and_render(
     session: AsyncSession, user_id: int, code: str
-) -> tuple[str, OpenResult]:
-    """Открывает кейс и возвращает (текст, результат) для рендера."""
+) -> tuple[str, InlineKeyboardMarkup | None, OpenResult]:
+    """Открывает кейс и возвращает (текст, клавиатура, результат) для рендера."""
     result = await open_case(session, user_id=user_id, case_item_code=code)
     failure = _render_failure(result)
     if failure is not None:
-        return failure, result
+        return failure, None, result
 
     # Событие для будущих достижений (best-effort, не ломает открытие).
     total = await cases_repo.count_openings(session, user_id)
@@ -343,7 +367,9 @@ async def _do_open_and_render(
             total_openings=total,
         )
     )
-    return _render_open(result), result
+    text, markup = _render_open(result, user_id)
+    return text, markup, result
+
 
 
 async def _open_with_animation(
@@ -380,15 +406,16 @@ async def _open_with_animation(
     elif frames:
         await asyncio.sleep(min(delay * len(frames), 1.5))
 
-    text, _ = await open_task
+    text, markup, _ = await open_task
 
     if bubble is not None:
         try:
-            await bubble.edit_text(text)
+            await bubble.edit_text(text, reply_markup=markup)
             return
         except TelegramBadRequest:
             pass  # фолбэк ниже
-    await anchor.answer(text)
+    await anchor.answer(text, reply_markup=markup)
+
 
 
 @router.message(RuCommand("открыть", "open"))
@@ -435,5 +462,94 @@ async def cb_case_open(callback: CallbackQuery, session: AsyncSession) -> None:
         await _open_with_animation(session, callback.message, target_id, code)
     else:
         # Нет сообщения-якоря (редко) — отдаём результат без анимации.
-        text, _ = await _do_open_and_render(session, target_id, code)
-        await callback.bot.send_message(target_id, text)
+        text, markup, _ = await _do_open_and_render(session, target_id, code)
+        await callback.bot.send_message(target_id, text, reply_markup=markup)
+
+
+def _parse_gift_action(data: str) -> tuple[str, int] | None:
+    """Разбирает callback вида ``gift:<action>:<delivery_key>:<user_id>``.
+
+    Возвращает (delivery_key, user_id) или None при некорректном формате.
+    ``delivery_key`` может содержать двоеточия (формат ``casegift:<uid>:<hex>``),
+    поэтому user_id берём как ПОСЛЕДНИЙ сегмент, а ключ — всё между action и ним.
+    """
+    parts = data.split(":")
+    if len(parts) < 4:
+        return None
+    try:
+        uid = int(parts[-1])
+    except ValueError:
+        return None
+    key = ":".join(parts[2:-1])
+    if not key:
+        return None
+    return key, uid
+
+
+@router.callback_query(F.data.startswith("gift:keep:"))
+async def cb_gift_keep(callback: CallbackQuery, session: AsyncSession) -> None:
+    """«Оставить» выпавший подарок (P1/P7): подарок остаётся pending-доставкой.
+
+    Ничего не меняем в БД — заявка уже создана при открытии. Просто убираем
+    кнопки и подтверждаем выбор владельцу.
+    """
+    parsed = _parse_gift_action(callback.data or "")
+    if parsed is None:
+        await callback.answer()
+        return
+    _, owner_id = parsed
+    if callback.from_user is None or callback.from_user.id != owner_id:
+        await callback.answer(texts.GIFT_ACTION_NOT_YOURS, show_alert=False)
+        return
+
+    await callback.answer()
+    if callback.message is not None:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(texts.GIFT_KEPT.format(gift="подарок"))
+
+
+@router.callback_query(F.data.startswith("gift:sell:"))
+async def cb_gift_sell(callback: CallbackQuery, session: AsyncSession) -> None:
+    """«Продать» выпавший подарок за ешки (P5): мгновенная продажа за 70%.
+
+    Защита: продать может только владелец приза (user_id из callback). Сама
+    продажа атомарна и идемпотентна (блокировка строки доставки в sell_gift).
+    """
+    parsed = _parse_gift_action(callback.data or "")
+    if parsed is None:
+        await callback.answer()
+        return
+    delivery_key, owner_id = parsed
+    if callback.from_user is None or callback.from_user.id != owner_id:
+        await callback.answer(texts.GIFT_ACTION_NOT_YOURS, show_alert=False)
+        return
+
+    outcome = await sell_gift(
+        session, idempotency_key=delivery_key, user_id=owner_id, channel="bot"
+    )
+
+    if outcome.status == "ok":
+        text = texts.GIFT_SOLD.format(
+            gift=outcome.gift_code or "подарок",
+            amount=money(outcome.amount),
+            balance=money(outcome.balance or 0),
+        )
+    elif outcome.status == "not_pending":
+        text = texts.GIFT_SELL_NOT_PENDING
+    elif outcome.status == "no_value":
+        text = texts.GIFT_SELL_NO_VALUE
+    else:
+        text = texts.GIFT_SELL_NOT_FOUND
+
+    await callback.answer()
+    if callback.message is not None:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(text)
+
+

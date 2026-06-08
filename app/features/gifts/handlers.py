@@ -36,7 +36,8 @@ router = Router(name="gifts")
 
 
 # --- Тексты (изолированы в фиче) --------------------------------------------
-GIFTS_HEADER = "🎁 <b>Магазин подарков</b>\nКопи ешки и забирай реальные Telegram Gifts."
+GIFTS_HEADER = "🛒 <b>Магазин</b>\nКопи ешки и забирай реальные Telegram Gifts и Premium."
+
 GIFTS_EMPTY = "🎁 Подарков пока нет в наличии. Загляни позже."
 GIFTS_ROW = "<b>{name}</b> — {price}{stock}"
 GIFTS_ROW_STOCK = " · осталось {n}"
@@ -84,9 +85,10 @@ def _shop_keyboard(gifts) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@router.message(RuCommand("подарки", "gifts"))
+@router.message(RuCommand("магазин", "shop", "подарки", "gifts"))
 async def cmd_gifts(message: Message, session: AsyncSession) -> None:
-    """Витрина подарков."""
+    """Витрина магазина (P3: /магазин, /shop; старые /подарки, /gifts — алиасы)."""
+
     if message.from_user is None:
         return
     gifts = await gifts_repo.get_active_gifts(session)

@@ -37,6 +37,48 @@ from app.repositories import gifts as gifts_repo
 from app.services import stars as stars_service
 from app.services.economy import change_balance_tx
 from app.services.telegram_gifts import DeliveryResult, send_gift
+from app.settings.balance import ESHKI_PER_STAR, ITEM_SELL_RATE
+
+
+def _case_prize_value(delivery: GiftTransaction, gift: GiftCatalog | None) -> int:
+    """Внутренняя стоимость кейсового приза в ешках (для компенсации возврата).
+
+    Вариант А (см. RELEASE 2.1 / P0): возвращаем ПОЛНУЮ внутреннюю стоимость
+    предмета = ``star_cost × ESHKI_PER_STAR``. Источник star_cost: сначала живой
+    каталог, затем слепок в ``meta`` доставки (на случай, если позицию каталога
+    удалили/переименовали после выпадения). 0 — только если стоимость нигде не
+    известна (тогда компенсации не будет, но и отрицательной не уйдём).
+    """
+    star_cost = 0
+    if gift is not None:
+        star_cost = int(gift.star_cost or 0)
+    if star_cost <= 0:
+        star_cost = int((delivery.meta or {}).get("star_cost") or 0)
+    return max(0, star_cost) * ESHKI_PER_STAR
+
+
+def _item_full_value(delivery: GiftTransaction, gift: GiftCatalog | None) -> int:
+    """Полная внутренняя стоимость предмета в ешках (база для продажи, P5).
+
+    Для покупки магазина базой считаем уплаченную цену (``price_eshki``), для
+    приза кейса — внутреннюю стоимость (``star_cost × ESHKI_PER_STAR``). Так
+    продать предмет дороже, чем он стоит, нельзя.
+    """
+    if _is_shop_purchase(delivery) and gift is not None:
+        return int(gift.price_eshki or 0)
+    return _case_prize_value(delivery, gift)
+
+
+def _sell_value(full_value: int) -> int:
+    """Сколько ешек получит игрок при ПРОДАЖЕ предмета (P5).
+
+    ``floor(full_value × ITEM_SELL_RATE)``. По умолчанию 70% — убирает дюпы
+    экономики (продать дороже покупки нельзя) и создаёт сток ешек. Примеры:
+    Роза 250 → 175, Бриллиант 1000 → 700, Premium 10000 → 7000.
+    """
+    return int(max(0, full_value) * ITEM_SELL_RATE)
+
+
 
 
 
@@ -58,6 +100,18 @@ class DeliverOutcome:
     status: str  # "completed" | "pending" | "cancelled" | "skip"
     refunded: bool = False
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class SellOutcome:
+    """Итог продажи предмета (P5)."""
+
+    status: str  # "ok" | "not_found" | "not_pending" | "no_value"
+    amount: int = 0          # сколько ешек начислено игроку
+    balance: int | None = None  # баланс после продажи
+    gift_code: str | None = None
+    error: str | None = None
+
 
 
 def _channel_meta(channel: str) -> dict:
@@ -183,13 +237,17 @@ async def _refund(
     channel: str,
     reason_error: str | None,
 ) -> None:
-    """Отмена доставки: для покупки магазина — возврат ешек + освобождение
-    резерва; для приза кейса — только статус cancelled.
+    """Отмена доставки с компенсацией игроку.
 
-    Приз кейса игрок не оплачивал (нет денежной проводки) и резерв каталога не
-    занимал (см. :func:`_is_shop_purchase`). Поэтому при его отмене НЕЛЬЗЯ
-    начислять ешки (взялись бы из ниоткуда) и трогать пул каталога — иначе
-    украли бы резерв реального покупателя. Просто помечаем cancelled.
+    Покупка магазина: возврат уплаченной цены (``price``) + освобождение резерва
+    каталога (reserved-1).
+
+    Приз кейса (P0): игрок ешки не платил и резерв не занимал, но раньше при
+    отмене не получал НИЧЕГО — приз просто пропадал. Теперь возвращаем ПОЛНУЮ
+    внутреннюю стоимость предмета (``star_cost × ESHKI_PER_STAR``, Вариант А).
+    Пул каталога не трогаем (приз его не занимал — иначе украли бы резерв
+    реального покупателя). Источник ешек — экономическое ядро (проводка reward),
+    эмиссия фиксируется в леджере как и любая награда.
     """
     meta = dict(delivery.meta or {})
     if _is_shop_purchase(delivery):
@@ -215,13 +273,39 @@ async def _refund(
             .values(reserved=GiftCatalog.reserved - 1)
         )
     else:
-        # Приз кейса: ешки не списывались, резерв не занимался — не трогаем.
+        # Приз кейса: компенсируем полную внутреннюю стоимость предмета.
+        gift = await gifts_repo.get_gift_by_code(session, gift_code)
+        compensation = _case_prize_value(delivery, gift)
         meta["case_prize_cancelled"] = True
+        if compensation > 0:
+            refund_tx = await change_balance_tx(
+                session,
+                delivery.recipient_user_id,
+                compensation,
+                reason=EVENT_REWARD,
+                meta={
+                    "source": "case_prize_refund",
+                    "gift": gift_code,
+                    "channel": channel,
+                },
+            )
+            meta.update(
+                {
+                    "refunded": True,
+                    "refund_amount": compensation,
+                    "refund_transaction_id": refund_tx.id,
+                }
+            )
+        else:
+            # Стоимость нигде не известна — компенсировать нечем (редкий
+            # мисконфиг каталога). Помечаем явно, чтобы было видно в meta.
+            meta["refund_skipped"] = "unknown_value"
 
     if reason_error:
         meta["error"] = reason_error
     delivery.status = "cancelled"
     delivery.meta = meta
+
 
 
 
@@ -353,11 +437,99 @@ async def refund_gift(
     return DeliverOutcome(status="cancelled", refunded=True, error=reason)
 
 
+async def sell_gift(
+    session: AsyncSession,
+    *,
+    idempotency_key: str,
+    user_id: int,
+    channel: str = "bot",
+) -> SellOutcome:
+    """Продаёт pending-предмет игрока за ешки (P5). Идемпотентно, атомарно.
+
+    Игрок продаёт ещё не выданный предмет (приз кейса или покупку магазина) и
+    получает ``ITEM_SELL_RATE`` (по умолчанию 70%) от его полной внутренней
+    стоимости. Доставка переводится в ``cancelled`` (предмет «израсходован»):
+
+    * покупка магазина — освобождаем резерв каталога (reserved-1), как при
+      возврате, чтобы место в пуле вернулось;
+    * приз кейса — пул не трогаем (приз его не занимал).
+
+    Деньги начисляются через экономическое ядро (проводка reward) — эмиссия
+    фиксируется в леджере. Строка доставки берётся FOR UPDATE: двойной клик и
+    гонки сериализуются, продать дважды один предмет нельзя.
+
+    Проверяем владельца: продать можно только СВОЙ предмет (``recipient`` ==
+    ``user_id``) — защита от продажи чужого приза через подменённый ключ.
+    """
+    delivery = await gifts_repo.get_delivery_for_update(session, idempotency_key)
+    if delivery is None:
+        return SellOutcome(status="not_found", error="delivery_not_found")
+    if delivery.recipient_user_id != user_id:
+        # Не твой предмет — ведём себя как «не найдено» (не раскрываем чужое).
+        return SellOutcome(status="not_found", error="not_owner")
+    if delivery.status != "pending":
+        return SellOutcome(status="not_pending", gift_code=delivery.item_code)
+
+    gift_code = delivery.item_code or ""
+    gift = await gifts_repo.get_gift_by_code(session, gift_code)
+    full_value = _item_full_value(delivery, gift)
+    amount = _sell_value(full_value)
+    if amount <= 0:
+        # Стоимость неизвестна — продавать нечего (мисконфиг каталога).
+        return SellOutcome(status="no_value", gift_code=gift_code, error="unknown_value")
+
+    # Начислить ешки за продажу.
+    sell_tx = await change_balance_tx(
+        session,
+        user_id,
+        amount,
+        reason=EVENT_REWARD,
+        meta={
+            "source": "item_sell",
+            "gift": gift_code,
+            "full_value": full_value,
+            "channel": channel,
+        },
+    )
+
+    # Освободить резерв каталога для покупки магазина (приз кейса резерв не
+    # занимал — не трогаем).
+    if _is_shop_purchase(delivery):
+        await session.execute(
+            update(GiftCatalog)
+            .where(GiftCatalog.code == gift_code)
+            .where(GiftCatalog.reserved > 0)
+            .values(reserved=GiftCatalog.reserved - 1)
+        )
+
+    meta = dict(delivery.meta or {})
+    meta.update(
+        {
+            "sold": True,
+            "sell_amount": amount,
+            "sell_full_value": full_value,
+            "sell_transaction_id": sell_tx.id,
+            "sell_channel": channel,
+        }
+    )
+    delivery.status = "cancelled"
+    delivery.meta = meta
+
+    user = await session.get(User, user_id)
+    return SellOutcome(
+        status="ok",
+        amount=amount,
+        balance=user.balance if user else None,
+        gift_code=gift_code,
+    )
+
+
 async def complete_gift_manually(
     session: AsyncSession,
     *,
     idempotency_key: str,
     admin_user_id: int,
+
     channel: str = "bot",
 ) -> DeliverOutcome:
     """Ручная отметка pending-доставки как ВЫДАННОЙ (админом).

@@ -104,7 +104,36 @@ def case_open(case_item_code: str, user_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def case_gift_choice(
+    delivery_key: str, user_id: int, sell_amount: int, *, keep_label: str, sell_label: str
+) -> InlineKeyboardMarkup:
+    """Кнопки выбора после выпадения подарка из кейса (P1/P7).
+
+    «Оставить» — подарок остаётся pending-доставкой (выдаст админ). «Продать» —
+    мгновенная продажа за ешки (P5). Callback несёт ключ доставки и id игрока:
+    действовать может только владелец приза (проверка в хендлере), а сама
+    продажа защищена блокировкой строки доставки.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=keep_label,
+                    callback_data=f"gift:keep:{delivery_key}:{user_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=sell_label.format(amount=sell_amount),
+                    callback_data=f"gift:sell:{delivery_key}:{user_id}",
+                )
+            ],
+        ]
+    )
+
+
 def divorce_confirm(user_id: int, partner_id: int) -> InlineKeyboardMarkup:
+
 
 
     """Кнопки подтверждения развода."""
