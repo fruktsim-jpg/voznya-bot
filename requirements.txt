@@ -1,7 +1,14 @@
 # Telegram-бот "Возня" — зависимости проекта.
 # Версии зафиксированы для воспроизводимого окружения.
 
-aiogram==3.13.1
+# aiogram 3.28.x: добавлены sendGift / getMyStarBalance / getAvailableGifts
+# (Bot API 7.10+/9.0+) — реальная авто-выдача Telegram Gifts. ВАЖНО: образ
+# собирается из этого файла (Dockerfile: pip install -r requirements.txt),
+# поэтому пин обязан совпадать с версией на сервере, иначе пересборка молча
+# откатит на 3.13.1 и авто-доставка снова станет недоступной. Точную версию
+# сверь на сервере: `pip show aiogram`.
+aiogram>=3.28,<3.29
+
 SQLAlchemy[asyncio]==2.0.35
 asyncpg==0.29.0
 alembic==1.13.2
