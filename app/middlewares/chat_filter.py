@@ -1,13 +1,13 @@
-"""Middleware, ограничивающий работу бота одним чатом.
+"""Middleware, ограничивающий работу бота ОДНИМ групповым чатом + личкой.
 
-Бот предназначен для одного чата (CHAT_ID). Сообщения из других групп
-игнорируются. В личке (private) бот раньше отвечал ТОЛЬКО админам и на
-deep-link привязки — из-за этого обычные игроки не могли пройти онбординг и,
-например, принять подаренный подарок. Теперь личка открыта для онбординга:
-пропускаем ``/start`` (в т.ч. deep-link подарка ``gift_…`` и привязки
-``link_…``) и ``/help`` от кого угодно, а также все ЛС-сообщения админов. Это
-нужно, чтобы получатель подарка мог запустить бота и забрать его.
+Бот предназначен для одного группового чата (CHAT_ID): сообщения из других
+групп/супергрупп игнорируются. ЛИЧКА (private) теперь открыта ПОЛНОСТЬЮ — в
+личных сообщениях работают все команды (ферма, баланс, профиль, кейсы и т.д.),
+как и в целевом чате. Так у каждого игрока есть полноценный «личный кабинет» в
+боте, плюс продолжают работать онбординг (``/start``), deep-link подарка
+(``gift_…``) и привязки сайта (``link_…``).
 """
+
 
 
 from __future__ import annotations
@@ -53,50 +53,15 @@ class ChatFilterMiddleware(BaseMiddleware):
         if chat_id == settings.chat_id:
             return await handler(event, data)
 
-        # Личка администратора — пропускаем (для управления ботом).
-        if is_private and user_id is not None and settings.is_admin(user_id):
+        # ЛИЧКА — открыта полностью: пропускаем ВСЕ личные сообщения и колбэки
+        # (ферма, баланс, профиль, кейсы, /start, deep-link подарка/привязки и
+        # т.д.). Личка = полноценный «личный кабинет» бота для каждого игрока.
+        if is_private:
             return await handler(event, data)
 
-        # Личка: онбординг открыт для всех. Пропускаем /start (в т.ч. deep-link
-        # подарка gift_… и привязки link_…) и /help — чтобы новый игрок мог
-        # запустить бота и, например, забрать подаренный подарок. Колбэки в
-        # личке (кнопки приветствия/claim) тоже пропускаем — иначе кнопки
-        # онбординга не работали бы у не-админов.
-        if is_private and isinstance(event, Message) and _is_onboarding_cmd(event.text):
-            return await handler(event, data)
-        if is_private and isinstance(event, CallbackQuery):
-            return await handler(event, data)
-
-        # Остальное игнорируем.
+        # Остальное (другие группы/каналы) — игнорируем.
         return None
 
-
-def _command_name(text: str | None) -> str | None:
-    """Извлекает имя команды (без слеша и @bot) из текста сообщения."""
-    if not text:
-        return None
-    parts = text.strip().split(maxsplit=1)
-    if not parts:
-        return None
-    command = parts[0]
-    if command.startswith("/"):
-        command = command[1:]
-    if "@" in command:
-        command = command.split("@", 1)[0]
-    return command.lower() or None
-
-
-def _is_onboarding_cmd(text: str | None) -> bool:
-    """True для команд онбординга в личке: /start (с любым payload) и /help."""
-    return _command_name(text) in {"start", "help", "помощь", "старт"}
-
-
-def _is_start_link(text: str | None) -> bool:
-    """True для сообщения вида ``/start link_<token>`` (deep-link привязки)."""
-    if _command_name(text) != "start":
-        return False
-    parts = (text or "").strip().split(maxsplit=1)
-    return len(parts) == 2 and parts[1].strip().startswith("link_")
 
 
 
