@@ -4,11 +4,13 @@
 присланных как часть нового каталога. Это коллекционные подарки с реальными
 ``telegram_gift_id`` → авто-выдача работает сразу.
 
-Экономика: 50★ → price_eshki 700 (тот же тир, что Торт/Букет/Шампанское,
-star×10×1.4), sell_value = floor(700×0.70) = 490. Флаг лимитности в meta
-(``limited=true``, ``collectible=true``, ``season``) — для бейджа на сайте и
-повышенной редкости в UI. ``stock=NULL`` (как у остального каталога; реальная
-доступность у Telegram сезонная, явный лимит пула здесь не вводим).
+Экономика: сезонные/лимитные подарки стоят 1.5× относительно обычной формулы
+тира (правило Release 2.2). Обычный 50★ ≈ 700 ешек → ×1.5 = 1050 ешек,
+sell_value = floor(1050×0.70) = 735. Множитель и лимитность зафиксированы в meta
+(``limited=true``, ``collectible=true``, ``price_multiplier=1.5``, ``season``) —
+для бейджа на сайте и повышенной редкости в UI. ``stock=NULL`` (как у остального
+каталога; реальная доступность у Telegram сезонная, явный лимит пула не вводим).
+
 
 В кейсы НЕ добавляются этой миграцией — участие в дроп-листах и пересчёт весов
 100★/50★ тира требуют отдельного согласованного ре-сида кейсов
@@ -30,7 +32,10 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 _STAR = 50
-_ESHKI = 700
+# 1.5× к обычной формуле тира (обычный 50★ ≈ 700 ешек) → лимитная наценка.
+_PRICE_MULTIPLIER = 1.5
+_ESHKI = int(700 * _PRICE_MULTIPLIER)  # 1050
+
 
 # (code, name, season, telegram_gift_id, sort_order)
 _GIFTS = [
@@ -53,9 +58,11 @@ def upgrade() -> None:
         desc = f"Лимитный сезонный подарок ({season}). Коллекционный, 50★."
         meta = (
             "'{\"limited\": true, \"collectible\": true, "
+            "\"price_multiplier\": 1.5, "
             f"\"season\": \"{season}\""
             "}'::jsonb"
         )
+
         op.execute(
             f"""
             INSERT INTO gift_catalog
