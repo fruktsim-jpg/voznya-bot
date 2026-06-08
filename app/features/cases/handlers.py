@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.filters import RuCommand
 
 from app.config import get_settings
-from app.core.keyboards import case_gift_choice, case_open, gift_retry
+from app.core.keyboards import case_gift_choice, case_open, gift_retry, open_on_site
+
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
 from app.features.cases.events import CaseOpenEvent, emit_case_opened
@@ -57,31 +58,20 @@ def _cost_label(case) -> str:
 
 @router.message(RuCommand("кейсы", "cases"))
 async def cmd_cases(message: Message, session: AsyncSession) -> None:
-    """Список доступных кейсов."""
-    user = message.from_user
-    if user is None:
-        return
+    """Site-first (Release 2.2): кейсы открываются на сайте, не в Telegram.
 
-    cases = await cases_repo.get_active_cases(session)
-    if not cases:
-        await notify_and_cleanup(session, message, texts.CASES_EMPTY)
+    Команда больше не обслуживает открытие внутри бота — показывает карточку с
+    кнопкой на страницу кейсов. Это убирает дублирование тяжёлой механики в двух
+    интерфейсах (единый центр опыта — сайт).
+    """
+    if message.from_user is None:
         return
+    url = f"{get_settings().website_url}/cases"
+    await message.answer(
+        texts.CASES_SITE_CARD,
+        reply_markup=open_on_site(texts.CASES_SITE_BTN, url),
+    )
 
-    lines = [texts.CASES_HEADER]
-    for case in cases:
-        owned = await _owned_count(session, user.id, case.item_code)
-        owned_str = texts.CASES_ROW_OWNED.format(count=owned) if owned else ""
-        row = texts.CASES_ROW.format(
-            name=case.name, cost=_cost_label(case), owned=owned_str
-        )
-        # Превью топ-дропа: лучшая по редкости награда кейса, чтобы игрок
-        # понимал ценность, не открывая карточку. Голых кодов не показываем.
-        best = await _best_reward_label(session, case.item_code)
-        if best:
-            row += texts.CASES_ROW_BEST.format(best=best)
-        row += f"\n   <code>/кейс {case.item_code}</code>"
-        lines.append(row)
-    await message.answer("\n".join(lines))
 
 
 async def _best_reward_label(session: AsyncSession, case_item_code: str) -> str | None:
@@ -272,9 +262,13 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
     owned = await _owned_count(session, user.id, case.item_code)
     body.append(texts.CASE_CARD_FOOTER.format(count=owned))
 
+    # Site-first (Release 2.2): дроп-лист — это просмотр данных (ок для бота), но
+    # само открытие живёт на сайте. Кнопка ведёт на страницу кейсов.
+    url = f"{get_settings().website_url}/cases"
     await message.answer(
-        "\n".join(body), reply_markup=case_open(case.item_code, user.id)
+        "\n".join(body), reply_markup=open_on_site(texts.CASES_SITE_BTN, url)
     )
+
 
 
 
@@ -430,17 +424,18 @@ async def _open_with_animation(
 
 @router.message(RuCommand("открыть", "open"))
 async def cmd_open(message: Message, session: AsyncSession, command_args: str) -> None:
-    """Открыть кейс командой /открыть код."""
-    user = message.from_user
-    if user is None:
-        return
+    """Site-first (Release 2.2): открытие кейсов перенесено на сайт.
 
-    code = command_args.split()[0] if command_args else ""
-    if not code:
-        await notify_and_cleanup(session, message, texts.CASE_OPEN_USAGE)
+    Команда больше не вскрывает кейс внутри Telegram — ведёт на страницу кейсов.
+    """
+    if message.from_user is None:
         return
+    url = f"{get_settings().website_url}/cases"
+    await message.answer(
+        texts.CASES_SITE_CARD,
+        reply_markup=open_on_site(texts.CASES_SITE_BTN, url),
+    )
 
-    await _open_with_animation(session, message, user.id, code)
 
 
 @router.callback_query(F.data.startswith("case:open:"))

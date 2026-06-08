@@ -20,7 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
+from app.core.keyboards import open_on_site
 from app.core.money import money
+
 from app.core.responses import notify_and_cleanup
 from app.features.gifts.service import (
     buy_gift,
@@ -42,6 +44,15 @@ GIFTS_EMPTY = "🎁 Подарков пока нет в наличии. Загл
 GIFTS_ROW = "<b>{name}</b> — {price}{stock}"
 GIFTS_ROW_STOCK = " · осталось {n}"
 GIFT_BUY_BTN = "Купить «{name}» за {price}"
+
+# Site-first (Release 2.2): магазин живёт на сайте, бот лишь ведёт туда.
+SHOP_SITE_CARD = (
+    "🛍 <b>Магазин Возни</b>\n\n"
+    "Telegram Gifts, Premium и будущие товары — на сайте. Там удобно выбирать, "
+    "покупать и сразу управлять покупкой в инвентаре."
+)
+SHOP_SITE_BTN = "🛍 Открыть магазин"
+
 
 BUY_NOT_FOUND = "Такого подарка нет."
 BUY_INACTIVE = "Подарок «{name}» сейчас недоступен."
@@ -87,23 +98,21 @@ def _shop_keyboard(gifts) -> InlineKeyboardMarkup:
 
 @router.message(RuCommand("магазин", "shop", "подарки", "gifts"))
 async def cmd_gifts(message: Message, session: AsyncSession) -> None:
-    """Витрина магазина (P3: /магазин, /shop; старые /подарки, /gifts — алиасы)."""
+    """Site-first (Release 2.2): магазин на сайте — бот ведёт туда карточкой.
 
+    Полноценный магазин (выбор, покупка, управление покупкой) живёт на сайте.
+    Бот больше не обслуживает витрину внутри Telegram, чтобы тяжёлая механика не
+    развивалась в двух местах. Команды-алиасы (/магазин, /shop, /подарки,
+    /gifts) показывают карточку с кнопкой на /gifts сайта.
+    """
     if message.from_user is None:
         return
-    gifts = await gifts_repo.get_active_gifts(session)
-    if not gifts:
-        await notify_and_cleanup(session, message, GIFTS_EMPTY)
-        return
+    url = f"{get_settings().website_url}/gifts"
+    await message.answer(
+        SHOP_SITE_CARD,
+        reply_markup=open_on_site(SHOP_SITE_BTN, url),
+    )
 
-    lines = [GIFTS_HEADER]
-    for g in gifts:
-        stock = ""
-        if g.stock is not None:
-            left = g.stock - g.reserved - g.sold_count
-            stock = GIFTS_ROW_STOCK.format(n=max(0, left))
-        lines.append(GIFTS_ROW.format(name=g.name, price=money(g.price_eshki), stock=stock))
-    await message.answer("\n".join(lines), reply_markup=_shop_keyboard(gifts))
 
 
 def _render_buy_failure(result) -> str | None:

@@ -10,8 +10,20 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
+def open_on_site(label: str, url: str) -> InlineKeyboardMarkup:
+    """Одна URL-кнопка «открыть на сайте» (site-first, Release 2.2).
+
+    Тяжёлые механики (кейсы, магазин, полный инвентарь, профиль, статистика)
+    живут на сайте — бот лишь ведёт туда. URL-кнопка открывает страницу/Mini App
+    во внешнем браузере или встроенном webview Telegram.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]]
+    )
+
 
 def treasure_claim() -> InlineKeyboardMarkup:
+
     """Кнопка «Забрать клад» для сообщения о появлении клада.
 
     Кнопку видит весь чат; клад достаётся тому, кто нажмёт первым —

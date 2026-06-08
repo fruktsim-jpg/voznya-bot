@@ -11,9 +11,12 @@ from aiogram import Router
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.filters import RuCommand
+from app.core.keyboards import open_on_site
 from app.core.money import money
 from app.core.targets import resolve_target
+
 from app.features.inventory.service import render_inventory
 from app.repositories import gifts as gifts_repo
 from app.repositories import inventory as inv_repo
@@ -123,7 +126,17 @@ async def cmd_inventory(
     )
     text += _render_gifts_section(gifts)
 
-    sent = await message.answer(text)
+    # Site-first (Release 2.2): инвентарь в боте — быстрый просмотр, но основные
+    # действия (продать/вывести/подарить/Premium) удобнее на сайте. Кнопку на
+    # полный инвентарь показываем только владельцу (свой профиль).
+    markup = None
+    is_own = target is None or target.user_id == sender.id
+    if is_own:
+        url = f"{get_settings().website_url}/inventory"
+        markup = open_on_site(inv_texts.INV_SITE_BTN, url)
+
+    sent = await message.answer(text, reply_markup=markup)
+
 
 
     # Автоудаление информационного сообщения (чистота чата) — как в profile.

@@ -6,9 +6,11 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import top_pagination
+from app.core.keyboards import open_on_site, top_pagination
 from app.core.money import money
+
 from app.core.utils import display_name, format_marriage_duration_days, place_marker
 
 from app.models import User
@@ -142,7 +144,13 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
         )
         for i, (u, earned) in enumerate(top)
     )
-    sent = await message.answer(texts.WEEKLY_HEADER.format(rows=rows))
+    # Site-first: CTA на полную статистику сайта (рейтинги/аналитика глубже).
+    stats_url = f"{get_settings().website_url}/live"
+    sent = await message.answer(
+        texts.WEEKLY_HEADER.format(rows=rows),
+        reply_markup=open_on_site(texts.TOP_STATS_SITE_BTN, stats_url),
+    )
+
     
     # Автоудаление информационного сообщения
     if user_id:
@@ -185,7 +193,12 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
                 duration=format_marriage_duration_days(m.married_at),
             )
         )
-    sent = await message.answer(texts.TOP_FAMILIES_HEADER.format(rows="\n".join(lines)))
+    families_url = f"{get_settings().website_url}/live"
+    sent = await message.answer(
+        texts.TOP_FAMILIES_HEADER.format(rows="\n".join(lines)),
+        reply_markup=open_on_site(texts.TOP_STATS_SITE_BTN, families_url),
+    )
+
     
     # Автоудаление информационного сообщения
     if user_id:
