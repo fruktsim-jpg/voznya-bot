@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site, top_pagination
+from app.core.keyboards import open_on_site, supports_web_app, top_pagination
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
 
@@ -24,9 +24,10 @@ from app.settings import balance, texts
 router = Router(name="ratings")
 
 PAGE_SIZE = 10  # Игроков на страницу
+_TOP_MESSAGES: dict[int, int] = {}
 
 
-async def render_top(session: AsyncSession, page: int, user_id: int | None) -> tuple[str, int]:
+async def render_top(session: AsyncSession, page: int) -> tuple[str, int]:
     """Формирует текст рейтинга богачей с пагинацией.
     
     Returns:
@@ -57,12 +58,6 @@ async def render_top(session: AsyncSession, page: int, user_id: int | None) -> t
     
     parts = [texts.TOP_RICH_HEADER.format(rows=rows)]
     
-    # Место текущего игрока (только для владельца)
-    if user_id:
-        rank = await users_repo.get_user_rank_by_balance(session, user_id)
-        if rank:
-            parts.append(texts.TOP_RICH_USER_RANK.format(rank=rank))
-    
     # Пагинация (если больше 1 страницы)
     if total_pages > 1:
         parts.append(texts.TOP_RICH_PAGE.format(page=page, total=total_pages))
@@ -74,49 +69,45 @@ async def render_top(session: AsyncSession, page: int, user_id: int | None) -> t
 
 async def cmd_top(message: Message, session: AsyncSession, command_args: str) -> None:
     """Рейтинг богатства: /топ."""
-    sender = message.from_user
-    user_id = sender.id if sender else None
-    
-    text, total_pages = await render_top(session, page=1, user_id=user_id)
-    
+    text, total_pages = await render_top(session, page=1)
     deletion = get_deletion_service()
-    
-    # Добавить кнопки только если больше 1 страницы
-    if total_pages > 1 and user_id:
-        sent = await message.answer(text, reply_markup=top_pagination(1, total_pages, user_id))
-    else:
-        sent = await message.answer(text)
-    
-    # Автоудаление информационного сообщения
-    if user_id:
-        await deletion.schedule_info_message(
-            session,
-            user_id=user_id,
-            chat_id=message.chat.id,
-            user_command_id=message.message_id,
-            bot_message_id=sent.message_id,
-        )
+
+    markup = top_pagination(1, total_pages) if total_pages > 1 else None
+    existing_id = _TOP_MESSAGES.get(message.chat.id)
+    if existing_id is not None:
+        try:
+            await message.bot.edit_message_text(
+                text,
+                chat_id=message.chat.id,
+                message_id=existing_id,
+                reply_markup=markup,
+            )
+            await deletion.schedule(session, message.chat.id, message.message_id, 1)
+            return
+        except Exception:  # noqa: BLE001
+            _TOP_MESSAGES.pop(message.chat.id, None)
+
+    sent = await message.answer(text, reply_markup=markup)
+    _TOP_MESSAGES[message.chat.id] = sent.message_id
+    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 
 @router.callback_query(F.data.startswith("top:page:"))
 async def cb_top_page(callback: CallbackQuery, session: AsyncSession) -> None:
     """Переключение страниц топа."""
     parts = callback.data.split(":")
-    page = int(parts[2])
-    user_id = int(parts[3])
-    
-    # Защита: только свой топ
-    if callback.from_user and callback.from_user.id != user_id:
-        await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
+    if len(parts) != 3 or not parts[2].isdigit():
+        await callback.answer()
         return
-    
-    text, total_pages = await render_top(session, page, user_id)
+    page = int(parts[2])
+    text, total_pages = await render_top(session, page)
     
     if callback.message:
         await callback.message.edit_text(
             text,
-            reply_markup=top_pagination(page, total_pages, user_id) if total_pages > 1 else None
+            reply_markup=top_pagination(page, total_pages) if total_pages > 1 else None
         )
+        _TOP_MESSAGES[callback.message.chat.id] = callback.message.message_id
     await callback.answer()
 
 
@@ -149,7 +140,11 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
     stats_url = f"{get_settings().website_url}/live"
     sent = await message.answer(
         texts.WEEKLY_HEADER.format(rows=rows),
-        reply_markup=open_on_site(texts.TOP_STATS_SITE_BTN, stats_url),
+        reply_markup=open_on_site(
+            texts.TOP_STATS_SITE_BTN,
+            stats_url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
     
@@ -197,7 +192,11 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
     families_url = f"{get_settings().website_url}/live"
     sent = await message.answer(
         texts.TOP_FAMILIES_HEADER.format(rows="\n".join(lines)),
-        reply_markup=open_on_site(texts.TOP_STATS_SITE_BTN, families_url),
+        reply_markup=open_on_site(
+            texts.TOP_STATS_SITE_BTN,
+            families_url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
     

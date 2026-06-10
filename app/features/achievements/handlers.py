@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site
+from app.core.keyboards import open_on_site, supports_web_app
 from app.core.targets import resolve_target
 from app.features.achievements.service import render_achievements_compact
 from app.repositories import users as users_repo
@@ -49,6 +49,7 @@ async def cmd_achievements(
         reply_markup=open_on_site(
             "🏅 Полный прогресс на сайте",
             f"{get_settings().website_url}/profile/{user_id}",
+            prefer_web_app=supports_web_app(message.chat.type),
         ),
     )
     

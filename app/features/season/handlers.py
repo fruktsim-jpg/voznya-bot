@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site
+from app.core.keyboards import open_on_site, supports_web_app
 from app.core.responses import notify_and_cleanup
 from app.core.utils import display_name, place_marker
 from app.features.season import service as season_service
@@ -71,7 +71,11 @@ async def cmd_season(
             div_name=div.name,
             days_left=days_left,
         ),
-        reply_markup=open_on_site("🗓 Сезон на сайте", season_url),
+        reply_markup=open_on_site(
+            "🗓 Сезон на сайте",
+            season_url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
     deletion = get_deletion_service()
     await deletion.schedule_info_message(
@@ -129,7 +133,11 @@ async def cmd_missions(
         )
     sent = await message.answer(
         "\n".join(lines),
-        reply_markup=open_on_site("🗓 Миссии на сайте", f"{get_settings().website_url}/season"),
+        reply_markup=open_on_site(
+            "🗓 Миссии на сайте",
+            f"{get_settings().website_url}/season",
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
     deletion = get_deletion_service()
     await deletion.schedule_info_message(
@@ -163,7 +171,11 @@ async def cmd_top_season(
     )
     await message.answer(
         f"🏆 <b>Сезонный топ</b>\n\n{rows}",
-        reply_markup=open_on_site("🗓 Сезон на сайте", f"{get_settings().website_url}/season"),
+        reply_markup=open_on_site(
+            "🗓 Сезон на сайте",
+            f"{get_settings().website_url}/season",
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
 

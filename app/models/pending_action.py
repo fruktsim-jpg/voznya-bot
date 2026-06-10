@@ -43,6 +43,7 @@ class PendingAction(Base):
     # Сумма ставки (для дуэли); для остальных — NULL.
     amount: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    request_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default=STATUS_PENDING, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

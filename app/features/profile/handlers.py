@@ -9,9 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.keyboards import profile_shortcuts, supports_web_app
+from app.core.utils import display_name, format_marriage_duration_days
 from app.models import User
 from app.settings import texts
-from app.settings.titles import get_title, get_next_title
+from app.settings.titles import get_title
 
 
 router = Router(name="profile")
@@ -20,11 +21,11 @@ router = Router(name="profile")
 async def render_profile(session: AsyncSession, user: User) -> str:
     """Формирует компактный ежедневный профиль-хаб."""
     from app.features.achievements.service import get_unlocked_codes
+    from app.repositories import marriages as marriages_repo
     from app.repositories import season as season_repo
     from app.settings.achievements import ACHIEVEMENTS
 
     title = get_title(user.total_earned)
-    next_title = get_next_title(user.total_earned)
 
     # MMR — отдельный игровой рейтинг (общий прогресс), не связан с ешками.
     from app.repositories.mmr import get_mmr
@@ -40,27 +41,29 @@ async def render_profile(session: AsyncSession, user: User) -> str:
         f"🏅 MMR: <b>{mmr_value:,}</b> · {rank.emoji} <b>{rank.name}</b>",
     ]
 
+    marriage = await marriages_repo.get_active_marriage(session, user.user_id)
+    if marriage is None:
+        lines.append("💍 Брак: нет")
+    else:
+        partner_id = marriage.user_id_2 if marriage.user_id_1 == user.user_id else marriage.user_id_1
+        partner = await session.get(User, partner_id)
+        partner_name = display_name(partner.first_name, partner.username) if partner else "партнёр"
+        lines.append(
+            f"💍 Брак: {partner_name} · {format_marriage_duration_days(marriage.married_at)}"
+        )
+
     active_season = await season_repo.get_active_season(session)
     if active_season is not None:
         from app.settings import season as season_settings
 
         season_mmr = await season_repo.get_season_mmr(session, user.user_id)
         division = season_settings.get_division(season_mmr)
-        lines.append(
-            f"🗓 Сезон: {division.emoji} <b>{division.name}</b> · {season_mmr:,} MMR"
-        )
-
-    if next_title:
-        progress = user.total_earned - title.min_earned
-        needed = next_title.min_earned - title.min_earned
-        percent = int((progress / needed) * 100) if needed > 0 else 100
-        lines.append(f"📊 До титула: {percent}% → {next_title.emoji} {next_title.name}")
+        lines.append(f"🗓 Сезон: {division.emoji} <b>{division.name}</b>")
 
     unlocked = await get_unlocked_codes(session, user.user_id)
     total_achievements = len(ACHIEVEMENTS)
     opened_achievements = len(unlocked)
     lines.append(f"🎖 Ачивки: <b>{opened_achievements}/{total_achievements}</b>")
-    lines.append("\nДетали, статистика и управление — кнопками ниже.")
 
     return "\n".join(lines)
 

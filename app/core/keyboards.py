@@ -74,10 +74,9 @@ def profile_shortcuts(
     """Профиль как ежедневный хаб: сайт, инвентарь, топы, кейсы, подарки."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [_app_button("👤 Открыть профиль", f"{base_url}/profile/{user_id}", prefer_web_app=prefer_web_app)],
             [
+                _app_button("👤 Профиль", f"{base_url}/profile/{user_id}", prefer_web_app=prefer_web_app),
                 _app_button("🎒 Инвентарь", f"{base_url}/inventory", prefer_web_app=prefer_web_app),
-                _app_button("📊 Статистика", f"{base_url}/profile/{user_id}", prefer_web_app=prefer_web_app),
             ],
             [
                 _app_button("🎰 Кейсы", f"{base_url}/cases", prefer_web_app=prefer_web_app),
@@ -171,7 +170,7 @@ def marriage_accept(pending_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def top_pagination(page: int, total_pages: int, user_id: int) -> InlineKeyboardMarkup:
+def top_pagination(page: int, total_pages: int) -> InlineKeyboardMarkup:
 
     """Кнопки пагинации для топа."""
     buttons = []
@@ -181,7 +180,7 @@ def top_pagination(page: int, total_pages: int, user_id: int) -> InlineKeyboardM
         buttons.append(
             InlineKeyboardButton(
                 text="◀️ Назад",
-                callback_data=f"top:page:{page - 1}:{user_id}"
+                callback_data=f"top:page:{page - 1}"
             )
         )
     
@@ -190,7 +189,7 @@ def top_pagination(page: int, total_pages: int, user_id: int) -> InlineKeyboardM
         buttons.append(
             InlineKeyboardButton(
                 text="▶️ Вперёд",
-                callback_data=f"top:page:{page + 1}:{user_id}"
+                callback_data=f"top:page:{page + 1}"
             )
         )
     

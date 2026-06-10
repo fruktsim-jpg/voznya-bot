@@ -27,6 +27,7 @@ from app.features.duel.service import (
     create_challenge,
     decline_challenge,
     expire_challenge_if_pending,
+    set_challenge_message_id,
 )
 
 from app.models import User
@@ -148,6 +149,30 @@ async def _edit_callback_message(callback: CallbackQuery, text: str) -> None:
         pass
 
 
+async def _warn_and_cleanup_failed_duel(
+    session: AsyncSession,
+    message: Message,
+    text: str,
+    *,
+    request_message_id: int | None = None,
+) -> None:
+    from app.services.deletion import get_deletion_service
+
+    deletion = get_deletion_service()
+    warning = await message.answer(text)
+    await deletion.schedule(
+        session,
+        warning.chat.id,
+        warning.message_id,
+        balance.COOLDOWN_NOTICE_DELETE_AFTER,
+    )
+    if request_message_id is not None:
+        try:
+            await message.bot.delete_message(message.chat.id, request_message_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @router.message(RuCommand("бой", "duel", "дуэль", "дуэлька"))
 async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -> None:
     """Обрабатывает вызов на дуэль: /бой @username ставка ИЛИ /бой ставка (открытый)."""
@@ -188,7 +213,11 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
             )
             return
         if result.status == "poor":
-            await message.answer(texts.DUEL_INITIATOR_POOR.format(balance=money(result.balance)))
+            await notify_and_cleanup(
+                session,
+                message,
+                texts.DUEL_INITIATOR_POOR.format(balance=money(result.balance)),
+            )
             return
 
         # Открытый вызов: кнопки отказа нет (отказываться некому — зовём весь чат).
@@ -201,6 +230,7 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
             reply_markup=duel_accept(result.pending_id, with_decline=False),
         )
         if result.expires_at is not None:
+            await set_challenge_message_id(session, result.pending_id, sent.message_id)
             _schedule_duel_cleanup(
                 message.bot, sent.chat.id, sent.message_id,
                 result.pending_id, result.expires_at,
@@ -229,11 +259,13 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
     
     # Проверка баланса цели ПЕРЕД отправкой вызова
     if target.balance < amount:
-        await message.answer(
+        await notify_and_cleanup(
+            session,
+            message,
             texts.DUEL_TARGET_POOR.format(
                 mention=mention(target.user_id, target.first_name, target.username),
                 balance=money(target.balance)
-            )
+            ),
         )
         return
 
@@ -249,7 +281,11 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
         )
         return
     if result.status == "poor":
-        await message.answer(texts.DUEL_INITIATOR_POOR.format(balance=money(result.balance)))
+        await notify_and_cleanup(
+            session,
+            message,
+            texts.DUEL_INITIATOR_POOR.format(balance=money(result.balance)),
+        )
         return
 
     sent = await message.answer(
@@ -262,6 +298,7 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
         reply_markup=duel_accept(result.pending_id),
     )
     if result.expires_at is not None:
+        await set_challenge_message_id(session, result.pending_id, sent.message_id)
         _schedule_duel_cleanup(
             message.bot, sent.chat.id, sent.message_id,
             result.pending_id, result.expires_at,
@@ -282,10 +319,23 @@ async def cmd_go(message: Message, session: AsyncSession, command_args: str) -> 
     if result.status == "no_pending":
         return
     if result.status == "target_poor":
-        await message.answer(texts.DUEL_TARGET_POOR.format(balance=money(result.balance)))
+        await _warn_and_cleanup_failed_duel(
+            session,
+            message,
+            texts.DUEL_TARGET_POOR.format(
+                mention=mention(user.id, user.first_name, user.username),
+                balance=money(result.balance),
+            ),
+            request_message_id=result.request_message_id,
+        )
         return
     if result.status == "initiator_poor":
-        await message.answer(texts.DUEL_INITIATOR_POOR_NOW)
+        await _warn_and_cleanup_failed_duel(
+            session,
+            message,
+            texts.DUEL_INITIATOR_POOR_NOW,
+            request_message_id=result.request_message_id,
+        )
         return
 
     await _finish_duel(message, session, result)
@@ -309,12 +359,31 @@ async def cb_duel_accept(callback: CallbackQuery, session: AsyncSession) -> None
         await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
         return
     if result.status == "target_poor":
-        await callback.answer(
-            texts.DUEL_TARGET_POOR.format(balance=money(result.balance)), show_alert=True
-        )
+        if callback.message is not None:
+            await _warn_and_cleanup_failed_duel(
+                session,
+                callback.message,
+                texts.DUEL_TARGET_POOR.format(
+                    mention=mention(
+                        callback.from_user.id,
+                        callback.from_user.first_name,
+                        callback.from_user.username,
+                    ),
+                    balance=money(result.balance),
+                ),
+                request_message_id=callback.message.message_id,
+            )
+        await callback.answer()
         return
     if result.status == "initiator_poor":
-        await callback.answer(texts.DUEL_INITIATOR_POOR_NOW, show_alert=True)
+        if callback.message is not None:
+            await _warn_and_cleanup_failed_duel(
+                session,
+                callback.message,
+                texts.DUEL_INITIATOR_POOR_NOW,
+                request_message_id=callback.message.message_id,
+            )
+        await callback.answer()
         return
 
     # Убираем кнопку, чтобы её нельзя было нажать повторно.

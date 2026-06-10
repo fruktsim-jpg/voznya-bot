@@ -64,6 +64,15 @@ class DuelResult:
     loser_rankup: mmr_settings.Rank | None = None
     winner_mmr_before: int = 0
     loser_mmr_before: int = 0
+    request_message_id: int | None = None
+
+
+async def set_challenge_message_id(
+    session: AsyncSession, pending_id: int, message_id: int
+) -> None:
+    pending = await session.get(PendingAction, pending_id)
+    if pending is not None and pending.action_type == TYPE_DUEL:
+        pending.request_message_id = message_id
 
 
 async def create_challenge(
@@ -157,10 +166,18 @@ async def accept_challenge(
     assert initiator is not None and confirmer is not None
 
     if confirmer.balance < amount:
-        return DuelResult(status="target_poor", balance=confirmer.balance)
+        pending.status = STATUS_EXPIRED
+        return DuelResult(
+            status="target_poor",
+            balance=confirmer.balance,
+            request_message_id=pending.request_message_id,
+        )
     if initiator.balance < amount:
         pending.status = STATUS_EXPIRED
-        return DuelResult(status="initiator_poor")
+        return DuelResult(
+            status="initiator_poor",
+            request_message_id=pending.request_message_id,
+        )
 
     # Списываем ставки с обоих.
     await change_balance(session, initiator_id, -amount, "duel", {"role": "stake"})
