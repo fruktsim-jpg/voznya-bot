@@ -44,9 +44,17 @@ async def cmd_mmr(
 
     mmr = await mmr_repo.get_mmr(session, target_id)
     rank = mmr_texts.get_rank(mmr)
+    next_rank = mmr_texts.get_next_rank(mmr)
+    if next_rank is None:
+        progress = "\n\n➡️ Следующий ранг: максимум"
+    else:
+        progress = (
+            f"\n\n➡️ Следующий ранг: {next_rank.emoji} {next_rank.name}"
+            f"\n📊 Осталось: {next_rank.min_mmr - mmr:,} MMR"
+        )
     sent = await message.answer(
         mmr_texts.MMR_CARD.format(
-            mmr=mmr, rank_emoji=rank.emoji, rank_name=rank.name
+            mmr=mmr, rank_emoji=rank.emoji, rank_name=rank.name, progress=progress
         ),
         reply_markup=open_on_site(
             "🏆 Смотреть рейтинг",
@@ -55,14 +63,13 @@ async def cmd_mmr(
         ),
     )
     deletion = get_deletion_service()
-    await deletion.schedule_info_message(
-        session,
-        user_id=user.id,
-        chat_id=message.chat.id,
-        user_command_id=message.message_id,
-        bot_message_id=sent.message_id,
-        ttl_seconds=180,
+    await deletion.replace_leaderboard_message(
+        message.chat.id,
+        "mmr",
+        message.message_id,
+        sent.message_id,
     )
+    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 
 @router.message(RuCommand("топммр", "topmmr"))
@@ -90,7 +97,7 @@ async def cmd_top_mmr(
         )
         for i, row in enumerate(top)
     )
-    await message.answer(
+    sent = await message.answer(
         mmr_texts.MMR_TOP_HEADER.format(rows=rows),
         reply_markup=open_on_site(
             "🏆 Рейтинги на сайте",
@@ -98,3 +105,11 @@ async def cmd_top_mmr(
             prefer_web_app=supports_web_app(message.chat.type),
         ),
     )
+    deletion = get_deletion_service()
+    await deletion.replace_leaderboard_message(
+        message.chat.id,
+        "mmr_top",
+        message.message_id,
+        sent.message_id,
+    )
+    await deletion.schedule(session, message.chat.id, message.message_id, 1)

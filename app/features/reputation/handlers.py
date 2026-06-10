@@ -169,7 +169,7 @@ async def cmd_top_reputation(
         )
         for i, row in enumerate(top)
     )
-    await message.answer(
+    sent = await message.answer(
         rep_texts.REP_TOP_HEADER.format(rows=rows),
         reply_markup=open_on_site(
             "🏆 Рейтинги на сайте",
@@ -177,5 +177,13 @@ async def cmd_top_reputation(
             prefer_web_app=supports_web_app(message.chat.type),
         ),
     )
+    deletion = get_deletion_service()
+    await deletion.replace_leaderboard_message(
+        message.chat.id,
+        "reputation",
+        message.message_id,
+        sent.message_id,
+    )
+    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 

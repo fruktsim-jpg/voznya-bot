@@ -81,6 +81,15 @@ def get_rank(mmr: int) -> Rank:
     return current
 
 
+def get_next_rank(mmr: int) -> Rank | None:
+    """Возвращает следующий ранг после текущего значения MMR."""
+    current = get_rank(mmr)
+    for rank in RANKS:
+        if rank.min_mmr > current.min_mmr:
+            return rank
+    return None
+
+
 # Сколько игроков показывать в «топммр».
 TOP_MMR_LIMIT = 10
 
@@ -89,7 +98,7 @@ TOP_MMR_LIMIT = 10
 # {mmr} — рейтинг, {rank_emoji}/{rank_name} — ранг. MMR — это путь по миру,
 # а не деньги: тексты про дорогу/котость, без денежной лексики.
 
-MMR_CARD = "🏆 MMR: {mmr:,}\n🎖 Ранг: {rank_emoji} {rank_name}"
+MMR_CARD = "🏆 Ранг: {rank_emoji} {rank_name}\n📈 MMR: {mmr:,}{progress}"
 
 MMR_TOP_HEADER = "🏆 <b>Кто дальше всех зашёл</b>\n\n{rows}"
 MMR_TOP_ROW = "{place} {mention} — {mmr:,} MMR"

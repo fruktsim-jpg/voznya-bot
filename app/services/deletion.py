@@ -38,6 +38,7 @@ class DeletionService:
         self.scheduler = scheduler
         # Кэш последних информационных сообщений: {(user_id, chat_id): (user_cmd_id, bot_msg_id)}
         self._last_info_messages: dict[tuple[int, int], tuple[int, int]] = {}
+        self._last_leaderboard_messages: dict[tuple[int, str], tuple[int, int]] = {}
 
     async def schedule(
         self,
@@ -129,6 +130,27 @@ class DeletionService:
         if ttl_seconds is not None and ttl_seconds > 0:
             await self.schedule(session, chat_id, user_command_id, ttl_seconds)
             await self.schedule(session, chat_id, bot_message_id, ttl_seconds)
+
+    async def replace_leaderboard_message(
+        self,
+        chat_id: int,
+        leaderboard_type: str,
+        user_command_id: int,
+        bot_message_id: int,
+    ) -> None:
+        """Deletes the previous leaderboard window of the same type in a chat."""
+        key = (chat_id, leaderboard_type)
+        prev_pair = self._last_leaderboard_messages.get(key)
+
+        if prev_pair:
+            prev_user_cmd, prev_bot_msg = prev_pair
+            for message_id in (prev_user_cmd, prev_bot_msg):
+                try:
+                    await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self._last_leaderboard_messages[key] = (user_command_id, bot_message_id)
 
     async def restore_pending(self) -> None:
         """Восстанавливает незавершённые удаления после рестарта бота."""

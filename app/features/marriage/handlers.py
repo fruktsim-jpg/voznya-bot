@@ -20,6 +20,8 @@ from app.core.utils import format_marriage_duration_days, mention, now_utc
 from app.features.achievements.service import (
     award_specific,
     check_award_and_notify,
+    check_and_award,
+    format_unlock_notification,
     notify_specific,
 )
 from app.features.marriage import service
@@ -51,6 +53,28 @@ async def _finish_marriage(
         u = await session.get(User, uid)
         if u is not None:
             await check_award_and_notify(answerable, session, u.user_id, u.first_name, u.username)
+
+
+async def _finish_marriage_text(
+    session: AsyncSession, initiator_id: int, target_id: int
+) -> str:
+    """Формирует итог брака без отправки дополнительных сообщений."""
+    text = random.choice(texts.MARRY_DONE_VARIANTS).format(
+        first=await _mention_of(session, initiator_id),
+        second=await _mention_of(session, target_id),
+    )
+    unlocks: list[str] = []
+    for uid in (initiator_id, target_id):
+        u = await session.get(User, uid)
+        if u is None:
+            continue
+        newly = await check_and_award(session, u.user_id)
+        unlock_text = format_unlock_notification(u.user_id, u.first_name, u.username, newly)
+        if unlock_text:
+            unlocks.append(unlock_text)
+    if unlocks:
+        text = "\n\n".join([text, *unlocks])
+    return text
 
 
 async def _edit_callback_message(callback: CallbackQuery, text: str) -> None:
@@ -147,12 +171,9 @@ async def cb_marry_accept(callback: CallbackQuery, session: AsyncSession) -> Non
         return
 
     if callback.message is not None:
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:  # noqa: BLE001
-            pass
-        await _finish_marriage(
-            callback.message, session, result.initiator_id, result.target_id
+        await _edit_callback_message(
+            callback,
+            await _finish_marriage_text(session, result.initiator_id, result.target_id),
         )
     await callback.answer()
 

@@ -22,7 +22,6 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     """Формирует компактный ежедневный профиль-хаб."""
     from app.features.achievements.service import get_unlocked_codes
     from app.repositories import marriages as marriages_repo
-    from app.repositories import season as season_repo
     from app.repositories import users as users_repo
     from app.settings.achievements import ACHIEVEMENTS
 
@@ -57,14 +56,6 @@ async def render_profile(session: AsyncSession, user: User) -> str:
         lines.append(
             f"💍 Брак: {partner_name} · {format_marriage_duration_days(marriage.married_at)}"
         )
-
-    active_season = await season_repo.get_active_season(session)
-    if active_season is not None:
-        from app.settings import season as season_settings
-
-        season_mmr = await season_repo.get_season_mmr(session, user.user_id)
-        division = season_settings.get_division(season_mmr)
-        lines.append(f"🗓 Сезон: {division.emoji} <b>{division.name}</b>")
 
     unlocked = await get_unlocked_codes(session, user.user_id)
     total_achievements = len(ACHIEVEMENTS)

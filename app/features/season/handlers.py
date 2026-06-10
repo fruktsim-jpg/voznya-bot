@@ -169,7 +169,7 @@ async def cmd_top_season(
         f"{row.season_mmr:,} MMR ({cfg.get_division(row.season_mmr).name})"
         for i, row in enumerate(top)
     )
-    await message.answer(
+    sent = await message.answer(
         f"🏆 <b>Сезонный топ</b>\n\n{rows}",
         reply_markup=open_on_site(
             "🗓 Сезон на сайте",
@@ -177,6 +177,14 @@ async def cmd_top_season(
             prefer_web_app=supports_web_app(message.chat.type),
         ),
     )
+    deletion = get_deletion_service()
+    await deletion.replace_leaderboard_message(
+        message.chat.id,
+        "season",
+        message.message_id,
+        sent.message_id,
+    )
+    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 
 # --- Админские команды управления сезоном -----------------------------------

@@ -24,7 +24,6 @@ from app.settings import balance, texts
 router = Router(name="ratings")
 
 PAGE_SIZE = 10  # Игроков на страницу
-_TOP_MESSAGES: dict[int, int] = {}
 
 
 async def render_top(session: AsyncSession, page: int) -> tuple[str, int]:
@@ -73,22 +72,13 @@ async def cmd_top(message: Message, session: AsyncSession, command_args: str) ->
     deletion = get_deletion_service()
 
     markup = top_pagination(1, total_pages) if total_pages > 1 else None
-    existing_id = _TOP_MESSAGES.get(message.chat.id)
-    if existing_id is not None:
-        try:
-            await message.bot.edit_message_text(
-                text,
-                chat_id=message.chat.id,
-                message_id=existing_id,
-                reply_markup=markup,
-            )
-            await deletion.schedule(session, message.chat.id, message.message_id, 1)
-            return
-        except Exception:  # noqa: BLE001
-            _TOP_MESSAGES.pop(message.chat.id, None)
-
     sent = await message.answer(text, reply_markup=markup)
-    _TOP_MESSAGES[message.chat.id] = sent.message_id
+    await deletion.replace_leaderboard_message(
+        message.chat.id,
+        "balance",
+        message.message_id,
+        sent.message_id,
+    )
     await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 
@@ -107,16 +97,12 @@ async def cb_top_page(callback: CallbackQuery, session: AsyncSession) -> None:
             text,
             reply_markup=top_pagination(page, total_pages) if total_pages > 1 else None
         )
-        _TOP_MESSAGES[callback.message.chat.id] = callback.message.message_id
     await callback.answer()
 
 
 @router.message(RuCommand("топнеделя", "weekly"))
 async def cmd_weekly(message: Message, session: AsyncSession, command_args: str) -> None:
     """Топ по заработку за неделю: /топнеделя."""
-    sender = message.from_user
-    user_id = sender.id if sender else None
-    
     top = await economy_repo.weekly_top_earners(
         session, balance.WEEKLY_DAYS, balance.TOP_WEEKLY_LIMIT
     )
@@ -146,26 +132,19 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
             prefer_web_app=supports_web_app(message.chat.type),
         ),
     )
-
-    
-    # Автоудаление информационного сообщения
-    if user_id:
-        await deletion.schedule_info_message(
-            session,
-            user_id=user_id,
-            chat_id=message.chat.id,
-            user_command_id=message.message_id,
-            bot_message_id=sent.message_id,
-        )
+    await deletion.replace_leaderboard_message(
+        message.chat.id,
+        "weekly",
+        message.message_id,
+        sent.message_id,
+    )
+    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 
 @router.message(RuCommand("семьи", "families", "браки", "свадьбы"))
 
 async def cmd_families(message: Message, session: AsyncSession, command_args: str) -> None:
     """Рейтинг самых долгих семей: /семьи."""
-    sender = message.from_user
-    user_id = sender.id if sender else None
-    
     marriages = await marriages_repo.top_longest_marriages(
         session, balance.TOP_FAMILIES_LIMIT
     )
@@ -198,14 +177,10 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
             prefer_web_app=supports_web_app(message.chat.type),
         ),
     )
-
-    
-    # Автоудаление информационного сообщения
-    if user_id:
-        await deletion.schedule_info_message(
-            session,
-            user_id=user_id,
-            chat_id=message.chat.id,
-            user_command_id=message.message_id,
-            bot_message_id=sent.message_id,
-        )
+    await deletion.replace_leaderboard_message(
+        message.chat.id,
+        "families",
+        message.message_id,
+        sent.message_id,
+    )
+    await deletion.schedule(session, message.chat.id, message.message_id, 1)
