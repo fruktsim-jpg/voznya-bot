@@ -7,14 +7,30 @@ Callback-данные имеют единый формат ``<feature>:<action>:
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 
 def _app_button(label: str, url: str, *, prefer_web_app: bool = False) -> InlineKeyboardButton:
     """Returns a Mini App button when supported, otherwise a normal URL button."""
     if prefer_web_app:
-        return InlineKeyboardButton(text=label, web_app=WebAppInfo(url=url))
+        return InlineKeyboardButton(text=label, web_app=WebAppInfo(url=_miniapp_url(url)))
     return InlineKeyboardButton(text=label, url=url)
+
+
+def _miniapp_url(url: str) -> str:
+    """Wraps an app URL through /miniapp so Telegram initData can create a session."""
+    if "/miniapp" in url:
+        return url
+    try:
+        scheme, rest = url.split("://", maxsplit=1)
+        host, _, path = rest.partition("/")
+    except ValueError:
+        return url
+    origin = f"{scheme}://{host}"
+    next_path = f"/{path}" if path else "/"
+    return f"{origin}/miniapp?next={quote(next_path, safe='')}"
 
 
 def supports_web_app(chat_type: str | None) -> bool:
