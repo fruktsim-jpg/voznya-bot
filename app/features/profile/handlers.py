@@ -23,6 +23,7 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     from app.features.achievements.service import get_unlocked_codes
     from app.repositories import marriages as marriages_repo
     from app.repositories import season as season_repo
+    from app.repositories import users as users_repo
     from app.settings.achievements import ACHIEVEMENTS
 
     title = get_title(user.total_earned)
@@ -34,9 +35,14 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     mmr_value = await get_mmr(session, user.user_id)
     rank = mmr_settings.get_rank(mmr_value)
 
+    balance_rank = await users_repo.get_user_rank_by_balance(session, user.user_id)
+    balance_line = f"💰 Баланс: <b>{user.balance:,}</b> ешек"
+    if balance_rank is not None:
+        balance_line += f" · #{balance_rank} в топе"
+
     lines = [
         f"👤 <b>Профиль — {user.display_name()}</b>\n\n"
-        f"💰 Баланс: <b>{user.balance:,}</b> ешек",
+        f"{balance_line}",
         f"🏆 Титул: {title.emoji} <b>{title.name}</b>",
         f"🏅 MMR: <b>{mmr_value:,}</b> · {rank.emoji} <b>{rank.name}</b>",
     ]
