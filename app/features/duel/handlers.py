@@ -20,7 +20,7 @@ from app.core.responses import notify_and_cleanup
 from app.core.scheduler import get_scheduler
 from app.core.targets import extract_amount_after_target, resolve_target
 from app.core.utils import format_cooldown, mention, now_utc
-from app.features.achievements.service import check_award_and_notify
+from app.features.achievements.service import check_and_award, format_unlock_notification
 from app.features.duel.service import (
     DuelResult,
     accept_challenge,
@@ -78,7 +78,9 @@ def _schedule_duel_cleanup(
 
 
 
-async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) -> None:
+async def _finish_duel(
+    answerable, session: AsyncSession, result: DuelResult, *, edit_source: bool = False
+) -> None:
     """Озвучивает результат завершённого боя и проверяет достижения."""
     winner = await session.get(User, result.winner_id)
     loser = await session.get(User, result.loser_id)
@@ -90,34 +92,51 @@ async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) ->
     phrase = random.choice(texts.DUEL_PHRASE_VARIANTS).format(
         winner=winner_mention, loser=loser_mention
     )
-    await answerable.answer(
+    parts = [
         texts.DUEL_RESULT.format(
             winner=winner_mention,
             loser=loser_mention,
             bank=money(result.bank),
             phrase=phrase,
         )
-    )
+    ]
 
-    await check_award_and_notify(
-        answerable, session, winner.user_id, winner.first_name, winner.username
+    winner_achievements = await check_and_award(session, winner.user_id)
+    winner_unlock = format_unlock_notification(
+        winner.user_id, winner.first_name, winner.username, winner_achievements
     )
+    if winner_unlock:
+        parts.append(winner_unlock)
+
     # Проигравший тоже меняет счётчики (duels_lost, duel_loss_streak), поэтому
     # его достижения — в т.ч. секретный «Мешок» за 5 поражений подряд — нужно
     # проверять СРАЗУ здесь, а не ждать его следующего действия.
-    await check_award_and_notify(
-        answerable, session, loser.user_id, loser.first_name, loser.username
+    loser_achievements = await check_and_award(session, loser.user_id)
+    loser_unlock = format_unlock_notification(
+        loser.user_id, loser.first_name, loser.username, loser_achievements
     )
+    if loser_unlock:
+        parts.append(loser_unlock)
 
-    # Повышения ранга MMR по итогу боя считаются в сервисе (award_mmr вернул
-    # новый ранг). Объявляем их после результата: сначала победителю, потом
-    # проигравшему (он тоже растёт за участие).
-    from app.features.mmr.service import format_rankup
+    # Повышения ранга MMR агрегируем после дуэльных и achievement-MMR начислений,
+    # чтобы один бой давал одно итоговое сообщение.
+    from app.features.mmr.service import detect_rankup, format_rankup
 
-    if result.winner_rankup is not None:
-        await answerable.answer(format_rankup(winner_mention, result.winner_rankup))
-    if result.loser_rankup is not None:
-        await answerable.answer(format_rankup(loser_mention, result.loser_rankup))
+    winner_rankup = await detect_rankup(session, winner.user_id, result.winner_mmr_before)
+    loser_rankup = await detect_rankup(session, loser.user_id, result.loser_mmr_before)
+    if winner_rankup is not None:
+        parts.append(format_rankup(winner_mention, winner_rankup))
+    if loser_rankup is not None:
+        parts.append(format_rankup(loser_mention, loser_rankup))
+
+    final_text = "\n\n".join(parts)
+    if edit_source:
+        try:
+            await answerable.edit_text(final_text)
+            return
+        except Exception:  # noqa: BLE001
+            pass
+    await answerable.answer(final_text)
 
 
 async def _edit_callback_message(callback: CallbackQuery, text: str) -> None:
@@ -304,7 +323,7 @@ async def cb_duel_accept(callback: CallbackQuery, session: AsyncSession) -> None
             await callback.message.edit_reply_markup(reply_markup=None)
         except Exception:  # noqa: BLE001
             pass
-        await _finish_duel(callback.message, session, result)
+        await _finish_duel(callback.message, session, result, edit_source=True)
     await callback.answer()
 
 

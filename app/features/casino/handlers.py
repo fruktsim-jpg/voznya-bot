@@ -15,7 +15,11 @@ from app.core.money import money
 
 from app.core.responses import notify_and_cleanup
 from app.core.utils import format_cooldown, mention
-from app.features.achievements.service import check_award_and_notify, notify_specific
+from app.features.achievements.service import (
+    award_specific,
+    check_and_award,
+    format_unlock_notification,
+)
 from app.features.casino.service import CasinoResult, play_casino
 from app.settings import balance, dynamic, texts
 
@@ -23,14 +27,18 @@ from app.settings import balance, dynamic, texts
 router = Router(name="casino")
 
 
-async def _award_casino_events(
-    answerable, session, user, result: CasinoResult
-) -> None:
-    """Выдаёт событийные достижения казино (джекпот, ва-банк)."""
+async def _award_casino_events(session, user, result: CasinoResult) -> list:
+    """Выдаёт событийные достижения казино и возвращает новые ачивки."""
+    achievements = []
     if result.jackpot:
-        await notify_specific(answerable, session, user.id, user.first_name, user.username, "catushka")
+        unlocked = await award_specific(session, user.id, "catushka")
+        if unlocked is not None:
+            achievements.append(unlocked)
     if result.all_in and result.outcome == "loss":
-        await notify_specific(answerable, session, user.id, user.first_name, user.username, "last_dep")
+        unlocked = await award_specific(session, user.id, "last_dep")
+        if unlocked is not None:
+            achievements.append(unlocked)
+    return achievements
 
 
 def _format_multiplier(value: float) -> str:
@@ -113,15 +121,19 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
     # результатом. Так итог живёт в одном сообщении, без лишнего спама в чате.
     spinning = await message.answer(texts.CASINO_SPINNING)
     await asyncio.sleep(1.0)
+    parts = [_render_result(result, who)]
+    achievements = await check_and_award(session, user.id)
+    achievements.extend(await _award_casino_events(session, user, result))
+    unlock = format_unlock_notification(user.id, user.first_name, user.username, achievements)
+    if unlock:
+        parts.append(unlock)
+    final_text = "\n\n".join(parts)
     try:
-        await spinning.edit_text(_render_result(result, who))
+        await spinning.edit_text(final_text)
     except Exception:  # noqa: BLE001
         # Редактирование не прошло (сообщение удалили и т.п.) — отдаём результат
         # отдельным сообщением, чтобы игрок всё равно увидел исход.
-        await message.answer(_render_result(result, who))
-
-    await check_award_and_notify(message, session, user.id, user.first_name, user.username)
-    await _award_casino_events(message, session, user, result)
+        await message.answer(final_text)
 
 
 

@@ -12,7 +12,11 @@ from app.core.filters import RuCommand
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
 from app.core.utils import mention
-from app.features.achievements.service import check_award_and_notify, notify_specific
+from app.features.achievements.service import (
+    award_specific,
+    check_and_award,
+    format_unlock_notification,
+)
 from app.features.treasure.service import claim_treasure
 from app.settings import texts
 
@@ -34,7 +38,7 @@ async def _do_claim(
     callback.message), куда уйдёт сообщение о результате.
     """
     # MMR снимаем ДО взятия клада, чтобы поймать повышение ранга по итогу.
-    from app.features.mmr.service import announce_rankup_if_any
+    from app.features.mmr.service import detect_rankup, format_rankup
     from app.repositories.mmr import get_mmr
 
     mmr_before = await get_mmr(session, user_id)
@@ -44,16 +48,24 @@ async def _do_claim(
         return False
 
     who = mention(user_id, first_name, username)
-    await answerable.answer(
+    parts = [
         random.choice(texts.TREASURE_CLAIM_VARIANTS).format(
             mention=who,
             reward=money(result.reward),
         )
-    )
-    await check_award_and_notify(answerable, session, user_id, first_name, username)
+    ]
+    achievements = await check_and_award(session, user_id)
     if result.fast:
-        await notify_specific(answerable, session, user_id, first_name, username, "kladmen")
-    await announce_rankup_if_any(answerable, session, user_id, who, mmr_before)
+        specific = await award_specific(session, user_id, "kladmen")
+        if specific is not None:
+            achievements.append(specific)
+    unlock = format_unlock_notification(user_id, first_name, username, achievements)
+    if unlock:
+        parts.append(unlock)
+    rankup = await detect_rankup(session, user_id, mmr_before)
+    if rankup is not None:
+        parts.append(format_rankup(who, rankup))
+    await answerable.answer("\n\n".join(parts))
     return True
 
 

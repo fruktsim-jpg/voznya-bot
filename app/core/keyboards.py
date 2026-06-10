@@ -7,55 +7,66 @@ Callback-данные имеют единый формат ``<feature>:<action>:
 
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 
-def open_on_site(label: str, url: str) -> InlineKeyboardMarkup:
+def _app_button(label: str, url: str, *, prefer_web_app: bool = False) -> InlineKeyboardButton:
+    """Returns a Mini App button when supported, otherwise a normal URL button."""
+    if prefer_web_app:
+        return InlineKeyboardButton(text=label, web_app=WebAppInfo(url=url))
+    return InlineKeyboardButton(text=label, url=url)
+
+
+def supports_web_app(chat_type: str | None) -> bool:
+    """Telegram WebApp inline buttons are supported in private bot chats."""
+    return chat_type == "private"
+
+
+def open_on_site(label: str, url: str, *, prefer_web_app: bool = False) -> InlineKeyboardMarkup:
     """Одна URL-кнопка «открыть на сайте» (site-first, Release 2.2).
 
     Тяжёлые механики (кейсы, магазин, полный инвентарь, профиль, статистика)
     живут на сайте — бот лишь ведёт туда. URL-кнопка открывает страницу/Mini App
     во внешнем браузере или встроенном webview Telegram.
     """
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text=label, url=url)]]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[[_app_button(label, url, prefer_web_app=prefer_web_app)]])
 
 
-def menu_shortcuts(base_url: str) -> InlineKeyboardMarkup:
+def menu_shortcuts(base_url: str, *, prefer_web_app: bool = False) -> InlineKeyboardMarkup:
     """Компактные быстрые переходы для /меню и /help."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="👤 Профиль", url=f"{base_url}/profile/me"),
-                InlineKeyboardButton(text="🎒 Инвентарь", url=f"{base_url}/inventory"),
+                _app_button("👤 Профиль", f"{base_url}/profile/me", prefer_web_app=prefer_web_app),
+                _app_button("🎒 Инвентарь", f"{base_url}/inventory", prefer_web_app=prefer_web_app),
             ],
             [
-                InlineKeyboardButton(text="🎰 Кейсы", url=f"{base_url}/cases"),
-                InlineKeyboardButton(text="🎁 Подарки", url=f"{base_url}/gifts"),
+                _app_button("🎰 Кейсы", f"{base_url}/cases", prefer_web_app=prefer_web_app),
+                _app_button("🎁 Подарки", f"{base_url}/gifts", prefer_web_app=prefer_web_app),
             ],
             [
-                InlineKeyboardButton(text="🏆 Топы", url=f"{base_url}/live"),
+                _app_button("🏆 Топы", f"{base_url}/live", prefer_web_app=prefer_web_app),
                 InlineKeyboardButton(text="🌐 Сайт", url=base_url),
             ],
         ]
     )
 
 
-def profile_shortcuts(base_url: str, user_id: int) -> InlineKeyboardMarkup:
+def profile_shortcuts(
+    base_url: str, user_id: int, *, prefer_web_app: bool = False
+) -> InlineKeyboardMarkup:
     """Профиль как ежедневный хаб: сайт, инвентарь, топы, кейсы, подарки."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🌐 Профиль на сайте", url=f"{base_url}/profile/{user_id}")],
+            [_app_button("👤 Открыть профиль", f"{base_url}/profile/{user_id}", prefer_web_app=prefer_web_app)],
             [
-                InlineKeyboardButton(text="🎒 Инвентарь", url=f"{base_url}/inventory"),
-                InlineKeyboardButton(text="🏅 Ачивки", url=f"{base_url}/profile/{user_id}"),
+                _app_button("🎒 Инвентарь", f"{base_url}/inventory", prefer_web_app=prefer_web_app),
+                _app_button("📊 Статистика", f"{base_url}/profile/{user_id}", prefer_web_app=prefer_web_app),
             ],
             [
-                InlineKeyboardButton(text="🏆 Топы", url=f"{base_url}/live"),
-                InlineKeyboardButton(text="🎰 Кейсы", url=f"{base_url}/cases"),
+                _app_button("🎰 Кейсы", f"{base_url}/cases", prefer_web_app=prefer_web_app),
+                _app_button("🎁 Магазин", f"{base_url}/gifts", prefer_web_app=prefer_web_app),
             ],
-            [InlineKeyboardButton(text="🎁 Подарки", url=f"{base_url}/gifts")],
         ]
     )
 
@@ -65,6 +76,7 @@ def inventory_pagination(
     total_pages: int,
     user_id: int,
     inventory_url: str,
+    prefer_web_app: bool = False,
 ) -> InlineKeyboardMarkup:
     """Inline-пагинация собственного инвентаря + переход на сайт."""
     rows: list[list[InlineKeyboardButton]] = []
@@ -83,7 +95,13 @@ def inventory_pagination(
         )
     if page_buttons:
         rows.append(page_buttons)
-    rows.append([InlineKeyboardButton(text="🎒 Управлять на сайте", url=inventory_url)])
+    rows.append([
+        _app_button(
+            "🎒 Управлять в Mini App" if prefer_web_app else "🎒 Управлять на сайте",
+            inventory_url,
+            prefer_web_app=prefer_web_app,
+        )
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

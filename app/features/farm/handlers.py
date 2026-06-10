@@ -13,7 +13,7 @@ from app.core.money import money
 
 from app.core.responses import notify_and_cleanup
 from app.core.utils import format_cooldown, mention
-from app.features.achievements.service import check_award_and_notify
+from app.features.achievements.service import check_and_award, format_unlock_notification
 from app.features.farm.service import do_farm
 from app.settings import texts
 
@@ -58,11 +58,17 @@ async def cmd_farm(message: Message, session: AsyncSession, command_args: str) -
 
     who = mention(user.id, user.first_name, user.username)
     # MMR снимаем ДО начислений этого апдейта, чтобы поймать повышение ранга.
-    from app.features.mmr.service import announce_rankup_if_any
+    from app.features.mmr.service import detect_rankup, format_rankup
     from app.repositories.mmr import get_mmr
 
     mmr_before = await get_mmr(session, user.id)
 
-    await message.answer(render_farm_result(result, who))
-    await check_award_and_notify(message, session, user.id, user.first_name, user.username)
-    await announce_rankup_if_any(message, session, user.id, who, mmr_before)
+    parts = [render_farm_result(result, who)]
+    achievements = await check_and_award(session, user.id)
+    unlock = format_unlock_notification(user.id, user.first_name, user.username, achievements)
+    if unlock:
+        parts.append(unlock)
+    rankup = await detect_rankup(session, user.id, mmr_before)
+    if rankup is not None:
+        parts.append(format_rankup(who, rankup))
+    await message.answer("\n\n".join(parts))

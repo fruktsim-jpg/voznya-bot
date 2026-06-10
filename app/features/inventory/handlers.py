@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import inventory_pagination
+from app.core.keyboards import inventory_pagination, supports_web_app
 from app.core.money import money
 from app.core.targets import resolve_target
 
@@ -142,7 +142,9 @@ async def cmd_inventory(
     is_own = target is None or target.user_id == sender.id
     if is_own:
         url = f"{get_settings().website_url}/inventory"
-        markup = inventory_pagination(page, pages, sender.id, url)
+        markup = inventory_pagination(
+            page, pages, sender.id, url, prefer_web_app=supports_web_app(message.chat.type)
+        )
 
     sent = await message.answer(text, reply_markup=markup)
 
@@ -183,6 +185,12 @@ async def cb_inventory_page(callback: CallbackQuery, session: AsyncSession) -> N
     url = f"{get_settings().website_url}/inventory"
     await callback.message.edit_text(
         text,
-        reply_markup=inventory_pagination(page, pages, owner_id, url),
+        reply_markup=inventory_pagination(
+            page,
+            pages,
+            owner_id,
+            url,
+            prefer_web_app=supports_web_app(callback.message.chat.type),
+        ),
     )
     await callback.answer()

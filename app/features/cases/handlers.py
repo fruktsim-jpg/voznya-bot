@@ -19,7 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.filters import RuCommand
 
 from app.config import get_settings
-from app.core.keyboards import case_gift_choice, case_open, gift_retry, open_on_site
+from app.core.keyboards import (
+    case_gift_choice,
+    case_open,
+    gift_retry,
+    open_on_site,
+    supports_web_app,
+)
 
 from app.core.money import money
 from app.core.responses import notify_and_cleanup
@@ -92,7 +98,11 @@ async def cmd_cases(message: Message, session: AsyncSession) -> None:
     url = f"{get_settings().website_url}/cases"
     await message.answer(
         texts.CASES_SITE_CARD,
-        reply_markup=open_on_site(texts.CASES_SITE_BTN, url),
+        reply_markup=open_on_site(
+            texts.CASES_SITE_BTN,
+            url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
 
@@ -289,7 +299,12 @@ async def cmd_case(message: Message, session: AsyncSession, command_args: str) -
     # само открытие живёт на сайте. Кнопка ведёт на страницу кейсов.
     url = f"{get_settings().website_url}/cases"
     await message.answer(
-        "\n".join(body), reply_markup=open_on_site(texts.CASES_SITE_BTN, url)
+        "\n".join(body),
+        reply_markup=open_on_site(
+            texts.CASES_SITE_BTN,
+            url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
 
@@ -456,7 +471,11 @@ async def cmd_open(message: Message, session: AsyncSession, command_args: str) -
     url = f"{get_settings().website_url}/cases"
     await message.answer(
         texts.CASES_SITE_CARD,
-        reply_markup=open_on_site(texts.CASES_SITE_BTN, url),
+        reply_markup=open_on_site(
+            texts.CASES_SITE_BTN,
+            url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
 

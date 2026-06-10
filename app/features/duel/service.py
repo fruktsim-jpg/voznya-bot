@@ -62,6 +62,8 @@ class DuelResult:
     # Повышения ранга по итогу дуэли (если случились) — для уведомления.
     winner_rankup: mmr_settings.Rank | None = None
     loser_rankup: mmr_settings.Rank | None = None
+    winner_mmr_before: int = 0
+    loser_mmr_before: int = 0
 
 
 async def create_challenge(
@@ -192,6 +194,10 @@ async def accept_challenge(
 
     winner_part = await _participation_mmr(session, winner_id, loser_id)
     loser_part = await _participation_mmr(session, loser_id, winner_id)
+    from app.repositories import mmr as mmr_repo
+
+    winner_mmr_before = await mmr_repo.get_mmr(session, winner_id)
+    loser_mmr_before = await mmr_repo.get_mmr(session, loser_id)
 
     winner_rankup = await award_mmr(
         session,
@@ -235,6 +241,8 @@ async def accept_challenge(
         amount=amount,
         winner_rankup=winner_rankup,
         loser_rankup=loser_rankup,
+        winner_mmr_before=winner_mmr_before,
+        loser_mmr_before=loser_mmr_before,
     )
 
 

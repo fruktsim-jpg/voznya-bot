@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import profile_shortcuts
+from app.core.keyboards import profile_shortcuts, supports_web_app
 from app.models import User
 from app.settings import texts
 from app.settings.titles import get_title, get_next_title
@@ -18,21 +18,13 @@ router = Router(name="profile")
 
 
 async def render_profile(session: AsyncSession, user: User) -> str:
-    """Формирует текст профиля игрока."""
+    """Формирует компактный ежедневный профиль-хаб."""
     from app.features.achievements.service import get_unlocked_codes
-    from app.repositories.combot_stats import get_combot_overlay, total_messages
-    from app.repositories.marriages import get_active_marriage
-    from app.repositories.users import get_user
+    from app.repositories import season as season_repo
     from app.settings.achievements import ACHIEVEMENTS
-    
-    settings = get_settings()
+
     title = get_title(user.total_earned)
     next_title = get_next_title(user.total_earned)
-
-    # Единый счётчик сообщений: историческая надстройка Combot + счёт Возни.
-    # Для игрока это одна цифра за всю историю сообщества, без упоминания Combot.
-    overlay = await get_combot_overlay(session, user.user_id)
-    messages_total = total_messages(user.messages_count, overlay)
 
     # MMR — отдельный игровой рейтинг (общий прогресс), не связан с ешками.
     from app.repositories.mmr import get_mmr
@@ -41,62 +33,36 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     mmr_value = await get_mmr(session, user.user_id)
     rank = mmr_settings.get_rank(mmr_value)
 
-    text = (
+    lines = [
         f"👤 <b>Профиль — {user.display_name()}</b>\n\n"
-        f"💰 Баланс: <b>{user.balance:,}</b> ешек\n"
-        f"📈 Заработано: <b>{user.total_earned:,}</b> ешек\n"
-        f"💬 Сообщений: <b>{messages_total:,}</b>\n"
-        f"🏆 Титул: {title.emoji} <b>{title.name}</b>\n"
-        + mmr_settings.PROFILE_MMR_LINE.format(mmr=mmr_value)
-        + mmr_settings.PROFILE_RANK_LINE.format(
-            rank_emoji=rank.emoji, rank_name=rank.name
+        f"💰 Баланс: <b>{user.balance:,}</b> ешек",
+        f"🏆 Титул: {title.emoji} <b>{title.name}</b>",
+        f"🏅 MMR: <b>{mmr_value:,}</b> · {rank.emoji} <b>{rank.name}</b>",
+    ]
+
+    active_season = await season_repo.get_active_season(session)
+    if active_season is not None:
+        from app.settings import season as season_settings
+
+        season_mmr = await season_repo.get_season_mmr(session, user.user_id)
+        division = season_settings.get_division(season_mmr)
+        lines.append(
+            f"🗓 Сезон: {division.emoji} <b>{division.name}</b> · {season_mmr:,} MMR"
         )
-    )
 
-
-    
-    # Компактная строка «в чате с» — только если Combot знает дату входа.
-    if overlay.joined_at is not None:
-        text += f"📅 В чате с: {overlay.joined_at:%d.%m.%Y}\n"
-
-    # Прогресс до следующего титула
     if next_title:
-
         progress = user.total_earned - title.min_earned
         needed = next_title.min_earned - title.min_earned
         percent = int((progress / needed) * 100) if needed > 0 else 100
-        text += f"📊 Прогресс: {percent}% до {next_title.emoji} {next_title.name}\n"
-    
-    # Достижения
+        lines.append(f"📊 До титула: {percent}% → {next_title.emoji} {next_title.name}")
+
     unlocked = await get_unlocked_codes(session, user.user_id)
     total_achievements = len(ACHIEVEMENTS)
     opened_achievements = len(unlocked)
-    text += f"🏅 Достижения: {opened_achievements}/{total_achievements}\n"
+    lines.append(f"🎖 Ачивки: <b>{opened_achievements}/{total_achievements}</b>")
+    lines.append("\nДетали, статистика и управление — кнопками ниже.")
 
-    # Инвентарь — суммарное число предметов (read-only из inventory).
-    from app.repositories.inventory import count_items
-    from app.settings import inventory as inv_settings
-
-    items_count = await count_items(session, user.user_id)
-    if items_count:
-        text += inv_settings.PROFILE_ITEMS_LINE.format(count=items_count)
-    
-    # Брак
-    marriage = await get_active_marriage(session, user.user_id)
-    if marriage:
-        partner_id = marriage.user_id_2 if marriage.user_id_1 == user.user_id else marriage.user_id_1
-        partner = await get_user(session, partner_id)
-        if partner:
-            partner_name = partner.display_name()
-            text += f"💍 В браке с {partner_name}\n"
-    
-    text += (
-        f"\n⚔️ Дуэли: {user.duels_won} побед / {user.duels_lost} поражений\n"
-        f"🌾 Серия фермы: {user.farm_streak} (рекорд: {user.max_farm_streak})\n"
-        f"📦 Кладов найдено: {user.treasures_found}"
-    )
-    
-    return text
+    return "\n".join(lines)
 
 
 
@@ -109,7 +75,11 @@ async def _send_profile(message: Message, session: AsyncSession, user: User) -> 
 
     sent = await message.answer(
         text,
-        reply_markup=profile_shortcuts(settings.website_url, user.user_id),
+        reply_markup=profile_shortcuts(
+            settings.website_url,
+            user.user_id,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
     # Автоудаление информационного сообщения (чистота чата).

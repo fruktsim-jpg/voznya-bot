@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import menu_shortcuts
+from app.core.keyboards import menu_shortcuts, supports_web_app
 from app.services.deletion import get_deletion_service
 from app.settings import texts
 from app.settings import balance
@@ -26,7 +26,10 @@ async def cmd_help(message: Message, session: AsyncSession, command_args: str) -
     
     sent = await message.answer(
         texts.HELP,
-        reply_markup=menu_shortcuts(get_settings().website_url),
+        reply_markup=menu_shortcuts(
+            get_settings().website_url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
     
     # Интеграция с системой "одно активное информационное окно"

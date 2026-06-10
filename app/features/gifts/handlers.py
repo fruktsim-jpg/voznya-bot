@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site
+from app.core.keyboards import open_on_site, supports_web_app
 from app.core.money import money
 
 from app.core.responses import notify_and_cleanup
@@ -110,7 +110,11 @@ async def cmd_gifts(message: Message, session: AsyncSession) -> None:
     url = f"{get_settings().website_url}/gifts"
     await message.answer(
         SHOP_SITE_CARD,
-        reply_markup=open_on_site(SHOP_SITE_BTN, url),
+        reply_markup=open_on_site(
+            SHOP_SITE_BTN,
+            url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
 
@@ -186,7 +190,11 @@ async def cmd_my_gifts(message: Message, session: AsyncSession) -> None:
     url = f"{get_settings().website_url}/inventory"
     await message.answer(
         "\n".join(lines),
-        reply_markup=open_on_site("🎒 Управлять подарками", url),
+        reply_markup=open_on_site(
+            "🎒 Управлять подарками",
+            url,
+            prefer_web_app=supports_web_app(message.chat.type),
+        ),
     )
 
 
