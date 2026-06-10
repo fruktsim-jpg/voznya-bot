@@ -16,10 +16,13 @@ from aiogram.filters import BaseFilter
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.filters import RuCommand
+from app.core.keyboards import open_on_site
 from app.core.utils import display_name, format_cooldown, mention, place_marker
 from app.features.reputation.service import apply_reputation, classify
 from app.repositories import reputation as rep_repo
+from app.services.deletion import get_deletion_service
 from app.settings import reputation as rep_texts
 
 router = Router(name="reputation")
@@ -118,10 +121,20 @@ async def cmd_reputation(
         target_id = reply.from_user.id
 
     summary = await rep_repo.get_summary(session, target_id)
-    await message.answer(
+    sent = await message.answer(
         rep_texts.REP_CARD.format(
             score=summary.score, plus=summary.plus, minus=summary.minus
-        )
+        ),
+        reply_markup=open_on_site("🏆 Топ репутации", f"{get_settings().website_url}/live"),
+    )
+    deletion = get_deletion_service()
+    await deletion.schedule_info_message(
+        session,
+        user_id=user.id,
+        chat_id=message.chat.id,
+        user_command_id=message.message_id,
+        bot_message_id=sent.message_id,
+        ttl_seconds=180,
     )
 
 
@@ -134,7 +147,10 @@ async def cmd_top_reputation(
         session, rep_texts.TOP_REPUTATION_LIMIT
     )
     if not top:
-        await message.answer(rep_texts.REP_TOP_EMPTY)
+        await message.answer(
+            rep_texts.REP_TOP_EMPTY,
+            reply_markup=open_on_site("🏆 Рейтинги на сайте", f"{get_settings().website_url}/live"),
+        )
         return
 
     rows = "\n".join(
@@ -145,6 +161,9 @@ async def cmd_top_reputation(
         )
         for i, row in enumerate(top)
     )
-    await message.answer(rep_texts.REP_TOP_HEADER.format(rows=rows))
+    await message.answer(
+        rep_texts.REP_TOP_HEADER.format(rows=rows),
+        reply_markup=open_on_site("🏆 Рейтинги на сайте", f"{get_settings().website_url}/live"),
+    )
 
 

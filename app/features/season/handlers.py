@@ -19,9 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
+from app.core.keyboards import open_on_site
+from app.core.responses import notify_and_cleanup
 from app.core.utils import display_name, place_marker
 from app.features.season import service as season_service
 from app.repositories import season as season_repo
+from app.services.deletion import get_deletion_service
 from app.settings import season as cfg
 
 router = Router(name="season")
@@ -47,7 +50,11 @@ async def cmd_season(
 
     active = await season_repo.get_active_season(session)
     if active is None:
-        await message.answer("🗓 Сейчас межсезонье. Сезон скоро стартует — следи за анонсами.")
+        await notify_and_cleanup(
+            session,
+            message,
+            "🗓 Сейчас межсезонье. Сезон скоро стартует — следи за анонсами.",
+        )
         return
 
     season_mmr = await season_repo.get_season_mmr(session, user.id)
@@ -55,14 +62,25 @@ async def cmd_season(
     days_left = max(
         0, (active.ends_at - datetime.now(timezone.utc)).days
     )
-    await message.answer(
+    season_url = f"{get_settings().website_url}/season"
+    sent = await message.answer(
         cfg.SEASON_CARD.format(
             season_name=active.name,
             season_mmr=season_mmr,
             div_emoji=div.emoji,
             div_name=div.name,
             days_left=days_left,
-        )
+        ),
+        reply_markup=open_on_site("🗓 Сезон на сайте", season_url),
+    )
+    deletion = get_deletion_service()
+    await deletion.schedule_info_message(
+        session,
+        user_id=user.id,
+        chat_id=message.chat.id,
+        user_command_id=message.message_id,
+        bot_message_id=sent.message_id,
+        ttl_seconds=180,
     )
 
 
@@ -77,7 +95,7 @@ async def cmd_daily(
 
     result = await season_service.claim_daily(session, user.id)
     if result.already:
-        await message.answer(cfg.DAILY_ALREADY)
+        await notify_and_cleanup(session, message, cfg.DAILY_ALREADY)
         return
     await message.answer(
         cfg.DAILY_CLAIMED.format(amount=result.amount, streak=result.streak)
@@ -109,7 +127,19 @@ async def cmd_missions(
             f"{mark} {mission.title} — +{mission.reward_eshki} ешек, "
             f"+{mission.reward_mmr} MMR"
         )
-    await message.answer("\n".join(lines))
+    sent = await message.answer(
+        "\n".join(lines),
+        reply_markup=open_on_site("🗓 Миссии на сайте", f"{get_settings().website_url}/season"),
+    )
+    deletion = get_deletion_service()
+    await deletion.schedule_info_message(
+        session,
+        user_id=user.id,
+        chat_id=message.chat.id,
+        user_command_id=message.message_id,
+        bot_message_id=sent.message_id,
+        ttl_seconds=180,
+    )
 
 
 @router.message(RuCommand("топсезон", "topseason"))
@@ -119,7 +149,11 @@ async def cmd_top_season(
     """Топ игроков по сезонному MMR."""
     top = await season_repo.top_by_season_mmr(session, 10)
     if not top:
-        await message.answer("🏆 Сезонный топ пока пуст. Ферма, клады, дуэли и ачивки двигают тебя по сезону.")
+        await notify_and_cleanup(
+            session,
+            message,
+            "🏆 Сезонный топ пока пуст. Ферма, клады, дуэли и ачивки двигают тебя по сезону.",
+        )
         return
 
     rows = "\n".join(
@@ -127,7 +161,10 @@ async def cmd_top_season(
         f"{row.season_mmr:,} MMR ({cfg.get_division(row.season_mmr).name})"
         for i, row in enumerate(top)
     )
-    await message.answer(f"🏆 <b>Сезонный топ</b>\n\n{rows}")
+    await message.answer(
+        f"🏆 <b>Сезонный топ</b>\n\n{rows}",
+        reply_markup=open_on_site("🗓 Сезон на сайте", f"{get_settings().website_url}/season"),
+    )
 
 
 # --- Админские команды управления сезоном -----------------------------------

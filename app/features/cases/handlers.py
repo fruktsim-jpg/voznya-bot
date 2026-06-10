@@ -27,7 +27,7 @@ from app.features.cases.events import CaseOpenEvent, emit_case_opened
 from app.features.cases.service import OpenResult, open_case
 from app.features.gifts.service import deliver_gift, sell_gift
 
-from app.models import CaseReward, Inventory
+from app.models import CaseReward, GiftTransaction, Inventory
 from app.repositories import cases as cases_repo
 from app.repositories import gifts as gifts_repo
 from app.settings import inventory as inv_texts
@@ -36,6 +36,29 @@ from app.settings import texts
 
 
 router = Router(name="cases")
+
+
+async def _gift_name_for_delivery(session: AsyncSession, delivery_key: str) -> str:
+    code = await session.scalar(
+        select(GiftTransaction.item_code).where(
+            GiftTransaction.idempotency_key == delivery_key
+        )
+    )
+    names = await gifts_repo.get_names_by_codes(session, [code or ""])
+    return names.get(code or "") or "подарок"
+
+
+async def _edit_callback_message(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    if callback.message is None:
+        return
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest:
+        pass
 
 
 
@@ -448,13 +471,10 @@ async def cb_case_open(callback: CallbackQuery, session: AsyncSession) -> None:
     кейс. Открытие (`_open_with_animation`/`open_case`) больше не вызывается из
     бота — остаётся только как внутренний конвейер для сайта.
     """
-    await callback.answer()
-    if callback.message is not None:
-        url = f"{get_settings().website_url}/cases"
-        await callback.message.answer(
-            texts.CASES_SITE_CARD,
-            reply_markup=open_on_site(texts.CASES_SITE_BTN, url),
-        )
+    await callback.answer(
+        "Кейсы открываются на сайте. Открой актуальную карточку через /кейсы.",
+        show_alert=True,
+    )
 
 
 
@@ -489,18 +509,17 @@ async def cb_gift_keep(callback: CallbackQuery, session: AsyncSession) -> None:
     if parsed is None:
         await callback.answer()
         return
-    _, owner_id = parsed
+    delivery_key, owner_id = parsed
     if callback.from_user is None or callback.from_user.id != owner_id:
         await callback.answer(texts.GIFT_ACTION_NOT_YOURS, show_alert=False)
         return
 
+    gift_name = await _gift_name_for_delivery(session, delivery_key)
     await callback.answer()
-    if callback.message is not None:
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
-        await callback.message.answer(texts.GIFT_KEPT.format(gift="подарок"))
+    await _edit_callback_message(
+        callback,
+        texts.GIFT_KEPT.format(gift=gift_name),
+    )
 
 
 @router.callback_query(F.data.startswith("gift:sell:"))
@@ -543,12 +562,7 @@ async def cb_gift_sell(callback: CallbackQuery, session: AsyncSession) -> None:
         text = texts.GIFT_SELL_NOT_FOUND
 
     await callback.answer()
-    if callback.message is not None:
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
-        await callback.message.answer(text)
+    await _edit_callback_message(callback, text)
 
 
 @router.callback_query(F.data.startswith("gift:withdraw:"))
@@ -586,36 +600,22 @@ async def cb_gift_withdraw(callback: CallbackQuery, session: AsyncSession) -> No
     if callback.message is None:
         return
 
+    gift_name = await _gift_name_for_delivery(session, delivery_key)
+
     if outcome.status == "completed":
-        # Успех — подарок отправлен, кнопки больше не нужны.
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
-        await callback.message.answer(texts.GIFT_WITHDRAW_SENT.format(gift="подарок"))
+        await _edit_callback_message(
+            callback, texts.GIFT_WITHDRAW_SENT.format(gift=gift_name)
+        )
     elif outcome.status == "skip":
-        # Уже обработана (продали/выдали ранее) — повторно ничего не делаем.
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
-        await callback.message.answer(texts.GIFT_WITHDRAW_NOT_PENDING)
+        await _edit_callback_message(callback, texts.GIFT_WITHDRAW_NOT_PENDING)
     elif outcome.status == "cancelled":
-        # Постоянная ошибка: доставка отменена, стоимость возвращена внутри
-        # deliver_gift. Кнопки убираем — повторять нечего.
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except TelegramBadRequest:
-            pass
-        await callback.message.answer(texts.GIFT_WITHDRAW_NOT_PENDING)
+        await _edit_callback_message(callback, texts.GIFT_WITHDRAW_NOT_PENDING)
     else:
         # pending (временная неудача): оставляем подарок, даём кнопку повтора.
         retry = gift_retry(delivery_key, owner_id, retry_label=texts.CASE_GIFT_RETRY_BTN)
-        try:
-            await callback.message.edit_reply_markup(reply_markup=retry)
-        except TelegramBadRequest:
-            pass
-        await callback.message.answer(texts.GIFT_WITHDRAW_PENDING.format(gift="подарок"))
+        await _edit_callback_message(
+            callback, texts.GIFT_WITHDRAW_PENDING.format(gift=gift_name), retry
+        )
 
 
 

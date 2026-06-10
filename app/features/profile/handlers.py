@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from aiogram import Router
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
+from app.core.keyboards import profile_shortcuts
 from app.models import User
 from app.settings import texts
 from app.settings.titles import get_title, get_next_title
@@ -106,14 +107,10 @@ async def _send_profile(message: Message, session: AsyncSession, user: User) -> 
     settings = get_settings()
     text = await render_profile(session, user)
 
-    profile_url = f"{settings.website_url}/profile/{user.user_id}"
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🌐 Открыть профиль на сайте", url=profile_url)]
-        ]
+    sent = await message.answer(
+        text,
+        reply_markup=profile_shortcuts(settings.website_url, user.user_id),
     )
-
-    sent = await message.answer(text, reply_markup=keyboard)
 
     # Автоудаление информационного сообщения (чистота чата).
     deletion = get_deletion_service()
@@ -123,6 +120,7 @@ async def _send_profile(message: Message, session: AsyncSession, user: User) -> 
         chat_id=message.chat.id,
         user_command_id=message.message_id,
         bot_message_id=sent.message_id,
+        ttl_seconds=180,
     )
 
 

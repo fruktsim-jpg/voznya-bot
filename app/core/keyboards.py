@@ -22,6 +22,71 @@ def open_on_site(label: str, url: str) -> InlineKeyboardMarkup:
     )
 
 
+def menu_shortcuts(base_url: str) -> InlineKeyboardMarkup:
+    """Компактные быстрые переходы для /меню и /help."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="👤 Профиль", url=f"{base_url}/profile/me"),
+                InlineKeyboardButton(text="🎒 Инвентарь", url=f"{base_url}/inventory"),
+            ],
+            [
+                InlineKeyboardButton(text="🎰 Кейсы", url=f"{base_url}/cases"),
+                InlineKeyboardButton(text="🎁 Подарки", url=f"{base_url}/gifts"),
+            ],
+            [
+                InlineKeyboardButton(text="🏆 Топы", url=f"{base_url}/live"),
+                InlineKeyboardButton(text="🌐 Сайт", url=base_url),
+            ],
+        ]
+    )
+
+
+def profile_shortcuts(base_url: str, user_id: int) -> InlineKeyboardMarkup:
+    """Профиль как ежедневный хаб: сайт, инвентарь, топы, кейсы, подарки."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🌐 Профиль на сайте", url=f"{base_url}/profile/{user_id}")],
+            [
+                InlineKeyboardButton(text="🎒 Инвентарь", url=f"{base_url}/inventory"),
+                InlineKeyboardButton(text="🏅 Ачивки", url=f"{base_url}/profile/{user_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🏆 Топы", url=f"{base_url}/live"),
+                InlineKeyboardButton(text="🎰 Кейсы", url=f"{base_url}/cases"),
+            ],
+            [InlineKeyboardButton(text="🎁 Подарки", url=f"{base_url}/gifts")],
+        ]
+    )
+
+
+def inventory_pagination(
+    page: int,
+    total_pages: int,
+    user_id: int,
+    inventory_url: str,
+) -> InlineKeyboardMarkup:
+    """Inline-пагинация собственного инвентаря + переход на сайт."""
+    rows: list[list[InlineKeyboardButton]] = []
+    page_buttons: list[InlineKeyboardButton] = []
+    if page > 1:
+        page_buttons.append(
+            InlineKeyboardButton(
+                text="◀️ Назад", callback_data=f"inv:page:{user_id}:{page - 1}"
+            )
+        )
+    if page < total_pages:
+        page_buttons.append(
+            InlineKeyboardButton(
+                text="▶️ Вперёд", callback_data=f"inv:page:{user_id}:{page + 1}"
+            )
+        )
+    if page_buttons:
+        rows.append(page_buttons)
+    rows.append([InlineKeyboardButton(text="🎒 Управлять на сайте", url=inventory_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def treasure_claim() -> InlineKeyboardMarkup:
 
     """Кнопка «Забрать клад» для сообщения о появлении клада.

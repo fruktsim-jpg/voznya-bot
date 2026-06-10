@@ -6,9 +6,12 @@ from aiogram import Router
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.filters import RuCommand
+from app.core.keyboards import menu_shortcuts
 from app.services.deletion import get_deletion_service
 from app.settings import texts
+from app.settings import balance
 
 router = Router(name="help")
 
@@ -21,7 +24,10 @@ async def cmd_help(message: Message, session: AsyncSession, command_args: str) -
     if user is None:
         return
     
-    sent = await message.answer(texts.HELP)
+    sent = await message.answer(
+        texts.HELP,
+        reply_markup=menu_shortcuts(get_settings().website_url),
+    )
     
     # Интеграция с системой "одно активное информационное окно"
     deletion = get_deletion_service()
@@ -31,4 +37,5 @@ async def cmd_help(message: Message, session: AsyncSession, command_args: str) -
         chat_id=message.chat.id,
         user_command_id=message.message_id,
         bot_message_id=sent.message_id,
+        ttl_seconds=balance.HELP_DELETE_AFTER,
     )

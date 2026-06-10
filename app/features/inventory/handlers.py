@@ -7,13 +7,13 @@
 
 from __future__ import annotations
 
-from aiogram import Router
-from aiogram.types import Message
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site
+from app.core.keyboards import inventory_pagination
 from app.core.money import money
 from app.core.targets import resolve_target
 
@@ -27,6 +27,40 @@ from app.settings.balance import ESHKI_PER_STAR, ITEM_SELL_RATE
 
 
 router = Router(name="inventory")
+
+
+async def _render_inventory_page(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    first_name: str | None,
+    username: str | None,
+    page: int,
+) -> tuple[str, int, int]:
+    """Returns inventory text, current page, and total pages for one player."""
+    total = await inv_repo.count_items(session, user_id)
+    distinct = await inv_repo.count_distinct_items(session, user_id)
+
+    page_size = inv_texts.PAGE_SIZE
+    pages = max(1, (distinct + page_size - 1) // page_size)
+    page = max(1, min(page, pages))
+    offset = (page - 1) * page_size
+
+    rows = await inv_repo.get_inventory(session, user_id, limit=page_size, offset=offset)
+    gifts = await gifts_repo.get_pending_gifts_for_user(session, user_id) if page == 1 else []
+
+    text = render_inventory(
+        rows,
+        total,
+        user_id=user_id,
+        first_name=first_name,
+        username=username,
+        page=page,
+        pages=pages,
+        has_gifts=bool(gifts),
+    )
+    text += _render_gifts_section(gifts)
+    return text, page, pages
 
 
 def _gift_value(gift) -> int:
@@ -92,39 +126,14 @@ async def cmd_inventory(
         first_name = sender.first_name
         username = sender.username
 
-    total = await inv_repo.count_items(session, user_id)
-    distinct = await inv_repo.count_distinct_items(session, user_id)
-
-    page_size = inv_texts.PAGE_SIZE
-    pages = max(1, (distinct + page_size - 1) // page_size)
-    page = min(_parse_page(command_args), pages)
-    offset = (page - 1) * page_size
-
-    rows = await inv_repo.get_inventory(
-        session, user_id, limit=page_size, offset=offset
-    )
-
-    # Подарки/Premium живут отдельно от стековых предметов (в gift_transactions,
-    # status='pending') — это та же сущность, что показывает сайт. Показываем их,
-    # чтобы инвентарь бота и сайта совпадал (единый источник правды). Только на
-    # первой странице, чтобы не дублировать на каждой.
-    gifts = (
-        await gifts_repo.get_pending_gifts_for_user(session, user_id)
-        if page == 1
-        else []
-    )
-
-    text = render_inventory(
-        rows,
-        total,
+    page = _parse_page(command_args)
+    text, page, pages = await _render_inventory_page(
+        session,
         user_id=user_id,
         first_name=first_name,
         username=username,
         page=page,
-        pages=pages,
-        has_gifts=bool(gifts),
     )
-    text += _render_gifts_section(gifts)
 
     # Site-first (Release 2.2): инвентарь в боте — быстрый просмотр, но основные
     # действия (продать/вывести/подарить/Premium) удобнее на сайте. Кнопку на
@@ -133,7 +142,7 @@ async def cmd_inventory(
     is_own = target is None or target.user_id == sender.id
     if is_own:
         url = f"{get_settings().website_url}/inventory"
-        markup = open_on_site(inv_texts.INV_SITE_BTN, url)
+        markup = inventory_pagination(page, pages, sender.id, url)
 
     sent = await message.answer(text, reply_markup=markup)
 
@@ -147,4 +156,33 @@ async def cmd_inventory(
         chat_id=message.chat.id,
         user_command_id=message.message_id,
         bot_message_id=sent.message_id,
+        ttl_seconds=180,
     )
+
+
+@router.callback_query(F.data.startswith("inv:page:"))
+async def cb_inventory_page(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Switches own inventory pages from inline buttons."""
+    if callback.from_user is None or callback.message is None or callback.data is None:
+        return
+
+    _, _, owner_id_raw, page_raw = callback.data.split(":", maxsplit=3)
+    owner_id = int(owner_id_raw)
+    if callback.from_user.id != owner_id:
+        await callback.answer("Это не твой инвентарь 🙅", show_alert=True)
+        return
+
+    page = int(page_raw)
+    text, page, pages = await _render_inventory_page(
+        session,
+        user_id=owner_id,
+        first_name=callback.from_user.first_name,
+        username=callback.from_user.username,
+        page=page,
+    )
+    url = f"{get_settings().website_url}/inventory"
+    await callback.message.edit_text(
+        text,
+        reply_markup=inventory_pagination(page, pages, owner_id, url),
+    )
+    await callback.answer()

@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.keyboards import open_on_site, top_pagination
 from app.core.money import money
+from app.core.responses import notify_and_cleanup
 
 from app.core.utils import display_name, format_marriage_duration_days, place_marker
 
@@ -132,7 +133,7 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
     deletion = get_deletion_service()
     
     if not top:
-        await message.answer(texts.WEEKLY_EMPTY)
+        await notify_and_cleanup(session, message, texts.WEEKLY_EMPTY)
         return
 
     rows = "\n".join(
@@ -177,7 +178,7 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
     deletion = get_deletion_service()
     
     if not marriages:
-        await message.answer(texts.TOP_FAMILIES_EMPTY)
+        await notify_and_cleanup(session, message, texts.TOP_FAMILIES_EMPTY)
         return
 
     lines: list[str] = []

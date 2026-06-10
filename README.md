@@ -8,6 +8,10 @@
 - **`v0-voznya`** — сайт и админ-панель на Next.js. По таблице `users` —
   **только чтение**; пишет лишь через явные админ-роуты и OIDC-флоу.
 
+Сводная документация по обеим кодовым базам находится в `../docs/`:
+`REPOSITORY_MAP.md`, `ARCHITECTURE.md`, `DATABASE.md`, `FEATURES.md`,
+`ADMIN.md`, `PROJECT_STATUS.md`, `DOCUMENTATION_DRIFT.md`.
+
 > Источник истины — код, а не документация. Этот README описывает фактическое
 > состояние на момент правки. Завершённые планы и одноразовые отчёты лежат в
 > `docs/archive/` и НЕ отражают актуальное состояние.
@@ -77,8 +81,8 @@
 
 ## Миграции
 
-Alembic, линейная цепочка `0001` → `0027` (HEAD на момент правки —
-`0027_deactivate_vagabond_case`). Применять:
+Alembic, линейная цепочка `0001` → `0035` (актуальный HEAD на момент
+консолидации документации — `0035_seed_season_1`). Применять:
 
 ```bash
 docker compose exec bot alembic current        # текущая ревизия
@@ -87,7 +91,8 @@ docker compose exec bot alembic downgrade -1    # откатить одну ре
 ```
 
 Точная цепочка — в `migrations/versions/`. Прошлые ревизии не переписываются,
-только добавляются новые поверх HEAD.
+только добавляются новые поверх HEAD. Сводка по таблицам и фазам миграций — в
+`../docs/DATABASE.md`.
 
 ---
 
@@ -125,6 +130,7 @@ PostgreSQL, прописать `DATABASE_URL`, затем `alembic upgrade head`
 - `docs/VOZNYA_RANKS.md`, `docs/VOZNYA_DICTIONARY.md` — справочники.
 - `docs/STARS_FLOW.md`, `docs/STARS_FUNDING_GUIDE.md` — Telegram Stars.
 - `docs/DEBUG_INSTRUCTIONS.md`, `docs/VPS_*.md` — операционные шпаргалки.
+- `../docs/*.md` — актуальная сводная документация по обеим кодовым базам.
 
 Историческое (НЕ источник истины): `docs/archive/` — завершённые планы,
 foundation-доки, аудиты и одноразовые отчёты.

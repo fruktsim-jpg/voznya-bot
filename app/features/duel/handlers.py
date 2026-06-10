@@ -120,6 +120,15 @@ async def _finish_duel(answerable, session: AsyncSession, result: DuelResult) ->
         await answerable.answer(format_rankup(loser_mention, result.loser_rankup))
 
 
+async def _edit_callback_message(callback: CallbackQuery, text: str) -> None:
+    if callback.message is None:
+        return
+    try:
+        await callback.message.edit_text(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @router.message(RuCommand("бой", "duel", "дуэль", "дуэлька"))
 async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -> None:
     """Обрабатывает вызов на дуэль: /бой @username ставка ИЛИ /бой ставка (открытый)."""
@@ -317,12 +326,8 @@ async def cb_duel_decline(callback: CallbackQuery, session: AsyncSession) -> Non
         await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
         return
 
-    # Убираем кнопки и сообщаем обеим сторонам, что бой не состоится.
+    # Закрываем вызов в том же сообщении, чтобы отказ не добавлял лишний пост.
     if callback.message is not None:
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:  # noqa: BLE001
-            pass
         decliner = await session.get(User, result.decliner_id)
         initiator = await session.get(User, result.initiator_id)
         decliner_mention = (
@@ -335,9 +340,10 @@ async def cb_duel_decline(callback: CallbackQuery, session: AsyncSession) -> Non
             if initiator
             else "Боец"
         )
-        await callback.message.answer(
+        await _edit_callback_message(
+            callback,
             texts.DUEL_DECLINED.format(
                 decliner=decliner_mention, initiator=initiator_mention
-            )
+            ),
         )
     await callback.answer()

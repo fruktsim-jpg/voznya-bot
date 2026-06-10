@@ -139,13 +139,10 @@ async def cb_gift_buy(callback: CallbackQuery, session: AsyncSession) -> None:
     внутри Telegram, при нажатии ведём игрока в магазин на сайте, а не списываем
     ешки. Конвейер `buy_gift`/`deliver_gift` остаётся только для сайта и админа.
     """
-    await callback.answer()
-    if callback.message is not None:
-        url = f"{get_settings().website_url}/gifts"
-        await callback.message.answer(
-            SHOP_SITE_CARD,
-            reply_markup=open_on_site(SHOP_SITE_BTN, url),
-        )
+    await callback.answer(
+        "Магазин теперь на сайте. Открой актуальную витрину через /магазин.",
+        show_alert=True,
+    )
 
 
 
@@ -186,7 +183,11 @@ async def cmd_my_gifts(message: Message, session: AsyncSession) -> None:
         status = MY_GIFTS_STATUS.get(d.status, d.status)
         item_label = names.get(d.item_code or "") or "подарок"
         lines.append(MY_GIFTS_ROW.format(item=item_label, status=status))
-    await message.answer("\n".join(lines))
+    url = f"{get_settings().website_url}/inventory"
+    await message.answer(
+        "\n".join(lines),
+        reply_markup=open_on_site("🎒 Управлять подарками", url),
+    )
 
 
 

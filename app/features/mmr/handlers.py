@@ -14,9 +14,12 @@ from aiogram import Router
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.filters import RuCommand
+from app.core.keyboards import open_on_site
 from app.core.utils import display_name, place_marker
 from app.repositories import mmr as mmr_repo
+from app.services.deletion import get_deletion_service
 from app.settings import mmr as mmr_texts
 
 router = Router(name="mmr")
@@ -41,10 +44,20 @@ async def cmd_mmr(
 
     mmr = await mmr_repo.get_mmr(session, target_id)
     rank = mmr_texts.get_rank(mmr)
-    await message.answer(
+    sent = await message.answer(
         mmr_texts.MMR_CARD.format(
             mmr=mmr, rank_emoji=rank.emoji, rank_name=rank.name
-        )
+        ),
+        reply_markup=open_on_site("🏆 Смотреть рейтинг", f"{get_settings().website_url}/live"),
+    )
+    deletion = get_deletion_service()
+    await deletion.schedule_info_message(
+        session,
+        user_id=user.id,
+        chat_id=message.chat.id,
+        user_command_id=message.message_id,
+        bot_message_id=sent.message_id,
+        ttl_seconds=180,
     )
 
 
@@ -55,7 +68,10 @@ async def cmd_top_mmr(
     """Показывает топ игроков по рейтингу."""
     top = await mmr_repo.top_by_mmr(session, mmr_texts.TOP_MMR_LIMIT)
     if not top:
-        await message.answer(mmr_texts.MMR_TOP_EMPTY)
+        await message.answer(
+            mmr_texts.MMR_TOP_EMPTY,
+            reply_markup=open_on_site("🏆 Рейтинги на сайте", f"{get_settings().website_url}/live"),
+        )
         return
 
     rows = "\n".join(
@@ -66,4 +82,7 @@ async def cmd_top_mmr(
         )
         for i, row in enumerate(top)
     )
-    await message.answer(mmr_texts.MMR_TOP_HEADER.format(rows=rows))
+    await message.answer(
+        mmr_texts.MMR_TOP_HEADER.format(rows=rows),
+        reply_markup=open_on_site("🏆 Рейтинги на сайте", f"{get_settings().website_url}/live"),
+    )

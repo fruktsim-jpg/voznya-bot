@@ -53,6 +53,15 @@ async def _finish_marriage(
             await check_award_and_notify(answerable, session, u.user_id, u.first_name, u.username)
 
 
+async def _edit_callback_message(callback: CallbackQuery, text: str) -> None:
+    if callback.message is None:
+        return
+    try:
+        await callback.message.edit_text(text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @router.message(RuCommand("жениться", "marry", "свадьба", "предложение"))
 async def cmd_marry(message: Message, session: AsyncSession, command_args: str) -> None:
 
@@ -167,13 +176,9 @@ async def cb_marry_decline(callback: CallbackQuery, session: AsyncSession) -> No
         return
 
     if callback.message is not None:
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:  # noqa: BLE001
-            pass
         target_mention = await _mention_of(session, result.target_id)
-        await callback.message.answer(
-            texts.MARRY_DECLINED.format(target=target_mention)
+        await _edit_callback_message(
+            callback, texts.MARRY_DECLINED.format(target=target_mention)
         )
     await callback.answer()
 
@@ -281,15 +286,12 @@ async def cb_divorce_confirm(callback: CallbackQuery, session: AsyncSession) -> 
     marriage.divorced_at = now_utc()
     
     if callback.message:
-        try:
-            await callback.message.edit_reply_markup(reply_markup=None)
-        except Exception:  # noqa: BLE001
-            pass
-        await callback.message.answer(
+        await _edit_callback_message(
+            callback,
             random.choice(texts.DIVORCE_DONE_VARIANTS).format(
                 first=mention(user_id, callback.from_user.first_name, callback.from_user.username),
                 second=await _mention_of(session, partner_id),
-            )
+            ),
         )
     await callback.answer()
 

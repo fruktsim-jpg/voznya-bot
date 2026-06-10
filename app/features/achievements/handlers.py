@@ -6,7 +6,9 @@ from aiogram import Router
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.core.filters import RuCommand
+from app.core.keyboards import open_on_site
 from app.core.targets import resolve_target
 from app.features.achievements.service import render_achievements_compact
 from app.repositories import users as users_repo
@@ -43,7 +45,11 @@ async def cmd_achievements(
     
     # Отправляем компактные ачивки (без кнопки)
     sent = await message.answer(
-        await render_achievements_compact(session, user_id, first_name, username)
+        await render_achievements_compact(session, user_id, first_name, username),
+        reply_markup=open_on_site(
+            "🏅 Полный прогресс на сайте",
+            f"{get_settings().website_url}/profile/{user_id}",
+        ),
     )
     
     # Автоудаление информационного сообщения
@@ -53,6 +59,7 @@ async def cmd_achievements(
         chat_id=message.chat.id,
         user_command_id=message.message_id,
         bot_message_id=sent.message_id,
+        ttl_seconds=180,
     )
 
 

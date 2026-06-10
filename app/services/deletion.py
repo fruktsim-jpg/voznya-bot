@@ -99,12 +99,13 @@ class DeletionService:
         chat_id: int,
         user_command_id: int,
         bot_message_id: int,
+        ttl_seconds: float | None = None,
     ) -> None:
         """Планирует удаление информационного сообщения.
         
         Автоматически удаляет предыдущую пару (команда + ответ)
-        этого пользователя в этом чате. Удаление только по замещению,
-        НЕ по таймеру.
+        этого пользователя в этом чате. Если передан ``ttl_seconds``, новая пара
+        также удалится по таймеру, не дожидаясь следующей информационной карточки.
         """
         key = (user_id, chat_id)
         prev_pair = self._last_info_messages.get(key)
@@ -124,6 +125,10 @@ class DeletionService:
         
         # Сохраняем новую пару
         self._last_info_messages[key] = (user_command_id, bot_message_id)
+
+        if ttl_seconds is not None and ttl_seconds > 0:
+            await self.schedule(session, chat_id, user_command_id, ttl_seconds)
+            await self.schedule(session, chat_id, bot_message_id, ttl_seconds)
 
     async def restore_pending(self) -> None:
         """Восстанавливает незавершённые удаления после рестарта бота."""
