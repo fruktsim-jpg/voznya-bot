@@ -28,3 +28,30 @@ async def notify_and_cleanup(
     await deletion.schedule(session, message.chat.id, message.message_id, 1)
     # Ответ бота — спустя заданное время.
     await deletion.schedule(session, reply.chat.id, reply.message_id, delete_after)
+
+
+async def send_leaderboard(
+    session: AsyncSession,
+    message: Message,
+    leaderboard_type: str,
+    text: str,
+    *,
+    reply_markup=None,
+) -> Message:
+    """Единый шаблон вывода рейтинга/топа (P1-11).
+
+    Все ранговые топы (богачи, неделя, семьи, MMR, репутация, сезон) держат
+    одно активное окно на чат и тип: новое окно заменяет предыдущее того же
+    типа, а команда игрока убирается из чата. Возвращает отправленное
+    сообщение бота, чтобы вызывающий код мог при необходимости его дополнить.
+    """
+    deletion = get_deletion_service()
+    sent = await message.answer(text, reply_markup=reply_markup)
+    await deletion.replace_leaderboard_message(
+        message.chat.id,
+        leaderboard_type,
+        message.message_id,
+        sent.message_id,
+    )
+    await deletion.schedule(session, message.chat.id, message.message_id, 1)
+    return sent

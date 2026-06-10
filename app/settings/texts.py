@@ -126,24 +126,21 @@ FARM_BALANCE = "\n💰 Баланс: <b>{balance}</b>"
 
 # --- Профиль (компактная карточка, без баров и больших блоков) --------------
 
-PROFILE = (
-    "👤 <b>{name}</b>\n"
-    "🏷 {title}\n"
-    "💰 {balance} (#{rank})\n"
-    "{duels}"
-    "📦 Клады: {treasures}\n"
-    "🏅 Ачивки: {ach_opened}/{ach_total}\n"
-    "{streak}"
-    "💍 {marital}"
-    "{progress}"
+# Единый источник правды для карточки /профиль (P1-20).
+# render_profile() в app/features/profile/handlers.py — единственный код,
+# который её собирает. Меняешь вид профиля — меняешь только эти строки.
+PROFILE_CARD = (
+    "👤 <b>Профиль — {name}</b>\n\n"
+    "{balance_line}\n"
+    "🏆 Титул: {title_emoji} <b>{title_name}</b>\n"
+    "🏅 MMR: <b>{mmr:,}</b> · {rank_emoji} <b>{rank_name}</b>\n"
+    "{marriage_line}\n"
+    "🎖 Ачивки: <b>{ach_opened}/{ach_total}</b>"
 )
-PROFILE_DUELS_COMPACT = "⚔️ Дуэли: {wins}-{losses}\n"
-PROFILE_DUELS_NONE = "⚔️ Дуэли: нет\n"
-PROFILE_STREAK = "🔥 Серия: {days} дней\n"
-PROFILE_PROGRESS = "\n🎯 До «{next_title}»: <b>{remaining}</b>"
-PROFILE_PROGRESS_MAX = "\n🏆 Макс. титул!"
-PROFILE_SINGLE = "Свободен"
-PROFILE_MARRIED = "в браке с {partner} ({duration})"
+PROFILE_BALANCE_LINE = "💰 Баланс: <b>{balance:,}</b> ешек"
+PROFILE_BALANCE_RANK_SUFFIX = " · #{rank} в топе"
+PROFILE_MARRIAGE_NONE = "💍 Брак: нет"
+PROFILE_MARRIAGE_ACTIVE = "💍 Брак: {partner} · {duration}"
 
 
 # --- Баланс ------------------------------------------------------------------

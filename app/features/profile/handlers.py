@@ -19,7 +19,11 @@ router = Router(name="profile")
 
 
 async def render_profile(session: AsyncSession, user: User) -> str:
-    """Формирует компактный ежедневный профиль-хаб."""
+    """Формирует компактный ежедневный профиль-хаб.
+
+    Единственный источник сборки карточки профиля (P1-20): шаблон живёт в
+    ``texts.PROFILE_CARD``, здесь только подставляются данные.
+    """
     from app.features.achievements.service import get_unlocked_codes
     from app.repositories import marriages as marriages_repo
     from app.repositories import users as users_repo
@@ -35,34 +39,36 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     rank = mmr_settings.get_rank(mmr_value)
 
     balance_rank = await users_repo.get_user_rank_by_balance(session, user.user_id)
-    balance_line = f"💰 Баланс: <b>{user.balance:,}</b> ешек"
+    balance_line = texts.PROFILE_BALANCE_LINE.format(balance=user.balance)
     if balance_rank is not None:
-        balance_line += f" · #{balance_rank} в топе"
-
-    lines = [
-        f"👤 <b>Профиль — {user.display_name()}</b>\n\n"
-        f"{balance_line}",
-        f"🏆 Титул: {title.emoji} <b>{title.name}</b>",
-        f"🏅 MMR: <b>{mmr_value:,}</b> · {rank.emoji} <b>{rank.name}</b>",
-    ]
+        balance_line += texts.PROFILE_BALANCE_RANK_SUFFIX.format(rank=balance_rank)
 
     marriage = await marriages_repo.get_active_marriage(session, user.user_id)
     if marriage is None:
-        lines.append("💍 Брак: нет")
+        marriage_line = texts.PROFILE_MARRIAGE_NONE
     else:
         partner_id = marriage.user_id_2 if marriage.user_id_1 == user.user_id else marriage.user_id_1
         partner = await session.get(User, partner_id)
         partner_name = display_name(partner.first_name, partner.username) if partner else "партнёр"
-        lines.append(
-            f"💍 Брак: {partner_name} · {format_marriage_duration_days(marriage.married_at)}"
+        marriage_line = texts.PROFILE_MARRIAGE_ACTIVE.format(
+            partner=partner_name,
+            duration=format_marriage_duration_days(marriage.married_at),
         )
 
     unlocked = await get_unlocked_codes(session, user.user_id)
-    total_achievements = len(ACHIEVEMENTS)
-    opened_achievements = len(unlocked)
-    lines.append(f"🎖 Ачивки: <b>{opened_achievements}/{total_achievements}</b>")
 
-    return "\n".join(lines)
+    return texts.PROFILE_CARD.format(
+        name=user.display_name(),
+        balance_line=balance_line,
+        title_emoji=title.emoji,
+        title_name=title.name,
+        mmr=mmr_value,
+        rank_emoji=rank.emoji,
+        rank_name=rank.name,
+        marriage_line=marriage_line,
+        ach_opened=len(unlocked),
+        ach_total=len(ACHIEVEMENTS),
+    )
 
 
 

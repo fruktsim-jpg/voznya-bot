@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site, supports_web_app
-from app.core.responses import notify_and_cleanup
+from app.core.keyboards import ranking_site_button
+from app.core.responses import notify_and_cleanup, send_leaderboard
 from app.core.utils import display_name, place_marker
 from app.features.season import service as season_service
 from app.repositories import season as season_repo
@@ -71,10 +71,8 @@ async def cmd_season(
             div_name=div.name,
             days_left=days_left,
         ),
-        reply_markup=open_on_site(
-            "🗓 Сезон на сайте",
-            season_url,
-            prefer_web_app=supports_web_app(message.chat.type),
+        reply_markup=ranking_site_button(
+            "🗓 Сезон на сайте", season_url, message.chat.type
         ),
     )
     deletion = get_deletion_service()
@@ -133,10 +131,10 @@ async def cmd_missions(
         )
     sent = await message.answer(
         "\n".join(lines),
-        reply_markup=open_on_site(
+        reply_markup=ranking_site_button(
             "🗓 Миссии на сайте",
             f"{get_settings().website_url}/season",
-            prefer_web_app=supports_web_app(message.chat.type),
+            message.chat.type,
         ),
     )
     deletion = get_deletion_service()
@@ -169,22 +167,17 @@ async def cmd_top_season(
         f"{row.season_mmr:,} MMR ({cfg.get_division(row.season_mmr).name})"
         for i, row in enumerate(top)
     )
-    sent = await message.answer(
+    await send_leaderboard(
+        session,
+        message,
+        "season",
         f"🏆 <b>Сезонный топ</b>\n\n{rows}",
-        reply_markup=open_on_site(
+        reply_markup=ranking_site_button(
             "🗓 Сезон на сайте",
             f"{get_settings().website_url}/season",
-            prefer_web_app=supports_web_app(message.chat.type),
+            message.chat.type,
         ),
     )
-    deletion = get_deletion_service()
-    await deletion.replace_leaderboard_message(
-        message.chat.id,
-        "season",
-        message.message_id,
-        sent.message_id,
-    )
-    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 
 # --- Админские команды управления сезоном -----------------------------------

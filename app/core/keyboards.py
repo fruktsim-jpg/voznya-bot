@@ -91,6 +91,19 @@ def open_on_site(label: str, url: str, *, prefer_web_app: bool = False) -> Inlin
     return InlineKeyboardMarkup(inline_keyboard=[[_app_button(label, url, prefer_web_app=prefer_web_app)]])
 
 
+def ranking_site_button(
+    label: str, url: str, chat_type: str | None
+) -> InlineKeyboardMarkup:
+    """Site-CTA для ранговых топов (P1-11).
+
+    Единый источник кнопки «открыть рейтинг на сайте»: в личке использует
+    Mini App, в группах — обычную URL-кнопку. Заменяет повторяющееся
+    ``open_on_site(label, url, prefer_web_app=supports_web_app(chat_type))``
+    во всех хендлерах рейтингов.
+    """
+    return open_on_site(label, url, prefer_web_app=supports_web_app(chat_type))
+
+
 def menu_shortcuts(base_url: str, *, prefer_web_app: bool = False) -> InlineKeyboardMarkup:
     """Компактные быстрые переходы для /меню и /help."""
     return InlineKeyboardMarkup(

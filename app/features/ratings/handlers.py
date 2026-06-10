@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site, supports_web_app, top_pagination
+from app.core.keyboards import ranking_site_button, top_pagination
 from app.core.money import money
-from app.core.responses import notify_and_cleanup
+from app.core.responses import notify_and_cleanup, send_leaderboard
 
 from app.core.utils import display_name, format_marriage_duration_days, place_marker
 
@@ -18,7 +18,6 @@ from app.models import User
 from app.repositories import economy as economy_repo
 from app.repositories import marriages as marriages_repo
 from app.repositories import users as users_repo
-from app.services.deletion import get_deletion_service
 from app.settings import balance, texts
 
 router = Router(name="ratings")
@@ -69,17 +68,8 @@ async def render_top(session: AsyncSession, page: int) -> tuple[str, int]:
 async def cmd_top(message: Message, session: AsyncSession, command_args: str) -> None:
     """Рейтинг богатства: /топ."""
     text, total_pages = await render_top(session, page=1)
-    deletion = get_deletion_service()
-
     markup = top_pagination(1, total_pages) if total_pages > 1 else None
-    sent = await message.answer(text, reply_markup=markup)
-    await deletion.replace_leaderboard_message(
-        message.chat.id,
-        "balance",
-        message.message_id,
-        sent.message_id,
-    )
-    await deletion.schedule(session, message.chat.id, message.message_id, 1)
+    await send_leaderboard(session, message, "balance", text, reply_markup=markup)
 
 
 @router.callback_query(F.data.startswith("top:page:"))
@@ -106,9 +96,7 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
     top = await economy_repo.weekly_top_earners(
         session, balance.WEEKLY_DAYS, balance.TOP_WEEKLY_LIMIT
     )
-    
-    deletion = get_deletion_service()
-    
+
     if not top:
         await notify_and_cleanup(session, message, texts.WEEKLY_EMPTY)
         return
@@ -124,21 +112,15 @@ async def cmd_weekly(message: Message, session: AsyncSession, command_args: str)
     )
     # Site-first: CTA на полную статистику сайта (рейтинги/аналитика глубже).
     stats_url = f"{get_settings().website_url}/live"
-    sent = await message.answer(
+    await send_leaderboard(
+        session,
+        message,
+        "weekly",
         texts.WEEKLY_HEADER.format(rows=rows),
-        reply_markup=open_on_site(
-            texts.TOP_STATS_SITE_BTN,
-            stats_url,
-            prefer_web_app=supports_web_app(message.chat.type),
+        reply_markup=ranking_site_button(
+            texts.TOP_STATS_SITE_BTN, stats_url, message.chat.type
         ),
     )
-    await deletion.replace_leaderboard_message(
-        message.chat.id,
-        "weekly",
-        message.message_id,
-        sent.message_id,
-    )
-    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 
 @router.message(RuCommand("семьи", "families", "браки", "свадьбы"))
@@ -148,9 +130,7 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
     marriages = await marriages_repo.top_longest_marriages(
         session, balance.TOP_FAMILIES_LIMIT
     )
-    
-    deletion = get_deletion_service()
-    
+
     if not marriages:
         await notify_and_cleanup(session, message, texts.TOP_FAMILIES_EMPTY)
         return
@@ -169,18 +149,12 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
             )
         )
     families_url = f"{get_settings().website_url}/live"
-    sent = await message.answer(
+    await send_leaderboard(
+        session,
+        message,
+        "families",
         texts.TOP_FAMILIES_HEADER.format(rows="\n".join(lines)),
-        reply_markup=open_on_site(
-            texts.TOP_STATS_SITE_BTN,
-            families_url,
-            prefer_web_app=supports_web_app(message.chat.type),
+        reply_markup=ranking_site_button(
+            texts.TOP_STATS_SITE_BTN, families_url, message.chat.type
         ),
     )
-    await deletion.replace_leaderboard_message(
-        message.chat.id,
-        "families",
-        message.message_id,
-        sent.message_id,
-    )
-    await deletion.schedule(session, message.chat.id, message.message_id, 1)

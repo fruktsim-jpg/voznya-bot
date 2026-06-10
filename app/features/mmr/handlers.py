@@ -16,10 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site, supports_web_app
+from app.core.keyboards import ranking_site_button
+from app.core.responses import send_leaderboard
 from app.core.utils import display_name, place_marker
 from app.repositories import mmr as mmr_repo
-from app.services.deletion import get_deletion_service
 from app.settings import mmr as mmr_texts
 
 router = Router(name="mmr")
@@ -52,24 +52,19 @@ async def cmd_mmr(
             f"\n\n➡️ Следующий ранг: {next_rank.emoji} {next_rank.name}"
             f"\n📊 Осталось: {next_rank.min_mmr - mmr:,} MMR"
         )
-    sent = await message.answer(
+    await send_leaderboard(
+        session,
+        message,
+        "mmr",
         mmr_texts.MMR_CARD.format(
             mmr=mmr, rank_emoji=rank.emoji, rank_name=rank.name, progress=progress
         ),
-        reply_markup=open_on_site(
+        reply_markup=ranking_site_button(
             "🏆 Смотреть рейтинг",
             f"{get_settings().website_url}/live",
-            prefer_web_app=supports_web_app(message.chat.type),
+            message.chat.type,
         ),
     )
-    deletion = get_deletion_service()
-    await deletion.replace_leaderboard_message(
-        message.chat.id,
-        "mmr",
-        message.message_id,
-        sent.message_id,
-    )
-    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 
 @router.message(RuCommand("топммр", "topmmr"))
@@ -81,10 +76,10 @@ async def cmd_top_mmr(
     if not top:
         await message.answer(
             mmr_texts.MMR_TOP_EMPTY,
-            reply_markup=open_on_site(
+            reply_markup=ranking_site_button(
                 "🏆 Рейтинги на сайте",
                 f"{get_settings().website_url}/live",
-                prefer_web_app=supports_web_app(message.chat.type),
+                message.chat.type,
             ),
         )
         return
@@ -97,19 +92,14 @@ async def cmd_top_mmr(
         )
         for i, row in enumerate(top)
     )
-    sent = await message.answer(
+    await send_leaderboard(
+        session,
+        message,
+        "mmr_top",
         mmr_texts.MMR_TOP_HEADER.format(rows=rows),
-        reply_markup=open_on_site(
+        reply_markup=ranking_site_button(
             "🏆 Рейтинги на сайте",
             f"{get_settings().website_url}/live",
-            prefer_web_app=supports_web_app(message.chat.type),
+            message.chat.type,
         ),
     )
-    deletion = get_deletion_service()
-    await deletion.replace_leaderboard_message(
-        message.chat.id,
-        "mmr_top",
-        message.message_id,
-        sent.message_id,
-    )
-    await deletion.schedule(session, message.chat.id, message.message_id, 1)

@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.filters import RuCommand
-from app.core.keyboards import open_on_site, supports_web_app
+from app.core.keyboards import ranking_site_button
+from app.core.responses import send_leaderboard
 from app.core.utils import display_name, format_cooldown, mention, place_marker
 from app.features.reputation.service import apply_reputation, classify
 from app.repositories import reputation as rep_repo
@@ -125,10 +126,10 @@ async def cmd_reputation(
         rep_texts.REP_CARD.format(
             score=summary.score, plus=summary.plus, minus=summary.minus
         ),
-        reply_markup=open_on_site(
+        reply_markup=ranking_site_button(
             "🏆 Топ репутации",
             f"{get_settings().website_url}/live",
-            prefer_web_app=supports_web_app(message.chat.type),
+            message.chat.type,
         ),
     )
     deletion = get_deletion_service()
@@ -153,10 +154,10 @@ async def cmd_top_reputation(
     if not top:
         await message.answer(
             rep_texts.REP_TOP_EMPTY,
-            reply_markup=open_on_site(
+            reply_markup=ranking_site_button(
                 "🏆 Рейтинги на сайте",
                 f"{get_settings().website_url}/live",
-                prefer_web_app=supports_web_app(message.chat.type),
+                message.chat.type,
             ),
         )
         return
@@ -169,21 +170,16 @@ async def cmd_top_reputation(
         )
         for i, row in enumerate(top)
     )
-    sent = await message.answer(
+    await send_leaderboard(
+        session,
+        message,
+        "reputation",
         rep_texts.REP_TOP_HEADER.format(rows=rows),
-        reply_markup=open_on_site(
+        reply_markup=ranking_site_button(
             "🏆 Рейтинги на сайте",
             f"{get_settings().website_url}/live",
-            prefer_web_app=supports_web_app(message.chat.type),
+            message.chat.type,
         ),
     )
-    deletion = get_deletion_service()
-    await deletion.replace_leaderboard_message(
-        message.chat.id,
-        "reputation",
-        message.message_id,
-        sent.message_id,
-    )
-    await deletion.schedule(session, message.chat.id, message.message_id, 1)
 
 

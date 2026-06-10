@@ -104,10 +104,6 @@ MMR_TOP_HEADER = "🏆 <b>Кто дальше всех зашёл</b>\n\n{rows}"
 MMR_TOP_ROW = "{place} {mention} — {mmr:,} MMR"
 MMR_TOP_EMPTY = "🏆 Тут пока пусто. Клад, дуэли, ферма и ачивки двигают тебя по миру — погнали."
 
-# Строки для карточки профиля (вставляются в /профиль).
-PROFILE_MMR_LINE = "🏆 MMR: <b>{mmr:,}</b>\n"
-PROFILE_RANK_LINE = "🎖 Ранг: {rank_emoji} <b>{rank_name}</b>\n"
-
 # Повышение ранга — событие пути. Пул вариантов (выбирается случайный).
 # {mention} — игрок, {rank_emoji}/{rank_name} — новый ранг.
 MMR_RANKUP_VARIANTS = [
