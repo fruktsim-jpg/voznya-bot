@@ -7,7 +7,7 @@ Callback-данные имеют единый формат ``<feature>:<action>:
 
 from __future__ import annotations
 
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
@@ -16,21 +16,64 @@ def _app_button(label: str, url: str, *, prefer_web_app: bool = False) -> Inline
     """Returns a Mini App button when supported, otherwise a normal URL button."""
     if prefer_web_app:
         return InlineKeyboardButton(text=label, web_app=WebAppInfo(url=_miniapp_url(url)))
-    return InlineKeyboardButton(text=label, url=url)
+    return InlineKeyboardButton(text=label, url=_miniapp_deep_link(url) or url)
+
+
+def _next_path_from_url(url: str) -> tuple[str, str] | None:
+    parsed = urlsplit(url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    next_path = parsed.path or "/"
+    if parsed.query:
+        next_path = f"{next_path}?{parsed.query}"
+    return origin, next_path
 
 
 def _miniapp_url(url: str) -> str:
     """Wraps an app URL through /miniapp so Telegram initData can create a session."""
     if "/miniapp" in url:
         return url
-    try:
-        scheme, rest = url.split("://", maxsplit=1)
-        host, _, path = rest.partition("/")
-    except ValueError:
+    parsed = _next_path_from_url(url)
+    if parsed is None:
         return url
-    origin = f"{scheme}://{host}"
-    next_path = f"/{path}" if path else "/"
+    origin, next_path = parsed
     return f"{origin}/miniapp?next={quote(next_path, safe='')}"
+
+
+def _startapp_payload(url: str) -> str | None:
+    parsed = _next_path_from_url(url)
+    if parsed is None:
+        return None
+    _, next_path = parsed
+    path = next_path.split("?", maxsplit=1)[0].rstrip("/") or "/"
+    if path == "/inventory":
+        return "inventory"
+    if path == "/cases":
+        return "cases"
+    if path == "/gifts":
+        return "gifts"
+    if path.startswith("/profile/"):
+        profile_id = path.removeprefix("/profile/")
+        if profile_id == "me" or profile_id.isdigit():
+            return f"profile_{profile_id}"
+    return None
+
+
+def _miniapp_deep_link(url: str) -> str | None:
+    """Returns a Telegram Mini App direct link for group URL buttons when configured."""
+    payload = _startapp_payload(url)
+    if payload is None:
+        return None
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    bot_username = settings.bot_username.strip().lstrip("@")
+    app_name = settings.mini_app_short_name.strip().strip("/")
+    if not bot_username or not app_name:
+        return None
+    return f"https://t.me/{bot_username}/{app_name}?startapp={quote(payload, safe='-_')}"
 
 
 def supports_web_app(chat_type: str | None) -> bool:

@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     # Telegram
     bot_token: str
     chat_id: int
+    bot_username: str = ""
+    mini_app_short_name: str = ""
     # Список ID администраторов хранится строкой «1,2,3» (разбирается ниже),
     # чтобы pydantic не пытался интерпретировать значение как JSON.
     admin_ids_raw: str = Field(default="", validation_alias="ADMIN_IDS")
