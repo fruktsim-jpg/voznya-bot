@@ -32,6 +32,7 @@ from app.models.pending_action import (
 from app.services import cooldowns
 from app.services.economy import change_balance
 from app.settings import balance
+from app.settings import dynamic
 from app.settings import mmr as mmr_settings
 
 
@@ -245,9 +246,11 @@ async def accept_challenge(
     pending.status = STATUS_ACCEPTED
 
     # Кулдаун дуэли ставится здесь — только теперь бой реально состоялся.
-    # Обоим участникам, чтобы спам-замесами не заваливали чат.
-    await cooldowns.set_cooldown(session, initiator_id, "duel", balance.COOLDOWNS["duel"])
-    await cooldowns.set_cooldown(session, confirmer_id, "duel", balance.COOLDOWNS["duel"])
+    # Обоим участникам, чтобы спам-замесами не заваливали чат. Длительность
+    # редактируется из админки (app_settings: duel.cooldown).
+    duel_cd = await dynamic.get_int(session, "duel.cooldown", balance.COOLDOWNS["duel"])
+    await cooldowns.set_cooldown(session, initiator_id, "duel", duel_cd)
+    await cooldowns.set_cooldown(session, confirmer_id, "duel", duel_cd)
 
     return DuelResult(
 

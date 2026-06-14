@@ -31,7 +31,7 @@ from app.features.duel.service import (
 )
 
 from app.models import User
-from app.settings import balance, texts
+from app.settings import balance, dynamic, texts
 
 router = Router(name="duel")
 
@@ -178,6 +178,11 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
     """Обрабатывает вызов на дуэль: /бой @username ставка ИЛИ /бой ставка (открытый)."""
     user = message.from_user
     if user is None:
+        return
+
+    # Kill-switch из админки (app_settings: duel.enabled). По умолчанию вкл.
+    if not await dynamic.get_bool(session, "duel.enabled", True):
+        await notify_and_cleanup(session, message, texts.DUEL_DISABLED)
         return
 
     # Пробуем распарсить цель: reply или @username

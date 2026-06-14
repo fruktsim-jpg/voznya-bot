@@ -16,7 +16,7 @@ from app.core.utils import farm_day, now_utc
 from app.models import User
 from app.services import cooldowns
 from app.services.economy import change_balance
-from app.settings import balance
+from app.settings import balance, dynamic
 
 
 @dataclass
@@ -124,7 +124,9 @@ async def do_farm(session: AsyncSession, user_id: int) -> FarmResult:
     if new_streak > user.max_farm_streak:
         user.max_farm_streak = new_streak
 
-    await cooldowns.set_cooldown(session, user_id, "farm", balance.COOLDOWNS["farm"])
+    # Кулдаун фермы редактируется из админки (app_settings: farm.cooldown).
+    farm_cd = await dynamic.get_int(session, "farm.cooldown", balance.COOLDOWNS["farm"])
+    await cooldowns.set_cooldown(session, user_id, "farm", farm_cd)
 
     return FarmResult(
         on_cooldown=False,

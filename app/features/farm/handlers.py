@@ -15,7 +15,7 @@ from app.core.responses import notify_and_cleanup
 from app.core.utils import format_cooldown, mention
 from app.features.achievements.service import check_and_award, format_unlock_notification
 from app.features.farm.service import do_farm
-from app.settings import texts
+from app.settings import dynamic, texts
 
 router = Router(name="farm")
 
@@ -44,6 +44,11 @@ async def cmd_farm(message: Message, session: AsyncSession, command_args: str) -
     """Обрабатывает команду /ферма."""
     user = message.from_user
     if user is None:
+        return
+
+    # Kill-switch из админки (app_settings: farm.enabled). По умолчанию вкл.
+    if not await dynamic.get_bool(session, "farm.enabled", True):
+        await notify_and_cleanup(session, message, texts.FARM_DISABLED)
         return
 
     result = await do_farm(session, user.id)

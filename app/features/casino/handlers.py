@@ -78,6 +78,12 @@ async def cmd_casino(message: Message, session: AsyncSession, command_args: str)
     if user is None:
         return
 
+    # Kill-switch из админки (app_settings: casino.enabled). По умолчанию вкл.
+    # Позволяет выключить казино без деплоя — бот читает значение через dynamic.
+    if not await dynamic.get_bool(session, "casino.enabled", True):
+        await notify_and_cleanup(session, message, texts.CASINO_DISABLED)
+        return
+
     arg = command_args.split()[0] if command_args else ""
     if not arg:
         await notify_and_cleanup(session, message, texts.CASINO_USAGE)

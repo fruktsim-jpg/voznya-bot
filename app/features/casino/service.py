@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import User
 from app.services import cooldowns
 from app.services.economy import change_balance
-from app.settings import balance
+from app.settings import balance, dynamic
 
 
 @dataclass
@@ -75,7 +75,12 @@ async def play_casino(session: AsyncSession, user_id: int, bet: int) -> CasinoRe
     else:
         user.casino_loss_streak = 0
 
-    await cooldowns.set_cooldown(session, user_id, "casino", balance.COOLDOWNS["casino"])
+    # Кулдаун казино редактируется из админки (app_settings: casino.cooldown);
+    # если ключа нет — дефолт из balance.COOLDOWNS.
+    casino_cd = await dynamic.get_int(
+        session, "casino.cooldown", balance.COOLDOWNS["casino"]
+    )
+    await cooldowns.set_cooldown(session, user_id, "casino", casino_cd)
 
     return CasinoResult(
         status="done",
