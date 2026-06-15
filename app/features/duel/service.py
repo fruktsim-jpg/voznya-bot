@@ -167,7 +167,8 @@ async def accept_challenge(
     assert initiator is not None and confirmer is not None
 
     if confirmer.balance < amount:
-        pending.status = STATUS_EXPIRED
+        # Недостаток ешек у принимающего не должен закрывать открытый вызов:
+        # иначе любой бедный игрок мог нажать кнопку и погасить бой для всего чата.
         return DuelResult(
             status="target_poor",
             balance=confirmer.balance,
