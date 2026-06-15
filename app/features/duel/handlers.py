@@ -364,21 +364,10 @@ async def cb_duel_accept(callback: CallbackQuery, session: AsyncSession) -> None
         await callback.answer(texts.CB_NOT_YOURS, show_alert=True)
         return
     if result.status == "target_poor":
-        if callback.message is not None:
-            await _warn_and_cleanup_failed_duel(
-                session,
-                callback.message,
-                texts.DUEL_TARGET_POOR.format(
-                    mention=mention(
-                        callback.from_user.id,
-                        callback.from_user.first_name,
-                        callback.from_user.username,
-                    ),
-                    balance=money(result.balance),
-                ),
-                request_message_id=callback.message.message_id,
-            )
-        await callback.answer()
+        await callback.answer(
+            f"Не хватает ешек на этот бой. У тебя {money(result.balance)}.",
+            show_alert=True,
+        )
         return
     if result.status == "initiator_poor":
         if callback.message is not None:
