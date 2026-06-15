@@ -379,6 +379,8 @@ def _render_failure(result: OpenResult) -> str | None:
         return texts.CASE_OPEN_NOT_ENOUGH.format(name=result.case_name)
     if result.status == "inactive":
         return texts.CASE_OPEN_INACTIVE.format(name=result.case_name)
+    if result.status == "disabled":
+        return texts.CASE_OPEN_DISABLED
     if result.status in ("not_found",):
         return texts.CASE_NOT_FOUND
     if result.status != "ok":

@@ -158,7 +158,16 @@ async def claim_daily(session: AsyncSession, user_id: int) -> DailyResult:
     if await season_repo.has_claimed_today(session, user_id=user_id, today=today):
         return DailyResult(claimed=False, already=True, amount=0, streak=streak)
 
-    amount = cfg.daily_reward_for_streak(streak)
+    # Размер награды: по умолчанию зависит от дня серии (daily_reward_for_streak).
+    # Админка может задать ПЛОСКИЙ размер через app_settings: daily.reward —
+    # тогда он переопределяет стрик-таблицу. Сентинел -1 = ключ не задан.
+    from app.settings import dynamic
+
+    override = await dynamic.get_int(session, "daily.reward", -1)
+    if override >= 0:
+        amount = override
+    else:
+        amount = cfg.daily_reward_for_streak(streak)
     await change_balance(
         session,
         user_id,

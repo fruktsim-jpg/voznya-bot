@@ -73,11 +73,18 @@ async def do_farm(session: AsyncSession, user_id: int) -> FarmResult:
     new_streak = _compute_streak(user, today)
     bonus = _streak_bonus(new_streak)
 
+    # Глобальный бонус к доходу фермы из админки (app_settings: farm.bonus).
+    # 0 = без прибавки; 0.25 = +25%. Суммируется со стрик-бонусом и применяется
+    # только к положительной награде. Дефолт 0.0 (ничего не меняет).
+    farm_bonus = await dynamic.get_float(session, "farm.bonus", 0.0)
+    if farm_bonus < 0:
+        farm_bonus = 0.0
+
     outcome = _pick_outcome()
     base = random.randint(outcome["min"], outcome["max"])
 
     if base > 0:
-        amount = int(round(base * (1 + bonus)))
+        amount = int(round(base * (1 + bonus + farm_bonus)))
     elif base < 0:
         # Нельзя уйти в минус — теряем не больше, чем есть на балансе.
         amount = -min(-base, user.balance)

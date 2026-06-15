@@ -46,6 +46,7 @@ REWARD_KINDS_OPENABLE = ("item", "currency", "tg_gift")
 from app.repositories import cases as cases_repo
 from app.services.economy import change_balance_tx
 from app.services.inventory_grant import consume_item
+from app.settings import dynamic
 
 
 
@@ -53,7 +54,7 @@ from app.services.inventory_grant import consume_item
 class OpenResult:
     """Итог открытия кейса для рендера в хендлере."""
 
-    status: str  # "ok" | "not_found" | "inactive" | "no_key" | "not_enough" | "empty" | "error"
+    status: str  # "ok" | "not_found" | "inactive" | "disabled" | "no_key" | "not_enough" | "empty" | "error"
     case_name: str = ""
     reward_kind: str = ""
     reward_item_code: str | None = None
@@ -78,17 +79,40 @@ class OpenResult:
 
 
 
-def _pick_reward(rewards: list[CaseReward]) -> tuple[CaseReward, int, int]:
+def _is_rare_reward(r: CaseReward) -> bool:
+    """Считается ли награда «редкой» для глобального множителя дропа.
+
+    Редкими считаем джекпоты и лимитированные награды (ограниченный supply) —
+    именно их шанс поднимает app_settings: modifier.drop. Обычные строки
+    дроп-листа множитель не трогает.
+    """
+    return bool(r.is_jackpot) or r.max_global_supply is not None
+
+
+def _pick_reward(
+    rewards: list[CaseReward], drop_mult: float = 1.0
+) -> tuple[CaseReward, int, int]:
     """Взвешенный выбор награды. Возвращает (награда, roll, сумма весов).
 
     ``roll`` — целое в [0, total_weight); выбор — по накопительной сумме весов.
     Используется ``secrets`` (CSPRNG) — не предсказуемо игроком.
+
+    ``drop_mult`` (app_settings: modifier.drop) поднимает ЭФФЕКТИВНЫЙ вес редких
+    наград (джекпоты/лимитки) на время выбора. 1.0 = без эффекта. Веса в БД и
+    снапшот леджера не меняются — масштабируется только локальная копия.
     """
-    total = sum(r.weight for r in rewards)
+    if drop_mult and drop_mult > 0 and drop_mult != 1.0:
+        eff_weights = [
+            max(1, int(round(r.weight * drop_mult))) if _is_rare_reward(r) else r.weight
+            for r in rewards
+        ]
+    else:
+        eff_weights = [r.weight for r in rewards]
+    total = sum(eff_weights)
     roll = secrets.randbelow(total)
     acc = 0
-    for r in rewards:
-        acc += r.weight
+    for r, w in zip(rewards, eff_weights):
+        acc += w
         if roll < acc:
             return r, roll, total
     # Теоретически недостижимо (roll < total): подстраховка — последняя строка.
@@ -115,6 +139,12 @@ async def open_case(
     case = await cases_repo.get_case_by_item_code(session, case_item_code)
     if case is None:
         return OpenResult(status="not_found")
+
+    # Глобальный kill-switch кейсов из админки (app_settings: cases.enabled).
+    # По умолчанию включено. Останавливает открытие во ВСЕХ каналах (бот/сайт),
+    # так как это единая атомарная точка выдачи. Per-case is_active — ниже.
+    if not await dynamic.get_bool(session, "cases.enabled", True):
+        return OpenResult(status="disabled", case_name=case.name)
 
     now = datetime.now(timezone.utc)
     if not case.is_active:
@@ -161,7 +191,10 @@ async def open_case(
         # исключение → rollback (ничего ещё не списано, но кейс мисконфигурён).
         raise RuntimeError(f"case '{case_item_code}' has no available rewards")
 
-    reward, roll, total_weight = _pick_reward(rewards)
+    # Глобальный множитель шанса редкого дропа из админки (app_settings:
+    # modifier.drop). 1.0 = без эффекта; поднимает эффективный вес джекпотов/лимиток.
+    drop_mult = await dynamic.get_float(session, "modifier.drop", 1.0)
+    reward, roll, total_weight = _pick_reward(rewards, drop_mult)
     qty = (
         reward.min_qty
         if reward.min_qty == reward.max_qty

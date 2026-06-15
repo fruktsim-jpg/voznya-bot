@@ -40,7 +40,9 @@ from app.services.telegram_gifts import DeliveryResult, send_gift
 from app.settings.balance import ESHKI_PER_STAR, ITEM_SELL_RATE
 
 
-def _case_prize_value(delivery: GiftTransaction, gift: GiftCatalog | None) -> int:
+def _case_prize_value(
+    delivery: GiftTransaction, gift: GiftCatalog | None, eshki_per_star: int = ESHKI_PER_STAR
+) -> int:
     """Внутренняя стоимость кейсового приза в ешках (для компенсации возврата).
 
     Вариант А (см. RELEASE 2.1 / P0): возвращаем ПОЛНУЮ внутреннюю стоимость
@@ -48,16 +50,21 @@ def _case_prize_value(delivery: GiftTransaction, gift: GiftCatalog | None) -> in
     каталог, затем слепок в ``meta`` доставки (на случай, если позицию каталога
     удалили/переименовали после выпадения). 0 — только если стоимость нигде не
     известна (тогда компенсации не будет, но и отрицательной не уйдём).
+
+    ``eshki_per_star`` может быть переопределён из админки (app_settings:
+    economy.eshki_per_star); по умолчанию — код-дефолт ESHKI_PER_STAR.
     """
     star_cost = 0
     if gift is not None:
         star_cost = int(gift.star_cost or 0)
     if star_cost <= 0:
         star_cost = int((delivery.meta or {}).get("star_cost") or 0)
-    return max(0, star_cost) * ESHKI_PER_STAR
+    return max(0, star_cost) * eshki_per_star
 
 
-def _item_full_value(delivery: GiftTransaction, gift: GiftCatalog | None) -> int:
+def _item_full_value(
+    delivery: GiftTransaction, gift: GiftCatalog | None, eshki_per_star: int = ESHKI_PER_STAR
+) -> int:
     """Полная стоимость предмета в ешках — ЕДИНАЯ база для продажи (P5/Release 2.2).
 
     Один понятный игроку курс независимо от источника предмета: базой всегда
@@ -72,18 +79,22 @@ def _item_full_value(delivery: GiftTransaction, gift: GiftCatalog | None) -> int
     """
     if gift is not None and (gift.price_eshki or 0) > 0:
         return int(gift.price_eshki)
-    return _case_prize_value(delivery, gift)
+    return _case_prize_value(delivery, gift, eshki_per_star)
 
 
 
-def _sell_value(full_value: int) -> int:
+def _sell_value(full_value: int, sell_rate: float = ITEM_SELL_RATE) -> int:
     """Сколько ешек получит игрок при ПРОДАЖЕ предмета (P5).
 
     ``floor(full_value × ITEM_SELL_RATE)``. По умолчанию 70% — убирает дюпы
     экономики (продать дороже покупки нельзя) и создаёт сток ешек. Примеры:
     Роза 250 → 175, Бриллиант 1000 → 700, Premium 10000 → 7000.
+
+    ``sell_rate`` может быть переопределён из админки (app_settings:
+    economy.item_sell_rate); по умолчанию — код-дефолт ITEM_SELL_RATE.
     """
-    return int(max(0, full_value) * ITEM_SELL_RATE)
+    rate = sell_rate if sell_rate >= 0 else ITEM_SELL_RATE
+    return int(max(0, full_value) * rate)
 
 
 
@@ -93,7 +104,7 @@ def _sell_value(full_value: int) -> int:
 class BuyResult:
     """Итог покупки для рендера в хендлере."""
 
-    status: str  # "ok" | "not_found" | "inactive" | "sold_out" | "not_enough" | "error"
+    status: str  # "ok" | "not_found" | "inactive" | "disabled" | "sold_out" | "not_enough" | "error"
     gift_name: str = ""
     price: int = 0
     balance: int | None = None
@@ -154,6 +165,14 @@ async def buy_gift(
     внутри транзакции БД).
     """
     # --- PRE-FLIGHT под блокировками, без мутаций ---------------------------
+    # Глобальный kill-switch магазина из админки (app_settings: shop.enabled).
+    # По умолчанию включено. Останавливает покупки во ВСЕХ каналах (бот/сайт),
+    # так как buy_gift — единая атомарная точка покупки.
+    from app.settings import dynamic
+
+    if not await dynamic.get_bool(session, "shop.enabled", True):
+        return BuyResult(status="disabled")
+
     gift = await gifts_repo.get_gift_for_update(session, code)
     if gift is None:
         return BuyResult(status="not_found")
@@ -345,6 +364,14 @@ async def deliver_gift(
         # Уже обработано (повторный вызов) — ничего не делаем.
         return DeliverOutcome(status="skip")
 
+    # Глобальный kill-switch выдачи из админки (app_settings: gifts.enabled),
+    # поверх env-флага GIFTS_DELIVERY_ENABLED. Любой «выкл» оставляет доставку в
+    # pending (как и при выключенном env) — ешки не теряются, выдать можно позже.
+    from app.settings import dynamic
+
+    if enabled and not await dynamic.get_bool(session, "gifts.enabled", True):
+        enabled = False
+
     gift_code = delivery.item_code or ""
     gift = await gifts_repo.get_gift_by_code(session, gift_code)
     star_cost = int((delivery.meta or {}).get("star_cost") or 0)
@@ -529,8 +556,15 @@ async def sell_gift(
 
     gift_code = delivery.item_code or ""
     gift = await gifts_repo.get_gift_by_code(session, gift_code)
-    full_value = _item_full_value(delivery, gift)
-    amount = _sell_value(full_value)
+    # Курсы продажи редактируются из админки без деплоя (app_settings):
+    #   economy.eshki_per_star — фолбэк-оценка приза кейса по star_cost;
+    #   economy.item_sell_rate — доля стоимости, возвращаемая при продаже.
+    from app.settings import dynamic
+
+    eshki_per_star = await dynamic.get_int(session, "economy.eshki_per_star", ESHKI_PER_STAR)
+    sell_rate = await dynamic.get_float(session, "economy.item_sell_rate", ITEM_SELL_RATE)
+    full_value = _item_full_value(delivery, gift, eshki_per_star)
+    amount = _sell_value(full_value, sell_rate)
     if amount <= 0:
         # Стоимость неизвестна — продавать нечего (мисконфиг каталога).
         return SellOutcome(status="no_value", gift_code=gift_code, error="unknown_value")

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
 from app.models import Transaction, User
+from app.settings import dynamic
 
 logger = get_logger(__name__)
 
@@ -34,6 +35,25 @@ PRODUCTIVE_REASONS = {
     "daily",
     "mission",
     "season_reward",
+}
+
+# Источники, к которым применяется глобальный множитель ешек (app_settings:
+# modifier.eshki). Это «зарабатываемые» награды — ферма, клад, ачивки, дейлик,
+# миссии, сезонные награды, награды за событие/исход дуэли. СОЗНАТЕЛЬНО НЕ
+# масштабируются: казино (перераспределение), покупки, передачи ешек между
+# игроками и ПРОДАЖА предметов (reason="reward"/"item_sell") — иначе множитель
+# ломал бы экономику и открывал дюп (продать вдвое дороже во время ивента).
+MULTIPLIED_REASONS = {
+    "farm",
+    "treasure",
+    "achievement",
+    "nomination",
+    "daily",
+    "mission",
+    "season_reward",
+    "event_reward",
+    "duel_reward",
+    "family_reward",
 }
 
 
@@ -69,6 +89,18 @@ async def _apply_balance_change(
         await session.flush()
         user = await session.get(User, user_id, with_for_update=True)
         assert user is not None
+
+    # Глобальный множитель ешек из админки (app_settings: modifier.eshki).
+    # Применяется ТОЛЬКО к положительным начислениям «зарабатываемых» наград
+    # (MULTIPLIED_REASONS). Дефолт 1.0 ничего не меняет. Прибавка (×множитель −
+    # базовая сумма) логируется в meta для прозрачности леджера.
+    if amount > 0 and reason in MULTIPLIED_REASONS:
+        multiplier = await dynamic.get_float(session, "modifier.eshki", 1.0)
+        if multiplier > 0 and multiplier != 1.0:
+            boosted = int(round(amount * multiplier))
+            if boosted != amount:
+                meta = {**(meta or {}), "base_amount": amount, "eshki_multiplier": multiplier}
+                amount = boosted
 
     new_balance = user.balance + amount
     if new_balance < 0 and not allow_negative:

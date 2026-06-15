@@ -196,11 +196,15 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
             await notify_and_cleanup(session, message, texts.DUEL_USAGE)
             return
         amount = int(amount_str)
-        if amount < balance.DUEL_MIN_BET or amount > balance.DUEL_MAX_BET:
+        # Лимиты ставки дуэли редактируются из админки (app_settings) без деплоя;
+        # если ключей нет — дефолты из balance.py.
+        min_bet = await dynamic.get_int(session, "duel.min_bet", balance.DUEL_MIN_BET)
+        max_bet = await dynamic.get_int(session, "duel.max_bet", balance.DUEL_MAX_BET)
+        if amount < min_bet or amount > max_bet:
             await notify_and_cleanup(
                 session,
                 message,
-                texts.DUEL_BAD_AMOUNT.format(min=balance.DUEL_MIN_BET, max=balance.DUEL_MAX_BET),
+                texts.DUEL_BAD_AMOUNT.format(min=min_bet, max=max_bet),
             )
             return
 
@@ -253,11 +257,14 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
         await notify_and_cleanup(session, message, texts.DUEL_USAGE)
         return
     amount = int(amount_str)
-    if amount < balance.DUEL_MIN_BET or amount > balance.DUEL_MAX_BET:
+    # Лимиты ставки дуэли — те же, что и для открытого вызова (см. выше).
+    min_bet = await dynamic.get_int(session, "duel.min_bet", balance.DUEL_MIN_BET)
+    max_bet = await dynamic.get_int(session, "duel.max_bet", balance.DUEL_MAX_BET)
+    if amount < min_bet or amount > max_bet:
         await notify_and_cleanup(
             session,
             message,
-            texts.DUEL_BAD_AMOUNT.format(min=balance.DUEL_MIN_BET, max=balance.DUEL_MAX_BET),
+            texts.DUEL_BAD_AMOUNT.format(min=min_bet, max=max_bet),
         )
         return
 

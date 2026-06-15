@@ -39,6 +39,13 @@ async def award_mmr(
     """
     if amount == 0:
         return None
+    # Глобальные множители опыта из админки (app_settings):
+    #   • modifier.xp   — ивентовый множитель MMR (1 = без эффекта);
+    #   • season.xp_bonus — сезонная прибавка долей (0.5 = +50%).
+    # Применяются ТОЛЬКО к начислениям (amount > 0), не к списаниям, чтобы
+    # штрафы не масштабировались. Дефолты (1 и 0) ничего не меняют.
+    if amount > 0:
+        amount = await _apply_xp_multipliers(session, amount)
     # Рейтинг ДО записи: новая строка ещё не добавлена, поэтому SUM не включает
     # текущее начисление. Итог получаем арифметикой, без второго запроса.
     before = await mmr_repo.get_mmr(session, player_id)
@@ -58,6 +65,26 @@ async def award_mmr(
     if amount < 0:
         return None
     return _rankup_between(before, before + amount)
+
+
+async def _apply_xp_multipliers(session: AsyncSession, amount: int) -> int:
+    """Применяет глобальные множители опыта (modifier.xp + season.xp_bonus).
+
+    Итог = round(amount × modifier.xp × (1 + season.xp_bonus)). Множители живут
+    в app_settings и читаются динамически (кэш ≤60с). При отсутствии ключей —
+    1 и 0 соответственно (никакого эффекта). Результат не опускается ниже 1,
+    чтобы положительное начисление не «съедалось» в ноль.
+    """
+    from app.settings import dynamic
+
+    xp_mult = await dynamic.get_float(session, "modifier.xp", 1.0)
+    season_bonus = await dynamic.get_float(session, "season.xp_bonus", 0.0)
+    if xp_mult <= 0:
+        xp_mult = 1.0
+    if season_bonus < 0:
+        season_bonus = 0.0
+    scaled = int(round(amount * xp_mult * (1 + season_bonus)))
+    return max(1, scaled)
 
 
 async def _mirror_to_season(
