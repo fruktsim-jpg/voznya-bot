@@ -42,23 +42,25 @@ def upgrade() -> None:
     # aborts on the gaps. Using ADD COLUMN IF NOT EXISTS lets this migration
     # converge the table to the expected shape regardless of which columns are
     # already present — safe on a clean chain (all IF NOT EXISTS are no-ops).
-    op.execute(
-        """
-        -- Safety net for columns nominally added by 0016 but absent on some DBs.
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS collection_code varchar(64);
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS series_total integer;
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS stackable boolean NOT NULL DEFAULT false;
-
-        -- 0040 lifecycle + availability + asset link.
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS status varchar(16) NOT NULL DEFAULT 'draft';
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS available_from timestamptz;
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS available_until timestamptz;
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS asset_code varchar(64);
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS featured_slot varchar(32);
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_by bigint;
-        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
-        """
-    )
+    #
+    # NB: asyncpg forbids multiple statements in one prepared query, so each
+    # ALTER must be its own op.execute (no semicolon-batching).
+    statements = [
+        # Safety net for columns nominally added by 0016 but absent on some DBs.
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS collection_code varchar(64)",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS series_total integer",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS stackable boolean NOT NULL DEFAULT false",
+        # 0040 lifecycle + availability + asset link.
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS status varchar(16) NOT NULL DEFAULT 'draft'",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS available_from timestamptz",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS available_until timestamptz",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS asset_code varchar(64)",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS featured_slot varchar(32)",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_by bigint",
+        "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
+    ]
+    for stmt in statements:
+        op.execute(stmt)
 
     # Backfill: keep existing items live. active → published, inactive → draft.
     op.execute(
