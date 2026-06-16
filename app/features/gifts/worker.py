@@ -58,13 +58,17 @@ async def process_withdraw_queue(
     settings = get_settings()
     async with sessionmaker() as session:
         pending = await gifts_repo.get_withdraw_requested(session, limit=WITHDRAW_BATCH)
+        # Имена подарков резолвим одним батч-запросом (без N+1 по каталогу):
+        # пользователю НИКОГДА не показываем внутренний код (gift_bear) — только имя.
+        names_by_code = await gifts_repo.get_names_by_codes(
+            session, [d.item_code for d in pending if d.item_code]
+        )
         keys = [
             (
                 d.idempotency_key,
                 d.recipient_user_id,
-                # Человекочитаемое имя подарка для уведомлений: НИКОГДА не
-                # показываем внутренний код (gift_bear) — резолвим через каталог.
-                await _display_name(session, d.item_code),
+                # Фолбэк «подарок», если код пуст или имя не нашлось в каталоге.
+                names_by_code.get(d.item_code, "подарок") if d.item_code else "подарок",
                 # «Подарить другу» через очередь (бот был недоступен с сайта):
                 # meta.gift_to = @username|id получателя реального подарка.
                 (d.meta or {}).get("gift_to"),

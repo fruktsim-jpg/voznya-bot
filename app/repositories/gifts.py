@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import GiftCatalog, GiftTransaction
@@ -154,7 +153,7 @@ async def get_delivery_by_claim_token(
         select(GiftTransaction)
         .where(GiftTransaction.kind == "tg_gift")
         .where(GiftTransaction.status == "pending")
-        .where(GiftTransaction.meta.cast(JSONB).contains({"claim_token": claim_token}))
+        .where(GiftTransaction.meta.contains({"claim_token": claim_token}))
         .with_for_update()
     )
 
@@ -178,7 +177,7 @@ async def get_withdraw_requested(
         select(GiftTransaction)
         .where(GiftTransaction.kind == "tg_gift")
         .where(GiftTransaction.status == "pending")
-        .where(GiftTransaction.meta.cast(JSONB).contains({"withdraw_requested": True}))
+        .where(GiftTransaction.meta.contains({"withdraw_requested": True}))
         .order_by(GiftTransaction.created_at.asc())
         .limit(limit)
     )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -135,10 +136,17 @@ async def cmd_families(message: Message, session: AsyncSession, command_args: st
         await notify_and_cleanup(session, message, texts.TOP_FAMILIES_EMPTY)
         return
 
+    # Батч-загрузка участников одним запросом (без N+1 по session.get).
+    user_ids = {m.user_id_1 for m in marriages} | {m.user_id_2 for m in marriages}
+    users_rows = (
+        await session.execute(select(User).where(User.user_id.in_(user_ids)))
+    ).scalars().all()
+    users_by_id = {u.user_id: u for u in users_rows}
+
     lines: list[str] = []
     for i, m in enumerate(marriages):
-        u1 = await session.get(User, m.user_id_1)
-        u2 = await session.get(User, m.user_id_2)
+        u1 = users_by_id.get(m.user_id_1)
+        u2 = users_by_id.get(m.user_id_2)
         lines.append(
             texts.TOP_FAMILIES_ROW.format(
                 place=place_marker(i + 1),

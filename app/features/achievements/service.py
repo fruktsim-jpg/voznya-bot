@@ -163,12 +163,20 @@ async def check_and_award(session: AsyncSession, user_id: int) -> list[Achieveme
     """
     newly: list[Achievement] = []
 
+    user = await session.get(User, user_id, with_for_update=True)
+    if user is None:
+        return newly
+
+    # Горячий путь (вызывается на каждое игровое действие): тяжёлые запросы
+    # делаем ОДИН раз до цикла. 5 агрегатов из _gather_stats не зависят от
+    # выдачи достижений и не меняются в цикле; меняется только total_earned —
+    # его держим на in-memory user-объекте (change_balance мутирует ту же
+    # сущность в той же сессии). Открытые коды держим в set и обновляем по мере
+    # выдачи вместо повторных SELECT'ов.
+    stats = await _gather_stats(session, user)
+    unlocked = await get_unlocked_codes(session, user_id)
+
     for _ in range(len(ACHIEVEMENTS) + 1):
-        user = await session.get(User, user_id, with_for_update=True)
-        if user is None:
-            break
-        stats = await _gather_stats(session, user)
-        unlocked = await get_unlocked_codes(session, user_id)
         progressed = False
 
         for ach in ACHIEVEMENTS:
@@ -177,20 +185,28 @@ async def check_and_award(session: AsyncSession, user_id: int) -> list[Achieveme
             if stats.get(ach.metric, 0) >= ach.threshold:
                 if await _grant(session, user_id, ach):
                     newly.append(ach)
+                    unlocked.add(ach.code)
                     progressed = True
 
-        # Достижения типа «all» (например, «Меллстрой Возни»).
+        # Достижения типа «all» (например, «Меллстрой Возни»). Используем тот же
+        # in-memory набор открытых кодов (он уже включает выданные в этом проходе
+        # метрические достижения — как раньше делал повторный SELECT).
         for ach in ACHIEVEMENTS:
             if ach.metric != METRIC_ALL or ach.code in unlocked:
                 continue
-            fresh = await get_unlocked_codes(session, user_id)
-            if CORE_ACHIEVEMENT_CODES.issubset(fresh):
+            if CORE_ACHIEVEMENT_CODES.issubset(unlocked):
                 if await _grant(session, user_id, ach):
                     newly.append(ach)
+                    unlocked.add(ach.code)
                     progressed = True
 
         if not progressed:
             break
+
+        # Награды за этот проход могли увеличить total_earned (на том же
+        # user-объекте). Обновляем только его — остальные метрики неизменны.
+        # Эквивалентно пере-сбору stats в начале следующего прохода.
+        stats["total_earned"] = user.total_earned
 
     return newly
 

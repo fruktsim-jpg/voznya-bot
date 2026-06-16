@@ -38,7 +38,13 @@ async def render_profile(session: AsyncSession, user: User) -> str:
     mmr_value = await get_mmr(session, user.user_id)
     rank = mmr_settings.get_rank(mmr_value)
 
-    balance_rank = await users_repo.get_user_rank_by_balance(session, user.user_id)
+    # Ранг по балансу: user уже в руках — не перечитываем его из БД (минус
+    # лишний session.get). Семантика та же: место = (кол-во с большим балансом)+1,
+    # отсутствует для нулевого/отрицательного баланса.
+    if user.balance > 0:
+        balance_rank = await users_repo.rank_by_balance(session, user.balance)
+    else:
+        balance_rank = None
     balance_line = texts.PROFILE_BALANCE_LINE.format(balance=user.balance)
     if balance_rank is not None:
         balance_line += texts.PROFILE_BALANCE_RANK_SUFFIX.format(rank=balance_rank)
