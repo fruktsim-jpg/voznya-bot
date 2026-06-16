@@ -66,15 +66,31 @@ def upgrade() -> None:
     # Backfill parent records for collection codes already in use, so existing
     # collectibles immediately have an authored collection (published, since
     # they're already live in the game).
+    #
+    # NB: `inventory_items.collection_code` is added later (0040). On a fresh
+    # chain this migration runs before that column exists, so guard the backfill
+    # with a column-existence check — otherwise it raises UndefinedColumnError
+    # and the whole upgrade aborts. When the column is absent there's nothing to
+    # backfill yet; 0040 carries no backfill, but any pre-existing codes are a
+    # no-op here and collections can be authored normally afterwards.
     op.execute(
         """
-        INSERT INTO collections (code, name, kind, status, sort_order)
-        SELECT DISTINCT collection_code,
-               initcap(replace(collection_code, '_', ' ')),
-               'permanent', 'published', 100
-          FROM inventory_items
-         WHERE collection_code IS NOT NULL
-        ON CONFLICT (code) DO NOTHING
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'inventory_items'
+               AND column_name = 'collection_code'
+          ) THEN
+            INSERT INTO collections (code, name, kind, status, sort_order)
+            SELECT DISTINCT collection_code,
+                   initcap(replace(collection_code, '_', ' ')),
+                   'permanent', 'published', 100
+              FROM inventory_items
+             WHERE collection_code IS NOT NULL
+            ON CONFLICT (code) DO NOTHING;
+          END IF;
+        END $$;
         """
     )
 

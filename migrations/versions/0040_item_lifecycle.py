@@ -35,38 +35,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "inventory_items",
-        sa.Column("status", sa.String(length=16), nullable=False, server_default="draft"),
-    )
-    op.add_column(
-        "inventory_items",
-        sa.Column("available_from", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "inventory_items",
-        sa.Column("available_until", sa.DateTime(timezone=True), nullable=True),
-    )
-    op.add_column(
-        "inventory_items",
-        sa.Column("asset_code", sa.String(length=64), nullable=True),
-    )
-    op.add_column(
-        "inventory_items",
-        sa.Column("featured_slot", sa.String(length=32), nullable=True),
-    )
-    op.add_column(
-        "inventory_items",
-        sa.Column("updated_by", sa.BigInteger(), nullable=True),
-    )
-    op.add_column(
-        "inventory_items",
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
+    # Idempotent by design. Some production DBs were restored from a snapshot
+    # whose `inventory_items` is missing columns that earlier migrations (0016)
+    # were supposed to add (collection_code / series_total / stackable), while
+    # alembic_version had drifted ahead. Replaying with plain ADD COLUMN then
+    # aborts on the gaps. Using ADD COLUMN IF NOT EXISTS lets this migration
+    # converge the table to the expected shape regardless of which columns are
+    # already present — safe on a clean chain (all IF NOT EXISTS are no-ops).
+    op.execute(
+        """
+        -- Safety net for columns nominally added by 0016 but absent on some DBs.
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS collection_code varchar(64);
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS series_total integer;
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS stackable boolean NOT NULL DEFAULT false;
+
+        -- 0040 lifecycle + availability + asset link.
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS status varchar(16) NOT NULL DEFAULT 'draft';
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS available_from timestamptz;
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS available_until timestamptz;
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS asset_code varchar(64);
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS featured_slot varchar(32);
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_by bigint;
+        ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+        """
     )
 
     # Backfill: keep existing items live. active → published, inactive → draft.
@@ -76,7 +67,9 @@ def upgrade() -> None:
     # Default asset_code to the item code (shared art model: art keyed by code).
     op.execute("UPDATE inventory_items SET asset_code = code WHERE asset_code IS NULL")
 
-    op.create_index("ix_inventory_items_status", "inventory_items", ["status"])
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_inventory_items_status ON inventory_items (status)"
+    )
 
 
 def downgrade() -> None:
