@@ -32,6 +32,8 @@ from app.models.marriage import Marriage
 
 from app.models.message_daily import MessageDaily
 from app.models.mmr_entry import MmrEntry
+from app.models.mod_warning import ModWarning
+from app.models.user_moderation import UserModeration
 
 from app.models.nomination import DailyNomination
 from app.models.oidc_link_request import OidcLinkRequest
@@ -73,6 +75,8 @@ __all__ = [
     "MessageDaily",
     "AccountLink",
     "OidcLinkRequest",
+    "ModWarning",
+    "UserModeration",
     "AdminRole",
     "AppSetting",
     "AuditLog",

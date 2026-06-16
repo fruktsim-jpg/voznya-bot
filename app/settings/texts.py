@@ -533,6 +533,39 @@ ADMIN_INFO = (
 ADMIN_TREASURE_DONE = "✅ Закладка подкинута."
 
 
+# --- Модерация ---------------------------------------------------------------
+MOD_DENIED = "🚫 Недостаточно прав для модерации."
+MOD_NO_TARGET = (
+    "Не понял, кого модерировать. Ответь на сообщение игрока или укажи "
+    "<code>@username</code> / ID."
+)
+MOD_TARGET_PROTECTED = "🛡 Этого пользователя нельзя модерировать (админ/владелец)."
+MOD_BAN_USAGE = "Использование: <code>/бан @username [срок] [причина]</code>\nСрок: 10m, 2h, 1d, 0=навсегда."
+MOD_MUTE_USAGE = "Использование: <code>/мут @username [срок] [причина]</code>\nСрок: 10m, 2h, 1d, 0=навсегда."
+MOD_WARN_USAGE = "Использование: <code>/варн @username [причина]</code>"
+MOD_BANNED = "🔨 {mention} забанен ({duration}).{reason}"
+MOD_UNBANNED = "✅ Бан снят с {mention}."
+MOD_MUTED = "🔇 {mention} в мьюте ({duration}).{reason}"
+MOD_UNMUTED = "🔊 Мьют снят с {mention}."
+MOD_WARNED = "⚠️ Варн для {mention} ({count}/{threshold}).{reason}"
+MOD_WARN_AUTOMUTE = "\n🔇 Достигнут порог — авто-мьют на {duration}."
+MOD_UNWARNED = "✅ Снято варнов у {mention}: {cleared}."
+MOD_KICKED = "👋 {mention} кикнут из чата."
+MOD_REASON_SUFFIX = "\nПричина: {reason}"
+MOD_RESTRICT_FAILED = (
+    "\n⚠️ Не удалось применить ограничение в Telegram (нет прав у бота?). "
+    "Запись в БД сохранена."
+)
+MOD_INFO_USAGE = "Использование: <code>/modinfo @username</code> (или ответом)."
+MOD_INFO = (
+    "🛡 <b>Модерация</b> · {mention} (<code>{user_id}</code>)\n"
+    "Бан: {ban}\n"
+    "Мьют: {mute}\n"
+    "Варны: <b>{warns}</b>"
+)
+MOD_INFO_WARN_LINE = "• {when} — {reason}"
+
+
 
 # --- Кейсы -------------------------------------------------------------------
 CASES_EMPTY = "🎁 <b>Кейсов сейчас нет.</b>\nЗаглядывай позже — добавим."

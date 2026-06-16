@@ -23,6 +23,10 @@ from app.core.logger import get_logger, setup_logging
 from app.core.scheduler import get_scheduler, shutdown_scheduler, start_scheduler
 from app.features import get_feature_routers
 from app.features.gifts.worker import setup_gift_delivery_worker
+from app.features.moderation.enforcement import (
+    MuteEnforcementMiddleware,
+    setup_moderation_scheduler,
+)
 from app.features.treasure.service import setup_treasure_scheduler
 
 from app.middlewares import (
@@ -77,6 +81,9 @@ def create_dispatcher() -> Dispatcher:
     # Цепочка обработки сообщений.
     dp.message.middleware(ChatFilterMiddleware())
     dp.message.middleware(UserTrackingMiddleware())
+    # Backstop-энфорсмент мьюта: удаляет сообщения замьюченных, если Telegram
+    # сам не ограничил (например, у бота не было прав в момент команды).
+    dp.message.middleware(MuteEnforcementMiddleware())
     dp.message.middleware(AntiFloodMiddleware())
 
     # Нажатия на кнопки: тот же фильтр чата и трекинг активности.
@@ -110,6 +117,10 @@ async def on_startup(bot: Bot) -> None:
     # Авто-выдача подарков, выведенных игроком с сайта (P2): сайт помечает
     # доставку withdraw_requested, бот реально отправляет через Telegram.
     setup_gift_delivery_worker(scheduler, bot, sessionmaker)
+
+    # Модерация: периодически снимает истёкшие баны/мьюты и обновляет кэш
+    # активных мьютов для backstop-энфорсмента.
+    setup_moderation_scheduler(scheduler, bot, sessionmaker, settings.chat_id)
 
 
 
