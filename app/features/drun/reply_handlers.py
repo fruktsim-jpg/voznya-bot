@@ -135,4 +135,6 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
         return
 
     await _set_cooldown(session, cfg.reply_cooldown_sec)
-    await message.reply(result.text)
+    # Текст друна — свободный (может содержать < > & и т.п.). Шлём как обычный
+    # текст без разметки, иначе Telegram падает на HTML-парсинге.
+    await message.reply(result.text, parse_mode=None)

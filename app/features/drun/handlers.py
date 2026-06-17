@@ -51,4 +51,5 @@ async def cmd_drun(
         return
 
     # Сессию фиксирует DbSessionMiddleware после успешной обработки.
-    await message.answer(result.text)
+    # parse_mode=None: текст друна свободный, HTML-разметка сломала бы отправку.
+    await message.answer(result.text, parse_mode=None)
