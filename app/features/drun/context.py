@@ -490,6 +490,18 @@ async def _vibe_block(session: AsyncSession, channel: str) -> str:
         return ""
 
 
+async def _mood_block(session: AsyncSession, channel: str) -> str:
+    """Текущее НАСТРОЕНИЕ друна (динамическое, #7) — красит тон ответа."""
+    try:
+        from app.features.drun import mood as drun_mood
+
+        m = await drun_mood.compute_mood(session, channel=channel)
+        return m.directive()
+    except Exception:  # noqa: BLE001
+        logger.debug("mood_block failed", exc_info=True)
+        return ""
+
+
 async def build_context(
     session: AsyncSession,
     *,
@@ -518,6 +530,7 @@ async def build_context(
     # объявлений (include_chat=False) он не нужен — не тратим лишний COUNT-запрос.
     if include_chat:
         blocks.append(await _vibe_block(session, channel))
+        blocks.append(await _mood_block(session, channel))
     if subject_id is not None:
         blocks.append(await _player_block(session, subject_id))
     if include_chat:

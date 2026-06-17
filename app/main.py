@@ -33,6 +33,7 @@ from app.features.drun.ears import DrunEarsMiddleware
 from app.features.drun.distill import setup_memory_distill
 from app.features.drun.chat_memory import setup_chat_distill
 from app.features.drun.profile import setup_profile_sweep
+from app.features.drun.autonomous import setup_autonomous_poster
 
 from app.middlewares import (
     AntiFloodMiddleware,
@@ -141,6 +142,10 @@ async def on_startup(bot: Bot) -> None:
     # Профили игроков: фоновый свип (раз в несколько минут) пересобирает досье
     # активных игроков из всей базы + LLM-портрет — почти реалтайм-память.
     setup_profile_sweep(scheduler, sessionmaker)
+
+    # Автономное поведение: друн сам комментирует значимые события мира в чат
+    # (с дневным капом и предохранителями). Делает его живым, а не реактивным.
+    setup_autonomous_poster(scheduler, bot, sessionmaker, settings.chat_id)
 
 
 
