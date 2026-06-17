@@ -168,6 +168,38 @@ async def _h_award_mmr(ctx: ToolContext) -> drun_tools.ToolResult:
     )
 
 
+async def _h_ban(ctx: ToolContext) -> drun_tools.ToolResult:
+    who = ctx.arg_str("who")
+    target = await ctx.resolve_who(who)
+    if target is None:
+        return drun_tools.ToolResult(ok=False, error=f"не нашёл игрока «{who}»")
+    return await drun_tools.ban_one(
+        ctx.session, owner_id=ctx.owner_id, target_id=target,
+        days=ctx.arg_int("days", 0), reason=ctx.arg_str("reason"),
+    )
+
+
+async def _h_unban(ctx: ToolContext) -> drun_tools.ToolResult:
+    who = ctx.arg_str("who")
+    target = await ctx.resolve_who(who)
+    if target is None:
+        return drun_tools.ToolResult(ok=False, error=f"не нашёл игрока «{who}»")
+    return await drun_tools.unban_one(
+        ctx.session, owner_id=ctx.owner_id, target_id=target
+    )
+
+
+async def _h_kick(ctx: ToolContext) -> drun_tools.ToolResult:
+    who = ctx.arg_str("who")
+    target = await ctx.resolve_who(who)
+    if target is None:
+        return drun_tools.ToolResult(ok=False, error=f"не нашёл игрока «{who}»")
+    return await drun_tools.kick_one(
+        ctx.session, owner_id=ctx.owner_id, target_id=target,
+        reason=ctx.arg_str("reason"),
+    )
+
+
 async def _h_grant_item(ctx: ToolContext) -> drun_tools.ToolResult:
     who = ctx.arg_str("who")
     target = await ctx.resolve_who(who)
@@ -261,6 +293,27 @@ REGISTRY: dict[str, ToolSpec] = {
             "who (str), amount (int)",
             _h_award_mmr,
             ("ммр", "mmr", "рейтинг накинь", "накинь ммр", "срежь ммр"),
+        ),
+        ToolSpec(
+            "ban",
+            "забанить игрока (days=0 — навсегда)",
+            "who (str), days (int), reason (str)",
+            _h_ban,
+            ("забань", "бан", "забанить", "ban", "в бан"),
+        ),
+        ToolSpec(
+            "unban",
+            "снять бан с игрока",
+            "who (str)",
+            _h_unban,
+            ("разбань", "сними бан", "unban", "разбан"),
+        ),
+        ToolSpec(
+            "kick",
+            "кикнуть игрока из чата (краткий бан)",
+            "who (str), reason (str)",
+            _h_kick,
+            ("кик", "кикни", "выгони", "выкини", "kick", "выпни"),
         ),
         ToolSpec(
             "grant_item",

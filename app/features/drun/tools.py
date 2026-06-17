@@ -447,6 +447,111 @@ async def unmute_one(
     )
 
 
+# --- Инструмент: бан/разбан/кик игрока ---------------------------------------
+
+
+async def _mark_tg_pending(session: AsyncSession, target_id: int) -> None:
+    """Помечает строку модерации для применения в Telegram фоновым тиком.
+
+    Бан/кик DB-уровня сам по себе не ограничит в Telegram — это делает
+    moderation-scheduler, который читает ``tg_pending`` и зовёт Bot API. Так
+    друн получает тот же эффект, что и сайт, не имея bot-объекта под рукой.
+    """
+    from sqlalchemy import update
+
+    from app.models import UserModeration
+
+    await session.execute(
+        update(UserModeration)
+        .where(UserModeration.user_id == target_id)
+        .values(tg_pending=True)
+    )
+
+
+async def ban_one(
+    session: AsyncSession, *, owner_id: int, target_id: int, days: int = 0,
+    reason: str = "",
+) -> ToolResult:
+    """Банит игрока. ``days=0`` — перманентно. Применение в TG — через тик.
+
+    Предохранитель: ≤ 365 дней. Эффект в Telegram накатывает
+    moderation-scheduler по флагу ``tg_pending``.
+    """
+    from app.repositories import moderation as mod_repo
+    from app.features.drun.names import name_for, resolve_names
+
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    until = None
+    if days and days > 0:
+        until = now_utc() + timedelta(days=min(int(days), 365))
+    try:
+        await mod_repo.set_ban(
+            session, target_id, until, reason or "по воле друна", owner_id
+        )
+        await _mark_tg_pending(session, target_id)
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло забанить {nm}: {exc}")
+    span = "навсегда" if until is None else f"на {min(int(days), 365)} дн"
+    await _audit(
+        session, owner_id, "owner_ban", target_id, reason or "бан",
+        {"days": days},
+    )
+    return ToolResult(
+        ok=True, summary=f"забанил {nm} {span}", affected=1,
+        meta={"target": target_id, "days": days},
+    )
+
+
+async def unban_one(
+    session: AsyncSession, *, owner_id: int, target_id: int,
+) -> ToolResult:
+    """Снимает бан с игрока (DB + применение в TG через тик)."""
+    from app.repositories import moderation as mod_repo
+    from app.features.drun.names import name_for, resolve_names
+
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    try:
+        await mod_repo.set_ban(session, target_id, None, None, owner_id)
+        await _mark_tg_pending(session, target_id)
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло разбанить {nm}: {exc}")
+    await _audit(session, owner_id, "owner_unban", target_id, "разбан", {})
+    return ToolResult(
+        ok=True, summary=f"снял бан с {nm}", affected=1,
+        meta={"target": target_id},
+    )
+
+
+async def kick_one(
+    session: AsyncSession, *, owner_id: int, target_id: int, reason: str = "",
+) -> ToolResult:
+    """Кикает игрока: краткий бан (~1 мин), который тут же истекает.
+
+    Telegram-кик = ban + немедленный unban. Здесь ставим бан на минуту с
+    ``tg_pending``; scheduler применит бан (удалит из чата), а ``due_unbans``
+    в ближайшем тике снимет его — игрок сможет вернуться по ссылке.
+    """
+    from app.repositories import moderation as mod_repo
+    from app.features.drun.names import name_for, resolve_names
+
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    until = now_utc() + timedelta(minutes=1)
+    try:
+        await mod_repo.set_ban(
+            session, target_id, until, reason or "кик друна", owner_id
+        )
+        await _mark_tg_pending(session, target_id)
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло кикнуть {nm}: {exc}")
+    await _audit(session, owner_id, "owner_kick", target_id, reason or "кик", {})
+    return ToolResult(
+        ok=True, summary=f"кикнул {nm}", affected=1, meta={"target": target_id},
+    )
+
+
 # --- Инструмент: варн игрока (с авто-мутом по порогу) ------------------------
 
 

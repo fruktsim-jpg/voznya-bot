@@ -43,7 +43,7 @@ class RelEdge:
 
     other_id: int
     other_name: str
-    kind: str          # spouse / rival / ally / foe / buddy
+    kind: str          # spouse / rival / ally / foe / buddy / gifter
     strength: int = 1
     note: str = ""
 
@@ -156,6 +156,41 @@ async def _buddy_counts(session: AsyncSession, user_id: int) -> Counter[int]:
     return cnt
 
 
+async def _gift_counts(session: AsyncSession, user_id: int) -> Counter[int]:
+    """Кто кому дарит (#4): счётчик подарочных связей игрока с другими.
+
+    Считаем подарки игрок→игрок в обе стороны (``gift_transactions`` с
+    ``gift_type='player'``). Положительный счётчик = устойчивая дарительная связь.
+    """
+    from app.models import GiftTransaction
+
+    rows = (
+        await session.execute(
+            select(
+                GiftTransaction.sender_user_id,
+                GiftTransaction.recipient_user_id,
+            )
+            .where(GiftTransaction.gift_type == "player")
+            .where(
+                (GiftTransaction.sender_user_id == user_id)
+                | (GiftTransaction.recipient_user_id == user_id)
+            )
+            .order_by(GiftTransaction.created_at.desc())
+            .limit(300)
+        )
+    ).all()
+    cnt: Counter[int] = Counter()
+    for sender, recipient in rows:
+        other = recipient if sender == user_id else sender
+        if other and other != user_id:
+            cnt[other] += 1
+    return cnt
+
+
+# Порог дарительной связи: столько подарков между парой.
+_GIFT_MIN = 2
+
+
 async def compute_edges(
     session: AsyncSession, user_id: int, *, max_edges: int = 6
 ) -> list[RelEdge]:
@@ -202,6 +237,18 @@ async def compute_edges(
                     need_names.add(oid)
     except Exception:  # noqa: BLE001
         logger.debug("buddy edges failed", exc_info=True)
+
+    # Подарочные связи (#4): кто кому дарит.
+    try:
+        gifts = await _gift_counts(session, user_id)
+        for oid, c in gifts.items():
+            if c >= _GIFT_MIN and (oid, "spouse") not in edges:
+                key = (oid, "gifter")
+                if key not in edges:
+                    edges[key] = RelEdge(oid, "", "gifter", strength=c)
+                    need_names.add(oid)
+    except Exception:  # noqa: BLE001
+        logger.debug("gift edges failed", exc_info=True)
 
     if need_names:
         names = await resolve_names(session, need_names)

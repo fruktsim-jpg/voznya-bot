@@ -107,12 +107,39 @@ async def _player_assets_block(session: AsyncSession, user_id: int) -> list[str]
             logger.debug("cases block failed", exc_info=True)
         return ""
 
+    async def _gifts() -> str:
+        try:
+            from sqlalchemy import func as _f
+
+            from app.models import GiftTransaction
+
+            sent = await session.scalar(
+                select(_f.count()).select_from(GiftTransaction)
+                .where(GiftTransaction.sender_user_id == user_id)
+                .where(GiftTransaction.gift_type == "player")
+            )
+            recv = await session.scalar(
+                select(_f.count()).select_from(GiftTransaction)
+                .where(GiftTransaction.recipient_user_id == user_id)
+                .where(GiftTransaction.gift_type == "player")
+            )
+            bits = []
+            if sent:
+                bits.append(f"подарил {int(sent)}")
+            if recv:
+                bits.append(f"получил {int(recv)}")
+            if bits:
+                return "- Подарки: " + ", ".join(bits)
+        except Exception:  # noqa: BLE001
+            logger.debug("gifts block failed", exc_info=True)
+        return ""
+
     # ВАЖНО: одну AsyncSession НЕЛЬЗЯ дёргать конкурентно (SQLAlchemy бросит
     # «another operation is in progress»), поэтому под-блоки идут последовательно.
     # Запросы дешёвые и по индексам, а путь ответа ограничен кулдауном — суммарная
     # задержка незаметна. Параллелизм тут дал бы баг, а не выигрыш.
     out: list[str] = []
-    for sub in (_inv, _ach, _season, _mod, _cases):
+    for sub in (_inv, _ach, _season, _mod, _cases, _gifts):
         line = await sub()
         if line:
             out.append(line)
@@ -213,6 +240,7 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                         "rival": "соперник —",
                         "ally": "симпатизирует", "foe": "недолюбливает",
                         "buddy": "кореша с",
+                        "gifter": "дарит подарки —",
                     }
                     # Брак уже отрендерен отдельной строкой выше — не дублируем.
                     rel_str = "; ".join(
