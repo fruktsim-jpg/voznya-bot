@@ -29,6 +29,7 @@ from app.config import get_settings
 from app.core.logger import get_logger
 from app.core.utils import now_utc
 from app.features.drun import config as drun_config
+from app.features.drun import agent as drun_agent
 from app.features.drun import memory as drun_memory
 from app.features.drun import service as drun_service
 from app.models import Cooldown
@@ -135,6 +136,37 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
 
     text = (message.text or message.caption or "").strip()
     if addressed:
+        # Owner-команда? Если автор — owner и реплика похожа на действие
+        # («дай всем…», «сбрось кд…», «разыграй…»), пробуем агентный путь:
+        # распознаём намерение и реально выполняем над миром. Обычная болтовня
+        # owner'а сюда не попадает (pre-filter + планировщик вернёт none).
+        from app.config import get_settings as _gs
+
+        if _gs().is_admin(user.id) and drun_agent.looks_like_action(text):
+            try:
+                outcome = await drun_agent.try_handle(
+                    session, owner_id=user.id, text=text
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("drun agent failed", exc_info=True)
+                outcome = None
+            if outcome is not None and outcome.handled:
+                announce = await drun_service.announce_action(
+                    session,
+                    owner_name=_display_name(message),
+                    command_text=text,
+                    result_summary=outcome.summary,
+                    ok=outcome.ok,
+                )
+                await _set_cooldown(session, cfg.reply_cooldown_sec)
+                out_text = (
+                    announce.text if announce.ok and announce.text
+                    else (f"Сделано: {outcome.summary}" if outcome.ok
+                          else f"Не вышло: {outcome.summary}")
+                )
+                await message.reply(out_text, parse_mode=None)
+                return
+
         # Прямое обращение — отвечаем НА КОНКРЕТНУЮ реплику человека.
         result = await drun_service.respond(
             session,

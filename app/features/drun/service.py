@@ -230,3 +230,44 @@ async def respond(
         memory_kind="reply",
         allow_actions=True,
     )
+
+
+async def announce_action(
+    session: AsyncSession,
+    *,
+    owner_name: str,
+    command_text: str,
+    result_summary: str,
+    ok: bool,
+    channel: str = "chat",
+) -> GenerateResult:
+    """Друн объявляет в чате результат owner-команды в своём образе.
+
+    Это не болтовня и не выдумка: фактический итог (``result_summary``) уже
+    посчитан инструментом. Друн лишь подаёт его эффектно, как ведущий движа.
+    """
+    if ok:
+        task = (
+            "Ты — Меллстрой, ведущий движа. Владелец только что провернул через "
+            "тебя действие в чате, и оно УЖЕ ВЫПОЛНЕНО. Объяви результат залу "
+            "коротко (1-2 фразы), с понтом и энергией, как конферансье. НЕ "
+            "выдумывай цифры — бери только факт ниже. Без официоза.\n\n"
+            f"# КОМАНДА ВЛАДЕЛЬЦА: «{command_text}»\n"
+            f"# ФАКТИЧЕСКИЙ РЕЗУЛЬТАТ (объяви это): {result_summary}"
+        )
+    else:
+        task = (
+            "Ты — Меллстрой. Владелец пытался провернуть действие, но НЕ "
+            "вышло. Скажи об этом коротко и с иронией, в образе, 1 фраза.\n\n"
+            f"# КОМАНДА: «{command_text}»\n"
+            f"# ПОЧЕМУ НЕ ВЫШЛО: {result_summary}"
+        )
+    return await generate(
+        session,
+        task=task,
+        channel=channel,
+        include_chat=False,
+        include_events=False,
+        remember_message=False,
+        memory_kind="monologue",
+    )
