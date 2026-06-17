@@ -29,6 +29,9 @@ from app.features.moderation.enforcement import (
 )
 from app.features.treasure.service import setup_treasure_scheduler
 
+from app.features.drun.ears import DrunEarsMiddleware
+from app.features.drun.distill import setup_memory_distill
+
 from app.middlewares import (
     AntiFloodMiddleware,
     ChatFilterMiddleware,
@@ -81,6 +84,9 @@ def create_dispatcher() -> Dispatcher:
     # Цепочка обработки сообщений.
     dp.message.middleware(ChatFilterMiddleware())
     dp.message.middleware(UserTrackingMiddleware())
+    # «Уши» друна: пишем реплики игроков в память ИИ (после трекинга, чтобы
+    # пользователь уже был апсертнут). Не влияет на доставку сообщений.
+    dp.message.middleware(DrunEarsMiddleware())
     # Backstop-энфорсмент мьюта: удаляет сообщения замьюченных, если Telegram
     # сам не ограничил (например, у бота не было прав в момент команды).
     dp.message.middleware(MuteEnforcementMiddleware())
@@ -121,6 +127,10 @@ async def on_startup(bot: Bot) -> None:
     # Модерация: периодически снимает истёкшие баны/мьюты и обновляет кэш
     # активных мьютов для backstop-энфорсмента.
     setup_moderation_scheduler(scheduler, bot, sessionmaker, settings.chat_id)
+
+    # Память друна: периодически дистиллируем события мира в устойчивые факты
+    # об игроках и их взаимодействиях (дёшево, без LLM).
+    setup_memory_distill(scheduler, sessionmaker)
 
 
 

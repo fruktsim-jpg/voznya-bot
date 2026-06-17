@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logger import get_logger
 from app.core.money import money
 from app.features.drun import memory as drun_memory
+from app.features.drun.names import name_for, resolve_names
 from app.models import User, WorldEvent
 
 logger = get_logger(__name__)
@@ -39,10 +40,10 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
         rep = await rep_repo.get_summary(session, user_id)
         # ReputationSummary.score = плюсы − минусы (нет поля total).
         rep_total = getattr(rep, "score", None)
-        name = getattr(user, "display_name", None) or user.first_name or str(user_id)
+        name = user.display_name() if user else str(user_id)
         lines = [
             f"Игрок: {name} (id={user_id})",
-            f"- Баланс: {money(user.balance)} ешек",
+            f"- Баланс: {money(user.balance)}",
             f"- Всего заработано: {money(getattr(user, 'total_earned', 0))}",
             f"- MMR: {getattr(user, 'mmr', 0)}",
             f"- Репутация: {rep_total if rep_total is not None else 0}",
@@ -71,7 +72,10 @@ async def _season_block(session: AsyncSession) -> str:
 
 
 async def _events_block(session: AsyncSession, limit: int = 12) -> str:
-    """Последние события мира из world_events (для «что происходит»)."""
+    """Последние события мира из world_events (для «что происходит»).
+
+    Участники резолвятся в ники одним запросом (без сырых id в контексте).
+    """
     try:
         rows = (
             await session.execute(
@@ -82,11 +86,14 @@ async def _events_block(session: AsyncSession, limit: int = 12) -> str:
         ).scalars().all()
         if not rows:
             return "События: пока тихо, мир спит."
+        names = await resolve_names(
+            session, [e.actor_id for e in rows] + [e.target_id for e in rows]
+        )
         lines = ["Последние события мира:"]
         for ev in rows:
             amount = f" ({money(ev.amount)})" if ev.amount else ""
-            who = f" actor={ev.actor_id}" if ev.actor_id else ""
-            tgt = f"→{ev.target_id}" if ev.target_id else ""
+            who = f" {name_for(names, ev.actor_id)}" if ev.actor_id else ""
+            tgt = f" → {name_for(names, ev.target_id)}" if ev.target_id else ""
             lines.append(f"- [{ev.type}]{who}{tgt}{amount}")
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
@@ -110,11 +117,35 @@ async def _memory_block(session: AsyncSession, subject_id: int | None) -> str:
         return ""
 
 
+async def _chat_block(session: AsyncSession, channel: str, limit: int = 14) -> str:
+    """Свежая болтовня игроков в чате (кто что сказал) — по никам.
+
+    Берём последние сообщения из ``ai_messages`` роли ``chat`` (реплики живых
+    игроков, которые пишет middleware) и показываем как мини-стенограмму, чтобы
+    друн отвечал ПО КОНТЕКСТУ беседы, а не в вакууме.
+    """
+    try:
+        msgs = await drun_memory.recent_chat(session, channel=channel, limit=limit)
+        if not msgs:
+            return ""
+        names = await resolve_names(session, [m.user_id for m in msgs])
+        lines = ["Недавно в чате говорили:"]
+        for m in msgs:
+            who = (m.meta or {}).get("name") or name_for(names, m.user_id)
+            lines.append(f"- {who}: {m.content}")
+        return "\n".join(lines)
+    except Exception:  # noqa: BLE001
+        logger.debug("chat_block failed", exc_info=True)
+        return ""
+
+
 async def build_context(
     session: AsyncSession,
     *,
     subject_id: int | None = None,
     include_events: bool = True,
+    channel: str = "chat",
+    include_chat: bool = True,
 ) -> str:
     """Собирает полный контекстный блок (всё, что друн «видит» сейчас)."""
     blocks: list[str] = []
@@ -123,5 +154,7 @@ async def build_context(
     blocks.append(await _season_block(session))
     if include_events:
         blocks.append(await _events_block(session))
+    if include_chat:
+        blocks.append(await _chat_block(session, channel))
     blocks.append(await _memory_block(session, subject_id))
     return "\n\n".join(b for b in blocks if b).strip()

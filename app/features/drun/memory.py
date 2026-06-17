@@ -10,16 +10,50 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils import now_utc
 from app.models import AiMemory, AiMessage
 
+# Сколько символов реплики игрока храним (анти-раздувание контекста/токенов).
+_CHAT_MAX_CHARS = 320
+
 # --- Краткосрочная память (история) -----------------------------------------
+
+
+async def capture_chat(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    name: str,
+    content: str,
+    channel: str = "chat",
+) -> AiMessage | None:
+    """Сохраняет реплику живого игрока (role='chat') с ником в meta.
+
+    Возвращает запись или ``None``, если сообщение пустое после обрезки. Имя
+    кладём в ``meta.name`` — это снимок на момент сообщения (ник мог смениться).
+    Commit — на вызывающем (middleware фиксирует сессию после хендлера).
+    """
+    text = (content or "").strip()
+    if not text:
+        return None
+    if len(text) > _CHAT_MAX_CHARS:
+        text = text[: _CHAT_MAX_CHARS - 1].rstrip() + "…"
+    msg = AiMessage(
+        role="chat",
+        content=text,
+        channel=channel,
+        user_id=user_id,
+        meta={"name": name},
+    )
+    session.add(msg)
+    await session.flush()
+    return msg
 
 
 async def add_message(
@@ -56,11 +90,51 @@ async def recent_messages(
         await session.execute(
             select(AiMessage)
             .where(AiMessage.channel == channel)
+            .where(AiMessage.role.in_(("user", "assistant")))
             .order_by(AiMessage.created_at.desc())
             .limit(limit)
         )
     ).scalars().all()
     return list(reversed(rows))
+
+
+async def recent_chat(
+    session: AsyncSession, *, channel: str = "chat", limit: int = 14
+) -> list[AiMessage]:
+    """Последняя «болтовня» живых игроков (role='chat') в хронологии.
+
+    Это сырые реплики чата, которые пишет middleware — отдельно от диалоговых
+    user/assistant-ходов друна. Нужны, чтобы друн видел, о чём говорят люди.
+    """
+    rows = (
+        await session.execute(
+            select(AiMessage)
+            .where(AiMessage.channel == channel)
+            .where(AiMessage.role == "chat")
+            .order_by(AiMessage.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return list(reversed(rows))
+
+
+async def count_replies_today(
+    session: AsyncSession, *, channel: str = "chat"
+) -> int:
+    """Сколько реплик друн (role='assistant') выдал за последние сутки.
+
+    Используется как дневной кап (``posts_per_day_max``), чтобы друн не
+    превратился в спамера и не сжёг токены.
+    """
+    since = now_utc() - timedelta(days=1)
+    total = await session.scalar(
+        select(func.count())
+        .select_from(AiMessage)
+        .where(AiMessage.channel == channel)
+        .where(AiMessage.role == "assistant")
+        .where(AiMessage.created_at >= since)
+    )
+    return int(total or 0)
 
 
 # --- Долгосрочная память (факты) --------------------------------------------

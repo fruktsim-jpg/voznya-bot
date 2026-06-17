@@ -3,7 +3,7 @@
 Поток ``generate``:
 1. читаем конфиг (``ai_settings``); если не usable — молчим;
 2. собираем system prompt (персона + мир + правила);
-3. собираем контекст (статистика игрока, сезон, события, память);
+3. собираем контекст (статистика игрока, сезон, события, чат, память);
 4. подмешиваем краткосрочную историю канала;
 5. зовём провайдера; чистим вывод фильтром (анти-официоз);
 6. пишем запрос+ответ в ``ai_messages`` (краткосрочная память).
@@ -35,6 +35,11 @@ _DEFAULT_OBSERVATION = (
 _DEFAULT_REACTION = (
     "Среагируй коротко и в образе на самое заметное из последних событий."
 )
+_DEFAULT_REPLY = (
+    "К тебе обратился игрок (его реплика — в конце). Ответь коротко и в образе, "
+    "ПО СУЩЕСТВУ его сообщения и с учётом того, о чём недавно говорили в чате. "
+    "Зови людей по нику, а не по номеру. Не подыгрывай как ассистент."
+)
 
 
 @dataclass
@@ -53,6 +58,7 @@ async def generate(
     subject_id: int | None = None,
     channel: str = "chat",
     include_events: bool = True,
+    include_chat: bool = True,
     trigger_event_id: int | None = None,
     remember_message: bool = True,
 ) -> GenerateResult:
@@ -63,7 +69,11 @@ async def generate(
 
     system = await drun_persona.build_system_prompt(session)
     ctx = await drun_context.build_context(
-        session, subject_id=subject_id, include_events=include_events
+        session,
+        subject_id=subject_id,
+        include_events=include_events,
+        channel=channel,
+        include_chat=include_chat,
     )
 
     history = await drun_memory.recent_messages(session, channel=channel, limit=8)
@@ -139,4 +149,25 @@ async def react(
         subject_id=subject_id,
         channel=channel,
         trigger_event_id=trigger_event_id,
+    )
+
+
+async def respond(
+    session: AsyncSession,
+    *,
+    asker_id: int,
+    asker_name: str,
+    text: str,
+    channel: str = "chat",
+) -> GenerateResult:
+    """Ответ друна на обращение игрока в чате (по контексту беседы)."""
+    template = await drun_config.get_prompt(
+        session, drun_config.PROMPT_REPLY, _DEFAULT_REPLY
+    )
+    task = f'{template}\n\nРеплика игрока {asker_name}: «{text.strip()}»'
+    return await generate(
+        session,
+        task=task,
+        subject_id=asker_id,
+        channel=channel,
     )

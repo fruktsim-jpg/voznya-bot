@@ -34,6 +34,11 @@ KEY_TEMPERATURE = "temperature"
 KEY_MAX_TOKENS = "max_tokens"
 KEY_POSTS_PER_DAY = "posts_per_day_max"
 KEY_MIN_SEVERITY = "min_severity"
+# Реактивный режим (ответы в чате).
+KEY_REPLY_ENABLED = "reply_enabled"          # отвечать ли на обращения в чате
+KEY_REPLY_COOLDOWN = "reply_cooldown_sec"    # анти-спам: пауза между ответами
+KEY_NAME_TRIGGERS = "name_triggers"          # слова-обращения (по имени)
+KEY_RANDOM_CHANCE = "random_butt_in_chance"  # шанс случайного встревания (0..1)
 
 # Дефолты (БД переопределяет). base_url пустой → OpenAI по умолчанию в провайдере.
 DEFAULTS: dict[str, Any] = {
@@ -45,6 +50,10 @@ DEFAULTS: dict[str, Any] = {
     KEY_MAX_TOKENS: 320,
     KEY_POSTS_PER_DAY: 6,
     KEY_MIN_SEVERITY: 2,
+    KEY_REPLY_ENABLED: True,
+    KEY_REPLY_COOLDOWN: 20,
+    KEY_NAME_TRIGGERS: ["друн", "drun"],
+    KEY_RANDOM_CHANCE: 0.03,
 }
 
 # Имена промптов.
@@ -52,6 +61,7 @@ PROMPT_PERSONA = "persona"        # кто такой друн (голос) — 
 PROMPT_WORLD = "world"            # лор мира — обычно копия МИР.txt
 PROMPT_OBSERVATION = "observation"  # инструкция для одиночного наблюдения
 PROMPT_REACTION = "reaction"      # инструкция для реакции на событие
+PROMPT_REPLY = "reply"            # инструкция для ответа на обращение в чате
 
 
 @dataclass
@@ -66,6 +76,10 @@ class AiConfig:
     max_tokens: int
     posts_per_day_max: int
     min_severity: int
+    reply_enabled: bool
+    reply_cooldown_sec: int
+    name_triggers: list[str]
+    random_butt_in_chance: float
 
     @property
     def usable(self) -> bool:
@@ -131,6 +145,15 @@ async def get_config(session: AsyncSession) -> AiConfig:
         except (TypeError, ValueError):
             return d
 
+    def _as_str_list(v: Any, d: list[str]) -> list[str]:
+        if isinstance(v, list):
+            out = [str(x).strip().lower() for x in v if str(x).strip()]
+            return out or d
+        if isinstance(v, str):
+            out = [p.strip().lower() for p in v.split(",") if p.strip()]
+            return out or d
+        return d
+
     return AiConfig(
         enabled=_as_bool(_g(KEY_ENABLED)),
         base_url=str(_g(KEY_BASE_URL) or DEFAULTS[KEY_BASE_URL]).rstrip("/"),
@@ -140,6 +163,12 @@ async def get_config(session: AsyncSession) -> AiConfig:
         max_tokens=_as_int(_g(KEY_MAX_TOKENS), DEFAULTS[KEY_MAX_TOKENS]),
         posts_per_day_max=_as_int(_g(KEY_POSTS_PER_DAY), DEFAULTS[KEY_POSTS_PER_DAY]),
         min_severity=_as_int(_g(KEY_MIN_SEVERITY), DEFAULTS[KEY_MIN_SEVERITY]),
+        reply_enabled=_as_bool(_g(KEY_REPLY_ENABLED)),
+        reply_cooldown_sec=_as_int(_g(KEY_REPLY_COOLDOWN), DEFAULTS[KEY_REPLY_COOLDOWN]),
+        name_triggers=_as_str_list(_g(KEY_NAME_TRIGGERS), DEFAULTS[KEY_NAME_TRIGGERS]),
+        random_butt_in_chance=_as_float(
+            _g(KEY_RANDOM_CHANCE), DEFAULTS[KEY_RANDOM_CHANCE]
+        ),
     )
 
 

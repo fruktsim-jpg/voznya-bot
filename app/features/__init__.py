@@ -23,6 +23,7 @@ def get_feature_routers() -> list[Router]:
     from app.features.casino.handlers import router as casino_router
 
     from app.features.drun.handlers import router as drun_router
+    from app.features.drun.reply_handlers import router as drun_reply_router
     from app.features.duel.handlers import router as duel_router
     from app.features.farm.handlers import router as farm_router
     from app.features.gifts.claim_handlers import router as gift_claim_router
@@ -97,4 +98,7 @@ def get_feature_routers() -> list[Router]:
         moderation_router,
         # Тёмный друн (AI-нарратор): admin-команда /друн.
         drun_router,
+        # Реактивный друн: ответы на обращения в чате. СТРОГО последним, чтобы
+        # ловить только сообщения, не подхваченные командными роутерами.
+        drun_reply_router,
     ]
