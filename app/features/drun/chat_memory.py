@@ -37,16 +37,27 @@ _FACT_TTL_DAYS = 7
 _SYSTEM = (
     "Ты — аналитик чата. По логу болтовни выдели УСТОЙЧИВЫЕ наблюдения про "
     "людей: о чём человек постоянно говорит, его характер/манера, отношения и "
-    "союзы/конфликты между людьми, привычки в игре. Игнорируй разовый шум, "
+    "союзы/конфликты между людьми, привычки в игре, а также КЛИЧКИ которые "
+    "люди дают друг другу, общие ШУТКИ и МЕМЫ чата. Игнорируй разовый шум, "
     "команды и мусор. Только то, что реально повторяется или ярко характеризует."
 )
 _INSTRUCTION = (
     "Верни СТРОГО JSON-массив (без пояснений) до {max} объектов вида "
-    '{{"name":"ник","fact":"короткий факт о нём на русском","weight":1-3}}. '
+    '{{"name":"ник","category":"тип","fact":"короткий факт на русском",'
+    '"weight":1-3}}. '
+    "category — одно из: trait (черта характера), topic (постоянная тема), "
+    "nickname (кличка/прозвище кого-то), joke (повторяющаяся шутка), meme "
+    "(локальный мем чата), relationship (связь/конфликт/союз), habit (игровая "
+    "привычка). "
     "weight: 1 — мелочь, 2 — заметная черта, 3 — яркая определяющая черта. "
-    "Если ничего стоящего нет — верни []. Факт — это про человека, не про "
+    "Если ничего стоящего нет — верни []. Факт — это про человека/чат, не про "
     "конкретное сообщение. Пиши живым языком, как заметка для себя."
 )
+
+# Разрешённые категории (фолбэк → 'chat'). Хранятся в AiMemory.kind с префиксом.
+_CATEGORIES = frozenset({
+    "trait", "topic", "nickname", "joke", "meme", "relationship", "habit",
+})
 
 
 async def distill_chat(session: AsyncSession) -> int:
@@ -99,10 +110,14 @@ async def distill_chat(session: AsyncSession) -> int:
         if (subject_id, fact) in existing:
             continue
         existing.add((subject_id, fact))
+        # Типизируем память (#3): kind = "chat:<category>" — так ники/шутки/мемы
+        # отличимы и от обычных черт, и друг от друга.
+        cat = item.get("category", "")
+        kind = f"chat:{cat}" if cat in _CATEGORIES else "chat"
         session.add(
             AiMemory(
                 subject_id=subject_id,
-                kind="chat",
+                kind=kind,
                 fact=fact,
                 weight=item["weight"],
                 source="chat",
@@ -143,7 +158,10 @@ def _parse_facts(raw: str) -> list[dict]:
         except (TypeError, ValueError):
             weight = 1
         weight = max(1, min(3, weight))
-        out.append({"name": name, "fact": fact, "weight": weight})
+        category = str(el.get("category", "")).strip().lower()
+        out.append({
+            "name": name, "fact": fact, "weight": weight, "category": category,
+        })
     return out
 
 

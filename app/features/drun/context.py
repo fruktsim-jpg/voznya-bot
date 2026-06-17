@@ -402,8 +402,16 @@ async def _memory_block(
         if not mems:
             return ""
         lines = ["Что ты помнишь про людей и мир (используй для подколов и связей):"]
+        # Типизированные факты (клички/шутки/мемы) помечаем — это «фишки» чата,
+        # ими особенно ценно подкалывать и звать людей по локальным прозвищам.
+        tag = {
+            "chat:nickname": "[кличка] ",
+            "chat:joke": "[шутка] ",
+            "chat:meme": "[мем] ",
+        }
         for m in mems:
-            lines.append(f"- {m.fact}")
+            prefix = tag.get(getattr(m, "kind", "") or "", "")
+            lines.append(f"- {prefix}{m.fact}")
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
         logger.debug("memory_block failed", exc_info=True)
