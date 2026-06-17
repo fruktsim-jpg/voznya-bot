@@ -118,10 +118,13 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
         if chat_hot < 4:
             return
 
-    # Дневной кап — жёсткий предел расходов/спама.
-    replies_today = await drun_memory.count_replies_today(session, channel="chat")
-    if replies_today >= cfg.posts_per_day_max:
-        return
+    # Дневной кап — предел расходов/спама на АВТОНОМНЫЕ вкиды. Адресные
+    # обращения (reply/упоминание/имя) кап НЕ глушит: если человек прямо
+    # спрашивает друна, он обязан ответить, иначе бот выглядит сломанным.
+    if not addressed:
+        replies_today = await drun_memory.count_replies_today(session, channel="chat")
+        if replies_today >= cfg.posts_per_day_max:
+            return
 
     # Кулдаун канала: для адресных — мягче (отвечаем людям, но не строчим).
     if await _cooldown_active(session):
