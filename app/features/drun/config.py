@@ -124,13 +124,13 @@ ALL_ROLES = (
 # ВНИМАНИЕ: дублируется в v0-voznya/app/admin/ai/ai-manager.tsx
 # (RECOMMENDED_ROLE_MODELS) — при правке моделей синхронизируй оба места.
 DEFAULT_ROLE_MODELS: dict[str, str] = {
-    ROLE_NARRATOR: "claude-opus-4.8",        # живой голос — самая сильная
-    ROLE_MEMORY_EXTRACT: "gemini-3.5-flash", # дёшево и быстро, много вызовов
-    ROLE_MEMORY_SUMMARY: "claude-haiku-4.5", # компактные портреты
+    ROLE_NARRATOR: "claude-opus-4-8",        # живой голос — самая сильная
+    ROLE_MEMORY_EXTRACT: "gpt-5.4-mini",     # дёшево и быстро, много вызовов
+    ROLE_MEMORY_SUMMARY: "claude-haiku-4-5", # компактные портреты
     ROLE_EVENT_ANALYSIS: "gpt-5.4-mini",     # анализ событий
     ROLE_PLANNING: "gpt-5.4",                # точный разбор команд в JSON
-    ROLE_VISION: "gemini-3.1-pro-preview",   # мультимодальность
-    ROLE_MODERATION: "claude-sonnet-4.6",    # взвешенные модерац-решения
+    ROLE_VISION: "gpt-5.5",                  # мультимодальность (надёжно, RU)
+    ROLE_MODERATION: "claude-sonnet-4-6",    # взвешенные модерац-решения
 }
 
 
