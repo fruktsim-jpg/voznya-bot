@@ -109,12 +109,13 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
 
     # Адресные сообщения отвечаем всегда (в рамках капа); иначе — редкий рандом,
     # и то лишь когда в чате есть «движ» (несколько свежих реплик подряд), а не
-    # на одинокое сообщение в тишине — так вкиды реже и всегда в тему.
+    # на одинокое сообщение в тишине — так вкиды реже и всегда в тему. Дешёвую
+    # проверку рандома делаем ПЕРВОЙ, чтобы не бить в БД на каждое сообщение.
     if not addressed:
+        if random.random() >= max(0.0, cfg.random_butt_in_chance):
+            return
         chat_hot = await drun_memory.recent_chat_count(session, channel="chat", seconds=180)
         if chat_hot < 4:
-            return
-        if random.random() >= max(0.0, cfg.random_butt_in_chance):
             return
 
     # Дневной кап — жёсткий предел расходов/спама.

@@ -36,4 +36,7 @@ class Transaction(Base):
 
     __table_args__ = (
         Index("ix_transactions_user_reason", "user_id", "reason"),
+        # Под дневной лимит эконом-выходок друна (_ops_today): выборка по
+        # reason с временной границей, без user_id (см. 0046_drun_econ_index).
+        Index("ix_transactions_reason_created", "reason", "created_at"),
     )
