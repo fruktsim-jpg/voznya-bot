@@ -30,11 +30,18 @@ def _is_admin(message: Message) -> bool:
     )
 
 
-@router.message(RuCommand("друн", "drun"))
+@router.message(RuCommand("друн", "drun", allow_no_prefix=False))
 async def cmd_drun(
     message: Message, session: AsyncSession, command_args: str
 ) -> None:
-    """/друн [@игрок] — друн бросает наблюдение (про мир или про игрока)."""
+    """/друн [@игрок] — друн бросает наблюдение (про мир или про игрока).
+
+    ТОЛЬКО со слэшем (``/друн``): иначе любое сообщение, начинающееся со слова
+    «друн» («друн как дела»), перехватывалось бы этой admin-командой и не
+    доходило до reply-хендлера — друн либо молчал (не-админ), либо вкидывал
+    монолог вместо ответа. Обращение по имени «друн ...» обрабатывает
+    reply_handlers, а слэш-команда остаётся ручным admin-триггером.
+    """
     if not _is_admin(message):
         return
 
@@ -59,7 +66,7 @@ async def cmd_drun(
     await message.answer(result.text, parse_mode=None)
 
 
-@router.message(RuCommand("друноткат", "drunrollback"))
+@router.message(RuCommand("друноткат", "drunrollback", allow_no_prefix=False))
 async def cmd_drun_rollback(
     message: Message, session: AsyncSession, command_args: str
 ) -> None:
