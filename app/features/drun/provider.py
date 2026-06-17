@@ -149,3 +149,57 @@ def _err(data: Any) -> str:
         if err:
             return str(err)
     return str(data)[:300]
+
+
+async def vision(
+    cfg: AiConfig,
+    *,
+    system: str,
+    prompt: str,
+    image_b64: str,
+    media_type: str = "image/jpeg",
+    model: str | None = None,
+) -> str:
+    """Запрос с картинкой (#9): описать/прокомментировать изображение.
+
+    ``image_b64`` — base64 без префикса data-URI. Формирует мультимодальный
+    user-ход в формате нужного провайдера (OpenAI image_url с data-URI или
+    Anthropic image-block) и возвращает текст. Бросает :class:`LlmError`.
+    """
+    if not cfg.usable:
+        raise LlmError("AI disabled or api_key/model missing")
+    use_model = (model or cfg.model).strip() or cfg.model
+
+    import aiohttp
+
+    timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            if _is_anthropic(cfg.base_url, use_model):
+                content: list[dict[str, Any]] = [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": image_b64,
+                        },
+                    },
+                ]
+                msgs = [{"role": "user", "content": content}]
+                return await _anthropic_chat(http, cfg, system, msgs, use_model)
+            # OpenAI-совместимый мультимодальный формат.
+            content = [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{media_type};base64,{image_b64}"
+                    },
+                },
+            ]
+            msgs = [{"role": "user", "content": content}]
+            return await _openai_chat(http, cfg, system, msgs, use_model)
+    except aiohttp.ClientError as exc:
+        raise LlmError(f"network error: {exc}") from exc

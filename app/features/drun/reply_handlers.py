@@ -119,7 +119,7 @@ async def _set_cooldown(session: AsyncSession, seconds: int) -> None:
         cd.available_at = available
 
 
-@router.message(F.text | F.caption)
+@router.message((F.text | F.caption) & ~F.photo)
 async def on_chat_message(message: Message, session: AsyncSession) -> None:
     """Решает, отвечать ли друну на это сообщение, и отвечает в образе."""
     settings = get_settings()
@@ -266,3 +266,61 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
         await message.reply(out, parse_mode=None)
     else:
         await message.answer(out, parse_mode=None)
+
+
+@router.message(F.photo)
+async def on_photo_message(message: Message, session: AsyncSession) -> None:
+    """Друн анализирует присланное фото, но ТОЛЬКО когда к нему обратились (#9).
+
+    Чтобы не жечь vision-модель на каждую картинку в чате, реагируем лишь если
+    фото — это reply на бота, @упоминание или имя-обращение в подписи.
+    """
+    settings = get_settings()
+    if message.chat.id != settings.chat_id:
+        return
+    user = message.from_user
+    if user is None or user.is_bot:
+        return
+
+    cfg = await drun_config.get_config(session)
+    if not cfg.usable or not cfg.reply_enabled:
+        return
+
+    bot_id = message.bot.id if message.bot else 0
+    addressed = (
+        _is_reply_to_bot(message, bot_id)
+        or _has_mention(message, settings.bot_username)
+        or _has_name_trigger(message, cfg.name_triggers)
+    )
+    if not addressed:
+        return
+    if await _cooldown_active(session):
+        return
+
+    # Берём самый крупный вариант фото (последний в списке размеров).
+    photo = message.photo[-1] if message.photo else None
+    if photo is None or message.bot is None:
+        return
+    try:
+        import base64
+        from io import BytesIO
+
+        buf = BytesIO()
+        await message.bot.download(photo, destination=buf)
+        image_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:  # noqa: BLE001
+        logger.warning("drun photo download failed", exc_info=True)
+        return
+
+    result = await drun_service.describe_image(
+        session,
+        asker_id=user.id,
+        asker_name=_display_name(message),
+        image_b64=image_b64,
+        media_type="image/jpeg",
+        caption=message.caption or "",
+    )
+    if not result.ok:
+        return
+    await _set_cooldown(session, cfg.reply_cooldown_sec)
+    await message.reply(result.text, parse_mode=None)

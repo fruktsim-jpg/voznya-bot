@@ -294,3 +294,68 @@ async def announce_action(
         remember_message=False,
         memory_kind="monologue",
     )
+
+
+async def describe_image(
+    session: AsyncSession,
+    *,
+    asker_id: int,
+    asker_name: str,
+    image_b64: str,
+    media_type: str = "image/jpeg",
+    caption: str = "",
+    channel: str = "chat",
+) -> GenerateResult:
+    """Друн смотрит на присланное фото и реагирует в образе (#9, vision).
+
+    Использует ROLE_VISION-модель. Ответ сохраняем в краткосрочную память как
+    обычный ход диалога, чтобы беседа вокруг картинки была связной.
+    """
+    cfg = await drun_config.get_config(session)
+    if not cfg.usable:
+        return GenerateResult(ok=False, error="disabled")
+
+    system = await drun_persona.build_system_prompt(session)
+    # Подмешиваем досье собеседника и вайб — чтобы реакция была личной и в тему.
+    ctx = await drun_context.build_context(
+        session, subject_id=asker_id, include_events=False,
+        channel=channel, include_chat=True, chat_limit=8,
+    )
+    cap = drun_actions.sanitize_user_text(caption.strip()) if caption else ""
+    prompt = (
+        f"{ctx}\n\n# ЗАДАНИЕ\n"
+        f"{asker_name} скинул в чат картинку"
+        + (f" с подписью «{cap}»" if cap else "")
+        + ". Глянь на неё и кинь живую реакцию в образе: что видишь, подколи "
+        "или обыграй в тему чата. 1-2 фразы, без описи по пунктам, без «на "
+        "изображении представлено». Ты просто увидел картинку в чате и "
+        "среагировал как человек."
+    ).strip()
+
+    try:
+        raw = await drun_provider.vision(
+            cfg,
+            system=system,
+            prompt=prompt,
+            image_b64=image_b64,
+            media_type=media_type,
+            model=cfg.model_for(drun_config.ROLE_VISION),
+        )
+    except drun_provider.LlmError as exc:
+        logger.warning("drun vision failed: %s", exc)
+        return GenerateResult(ok=False, error=str(exc))
+
+    text = drun_filter.clean(raw, max_chars=1200)
+    if not text:
+        return GenerateResult(ok=False, error="empty")
+
+    user_note = f"{asker_name}: [картинка]" + (f" {cap}" if cap else "")
+    await drun_memory.add_message(
+        session, role="user", content=user_note, channel=channel,
+        user_id=asker_id, meta={"kind": "reply", "has_image": True},
+    )
+    await drun_memory.add_message(
+        session, role="assistant", content=text, channel=channel,
+        user_id=asker_id, meta={"kind": "reply", "to_name": asker_name},
+    )
+    return GenerateResult(ok=True, text=text)
