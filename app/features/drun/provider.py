@@ -27,8 +27,15 @@ class LlmError(RuntimeError):
     """Ошибка обращения к модели (сеть/HTTP/формат ответа)."""
 
 
-def _is_anthropic(base_url: str) -> bool:
-    return "anthropic" in base_url.lower()
+def _is_anthropic(base_url: str, model: str) -> bool:
+    """Anthropic-формат (``/v1/messages``) определяем по URL ИЛИ по модели.
+
+    Многие прокси/шлюзы отдают Claude по адресу без слова «anthropic», но сам
+    запрос всё равно обязан идти в Anthropic-формате — модель ``claude-*``
+    доступна только через ``/v1/messages``. Поэтому ориентируемся ещё и на имя
+    модели.
+    """
+    return "anthropic" in base_url.lower() or "claude" in model.lower()
 
 
 async def chat(
@@ -52,7 +59,7 @@ async def chat(
     timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as http:
-            if _is_anthropic(cfg.base_url):
+            if _is_anthropic(cfg.base_url, cfg.model):
                 return await _anthropic_chat(http, cfg, system, messages)
             return await _openai_chat(http, cfg, system, messages)
     except aiohttp.ClientError as exc:
