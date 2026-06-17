@@ -32,6 +32,7 @@ from app.features.treasure.service import setup_treasure_scheduler
 from app.features.drun.ears import DrunEarsMiddleware
 from app.features.drun.distill import setup_memory_distill
 from app.features.drun.chat_memory import setup_chat_distill
+from app.features.drun.profile import setup_profile_sweep
 
 from app.middlewares import (
     AntiFloodMiddleware,
@@ -136,6 +137,10 @@ async def on_startup(bot: Bot) -> None:
     # Живая память: LLM-дистилляция тем разговоров, характеров и отношений из
     # чата (раз в 45 мин) — чтобы друн помнил людей, а не только статистику.
     setup_chat_distill(scheduler, sessionmaker)
+
+    # Профили игроков: фоновый свип (раз в несколько минут) пересобирает досье
+    # активных игроков из всей базы + LLM-портрет — почти реалтайм-память.
+    setup_profile_sweep(scheduler, sessionmaker)
 
 
 

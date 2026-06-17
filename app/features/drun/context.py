@@ -77,6 +77,27 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                 f"- ТВОЁ ОТНОШЕНИЕ [{stance.label}]: {stance.directive}"
             )
 
+        # Собранный портрет (личность + манера речи + темы): делает друна
+        # «знающим» собеседника как человека, а не по сухим цифрам.
+        try:
+            from app.models import AiProfile
+
+            prof = await session.get(AiProfile, user_id)
+            if prof is not None:
+                if prof.summary:
+                    lines.append(f"- ЛИЧНОСТЬ: {prof.summary}")
+                if prof.speech_style:
+                    lines.append(f"- МАНЕРА РЕЧИ: {prof.speech_style}")
+                pdata = prof.data or {}
+                traits = pdata.get("traits") or []
+                if traits:
+                    lines.append("- ЧЕРТЫ: " + "; ".join(traits[:5]))
+                topics = pdata.get("topics") or []
+                if topics:
+                    lines.append("- ЧАСТО ПРО: " + ", ".join(topics[:5]))
+        except Exception:  # noqa: BLE001
+            logger.debug("profile block failed", exc_info=True)
+
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
         logger.debug("player_block failed", exc_info=True)
