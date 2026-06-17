@@ -240,3 +240,109 @@ async def relevant_memories(
         )
     ).scalars().all()
     return list(rows)
+
+
+# --- Умный отбор памяти (Phase 3): вес × свежесть × релевантность теме --------
+
+# Длина «хвоста значимости»: за столько дней вклад свежести падает вдвое.
+_RECENCY_HALFLIFE_DAYS = 21.0
+# Сколько кандидатов тянем из БД перед скорингом (берём с запасом, чтобы было
+# из чего выбирать; скоринг в Python дешевле второго прохода SQL).
+_CANDIDATE_POOL = 60
+# Стоп-слова: не считаем их за «тему» при пересечении с запросом.
+_STOPWORDS = frozenset({
+    "и", "в", "во", "не", "что", "он", "на", "я", "с", "со", "как", "а",
+    "то", "все", "она", "так", "его", "но", "да", "ты", "к", "у", "же",
+    "вы", "за", "бы", "по", "ее", "мне", "было", "вот", "от", "меня",
+    "это", "о", "из", "ему", "теперь", "был", "до", "вас", "там",
+    "для", "мы", "тебя", "их", "чем", "была", "сам", "чтоб", "без", "ли",
+    "если", "уже", "или", "ни", "быть", "себя", "под", "будет", "кто",
+    "этот", "того", "потому", "этого", "какой", "ну", "ее", "при", "this",
+})
+
+
+def _tokenize(text: str) -> set[str]:
+    """Грубая токенизация в множество значимых слов (lowercase, без стоп-слов)."""
+    out: set[str] = set()
+    cur: list[str] = []
+    for ch in (text or "").lower():
+        if ch.isalnum():
+            cur.append(ch)
+        else:
+            if cur:
+                w = "".join(cur)
+                cur = []
+                if len(w) >= 3 and w not in _STOPWORDS:
+                    out.add(w)
+    if cur:
+        w = "".join(cur)
+        if len(w) >= 3 and w not in _STOPWORDS:
+            out.add(w)
+    return out
+
+
+def _score_memory(
+    mem: AiMemory, query_tokens: set[str], now: datetime
+) -> float:
+    """Скор памяти = вес + свежесть + тематическое пересечение с запросом.
+
+    * вес (weight) — базовая значимость, как было раньше;
+    * свежесть — экспоненциальный спад по возрасту (полураспад ~3 недели),
+      чтобы старые факты не вытесняли актуальные навсегда;
+    * тема — сколько значимых слов запроса встречается в тексте факта; это
+      поднимает «по теме» воспоминания именно к текущей реплике собеседника.
+    """
+    score = float(mem.weight or 0)
+    # Свежесть: 0..~3 за недавность.
+    created = mem.created_at
+    if created is not None:
+        if created.tzinfo is None:
+            age_days = max(0.0, (now.replace(tzinfo=None) - created).days)
+        else:
+            age_days = max(0.0, (now - created).total_seconds() / 86400.0)
+        score += 3.0 * (0.5 ** (age_days / _RECENCY_HALFLIFE_DAYS))
+    # Тема: каждое совпавшее слово запроса в факте — весомый буст.
+    if query_tokens:
+        fact_tokens = _tokenize(mem.fact)
+        overlap = len(query_tokens & fact_tokens)
+        if overlap:
+            score += 2.5 * overlap
+    return score
+
+
+async def scored_memories(
+    session: AsyncSession,
+    *,
+    subject_id: int | None = None,
+    query: str | None = None,
+    limit: int = 8,
+) -> list[AiMemory]:
+    """Отбирает факты с учётом веса, свежести и релевантности теме ``query``.
+
+    Поведение для пустого ``query`` совпадает с ``relevant_memories`` по смыслу
+    (вес + свежесть), но без жёсткого «только по весу»: свежие важные факты не
+    тонут под старыми тяжёлыми. Если ``query`` задан (реплика собеседника) —
+    воспоминания по теме всплывают наверх.
+    """
+    now = now_utc()
+    not_expired = or_(AiMemory.expires_at.is_(None), AiMemory.expires_at > now)
+    if subject_id is not None:
+        scope = or_(AiMemory.subject_id.is_(None), AiMemory.subject_id == subject_id)
+    else:
+        scope = AiMemory.subject_id.is_(None)
+    # Тянем пул кандидатов: самые тяжёлые + свежие, потом ранжируем в Python.
+    rows = (
+        await session.execute(
+            select(AiMemory)
+            .where(and_(not_expired, scope))
+            .order_by(AiMemory.weight.desc(), AiMemory.created_at.desc())
+            .limit(_CANDIDATE_POOL)
+        )
+    ).scalars().all()
+    if not rows:
+        return []
+    query_tokens = _tokenize(query) if query else set()
+    ranked = sorted(
+        rows, key=lambda m: _score_memory(m, query_tokens, now), reverse=True
+    )
+    return ranked[:limit]

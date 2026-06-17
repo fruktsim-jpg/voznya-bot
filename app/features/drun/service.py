@@ -82,6 +82,7 @@ async def generate(
     memory_kind: str = "monologue",
     allow_actions: bool = False,
     role: str | None = None,
+    query: str | None = None,
 ) -> GenerateResult:
     """Генерирует одну реплику друна под конкретное задание ``task``.
 
@@ -109,6 +110,7 @@ async def generate(
         channel=channel,
         include_chat=include_chat,
         chat_limit=chat_limit,
+        query=query,
     )
 
     history = await drun_memory.recent_messages(session, channel=channel, limit=10)
@@ -249,6 +251,7 @@ async def respond(
         memory_user_content=f"{asker_name}: {safe_text}",
         memory_kind="reply",
         allow_actions=True,
+        query=safe_text,
     )
 
 

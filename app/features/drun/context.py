@@ -364,10 +364,12 @@ async def _overview_block(session: AsyncSession) -> str:
         return ""
 
 
-async def _memory_block(session: AsyncSession, subject_id: int | None) -> str:
+async def _memory_block(
+    session: AsyncSession, subject_id: int | None, query: str | None = None
+) -> str:
     try:
-        mems = await drun_memory.relevant_memories(
-            session, subject_id=subject_id, limit=24
+        mems = await drun_memory.scored_memories(
+            session, subject_id=subject_id, query=query, limit=24
         )
         if not mems:
             return ""
@@ -496,6 +498,7 @@ async def build_context(
     channel: str = "chat",
     include_chat: bool = True,
     chat_limit: int = 24,
+    query: str | None = None,
 ) -> str:
     """Собирает полный контекстный блок (всё, что друн «видит» сейчас).
 
@@ -505,6 +508,10 @@ async def build_context(
     ``chat_limit`` — сколько реплик чата подмешивать. Для прямого ответа человеку
     берём меньше (чтобы его сообщение не утонуло в логе), для автономного вкида —
     больше (друну нужно почувствовать беседу).
+
+    ``query`` — текст текущей реплики собеседника. Если задан, блок ПАМЯТЬ
+    ранжируется не только по весу/свежести, но и по релевантности этой теме —
+    наверх всплывают воспоминания «в тему» разговора.
     """
     blocks: list[str] = [await _now_block()]
     # Вайб чата осмыслен только когда мы вообще подмешиваем чат: для отчётов/
@@ -515,7 +522,7 @@ async def build_context(
         blocks.append(await _player_block(session, subject_id))
     if include_chat:
         blocks.append(await _chat_block(session, channel, limit=chat_limit))
-    blocks.append(await _memory_block(session, subject_id))
+    blocks.append(await _memory_block(session, subject_id, query))
     blocks.append(await _overview_block(session))
     blocks.append(await _season_block(session))
     if include_events:
