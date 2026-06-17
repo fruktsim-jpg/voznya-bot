@@ -200,6 +200,19 @@ async def _h_kick(ctx: ToolContext) -> drun_tools.ToolResult:
     )
 
 
+async def _h_websearch(ctx: ToolContext) -> drun_tools.ToolResult:
+    from app.features.drun import websearch as drun_web
+
+    res = await drun_web.search(ctx.session, ctx.arg_str("query", limit=300))
+    if not res.ok:
+        return drun_tools.ToolResult(
+            ok=False, error=f"веб недоступен ({res.error})"
+        )
+    return drun_tools.ToolResult(
+        ok=True, summary=res.summary, meta={"web": True, "query": res.query},
+    )
+
+
 async def _h_grant_item(ctx: ToolContext) -> drun_tools.ToolResult:
     who = ctx.arg_str("who")
     target = await ctx.resolve_who(who)
@@ -220,6 +233,17 @@ async def _h_multiplier(ctx: ToolContext) -> drun_tools.ToolResult:
 # spawn_treasure исполняется в reply_handlers (нужен bot+своя сессия), поэтому
 # здесь только маркер: диспетчер вернёт его как отложенное действие.
 SPAWN_TREASURE_SENTINEL = "__spawn_treasure__"
+# Аналогично рисование: генерация+отправка фото идёт в reply_handlers (нужен bot).
+DRAW_IMAGE_SENTINEL = "__draw_image__"
+
+
+async def _h_draw(ctx: ToolContext) -> drun_tools.ToolResult:
+    # Сам рисунок делает reply_handlers (есть bot для отправки фото). Сюда
+    # прокидываем текст просьбы через meta.
+    return drun_tools.ToolResult(
+        ok=True, summary=DRAW_IMAGE_SENTINEL,
+        meta={"request": ctx.arg_str("request", limit=400)},
+    )
 
 
 async def _h_spawn_treasure(ctx: ToolContext) -> drun_tools.ToolResult:
@@ -314,6 +338,22 @@ REGISTRY: dict[str, ToolSpec] = {
             "who (str), reason (str)",
             _h_kick,
             ("кик", "кикни", "выгони", "выкини", "kick", "выпни"),
+        ),
+        ToolSpec(
+            "web_search",
+            "поискать в интернете и вернуть краткую выжимку",
+            "query (str)",
+            _h_websearch,
+            ("погугли", "загугли", "поищи", "найди в интернете", "google",
+             "что такое", "кто такой"),
+        ),
+        ToolSpec(
+            "draw",
+            "нарисовать картинку по просьбе и кинуть в чат",
+            "request (str)",
+            _h_draw,
+            ("нарисуй", "рисуй", "набросай", "сгенери картинку", "draw",
+             "изобрази", "покажи как выглядит"),
         ),
         ToolSpec(
             "grant_item",

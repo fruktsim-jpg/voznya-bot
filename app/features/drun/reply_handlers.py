@@ -119,6 +119,41 @@ async def _set_cooldown(session: AsyncSession, seconds: int) -> None:
         cd.available_at = available
 
 
+async def _do_draw(
+    session: AsyncSession, message: Message, *, request: str, cfg,
+) -> None:
+    """Генерит картинку по просьбе и кидает её фото в чат (#10).
+
+    Вынесено сюда, т.к. нужен bot-объект для отправки фото. Картинку рисует
+    service.draw_image (с дневным капом и предохранителями).
+    """
+    from aiogram.types import BufferedInputFile
+
+    try:
+        res = await drun_service.draw_image(
+            session,
+            asker_id=message.from_user.id if message.from_user else 0,
+            asker_name=_display_name(message),
+            request=request,
+        )
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("drun draw failed", exc_info=True)
+        await message.reply("рука дрогнула, не нарисовалось", parse_mode=None)
+        return
+    if not res.ok or not res.image:
+        note = {
+            "disabled": "я сейчас не рисую",
+            "cap": "на сегодня дорисовался, приходи завтра",
+            "empty": "а что рисовать-то?",
+        }.get(res.error, "не нарисовалось, бывает")
+        await message.reply(note, parse_mode=None)
+        return
+    await _set_cooldown(session, cfg.reply_cooldown_sec)
+    photo = BufferedInputFile(res.image, filename="drun.png")
+    await message.reply_photo(photo, caption=(res.caption or None))
+
+
 @router.message((F.text | F.caption) & ~F.photo)
 async def on_chat_message(message: Message, session: AsyncSession) -> None:
     """Решает, отвечать ли друну на это сообщение, и отвечает в образе."""
@@ -201,6 +236,14 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
                     except Exception:  # noqa: BLE001
                         logger.warning("owner spawn_treasure failed", exc_info=True)
                         await message.reply("клад застрял в кармане, попробуй ещё", parse_mode=None)
+                    return
+                # Рисование (#10): генерим картинку и кидаем фото в чат.
+                if outcome.ok and outcome.summary == "__draw_image__":
+                    await _do_draw(
+                        session, message,
+                        request=(outcome.meta or {}).get("request", "") or text,
+                        cfg=cfg,
+                    )
                     return
                 # Фиксируем результат инструмента ДО медленного announce-вызова к
                 # LLM: иначе строковые блокировки FOR UPDATE на затронутых

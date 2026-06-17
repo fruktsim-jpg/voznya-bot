@@ -203,3 +203,62 @@ async def vision(
             return await _openai_chat(http, cfg, system, msgs, use_model)
     except aiohttp.ClientError as exc:
         raise LlmError(f"network error: {exc}") from exc
+
+
+async def generate_image(cfg: AiConfig, *, prompt: str) -> bytes:
+    """Генерация картинки (#10) через OpenAI images-совместимый endpoint.
+
+    Возвращает PNG-байты. Конфиг берётся из image_* настроек (ключ — image_api_key
+    с фолбэком на api_key). Бросает :class:`LlmError` при любой проблеме.
+    """
+    if not cfg.image_usable:
+        raise LlmError("image generation disabled or misconfigured")
+
+    import base64
+
+    import aiohttp
+
+    url = f"{cfg.image_base_url}/images/generations"
+    key = cfg.image_api_key or cfg.api_key
+    payload = {
+        "model": cfg.image_model,
+        "prompt": prompt[:1000],
+        "n": 1,
+        "size": "1024x1024",
+    }
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    timeout = aiohttp.ClientTimeout(total=120)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.post(url, json=payload, headers=headers) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status >= 400:
+                    raise LlmError(f"HTTP {resp.status}: {_err(data)}")
+    except aiohttp.ClientError as exc:
+        raise LlmError(f"network error: {exc}") from exc
+
+    try:
+        item = data["data"][0]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise LlmError(f"bad image response: {data}") from exc
+    # Endpoint может вернуть base64 (b64_json) или ссылку (url).
+    b64 = item.get("b64_json")
+    if b64:
+        try:
+            return base64.b64decode(b64)
+        except Exception as exc:  # noqa: BLE001
+            raise LlmError(f"bad b64 image: {exc}") from exc
+    img_url = item.get("url")
+    if img_url:
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as http:
+                async with http.get(img_url) as r2:
+                    if r2.status >= 400:
+                        raise LlmError(f"image fetch HTTP {r2.status}")
+                    return await r2.read()
+        except aiohttp.ClientError as exc:
+            raise LlmError(f"image fetch error: {exc}") from exc
+    raise LlmError("no image payload (b64_json/url) in response")

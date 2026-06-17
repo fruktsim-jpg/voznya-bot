@@ -359,3 +359,88 @@ async def describe_image(
         user_id=asker_id, meta={"kind": "reply", "to_name": asker_name},
     )
     return GenerateResult(ok=True, text=text)
+
+
+@dataclass
+class ImageResult:
+    """Результат генерации картинки (#10)."""
+
+    ok: bool
+    image: bytes | None = None
+    caption: str = ""
+    error: str = ""
+
+
+# Маркер сгенерированных картинок в ai_messages — для дневного капа.
+_IMAGE_ROLE = "image_gen"
+
+
+async def _images_today(session: AsyncSession) -> int:
+    """Сколько картинок друн сгенерил за последние сутки (дневной кап)."""
+    from datetime import timedelta
+
+    from sqlalchemy import func as _f, select
+
+    from app.core.utils import now_utc
+    from app.models import AiMessage
+
+    since = now_utc() - timedelta(days=1)
+    total = await session.scalar(
+        select(_f.count()).select_from(AiMessage)
+        .where(AiMessage.role == _IMAGE_ROLE)
+        .where(AiMessage.created_at >= since)
+    )
+    return int(total or 0)
+
+
+async def draw_image(
+    session: AsyncSession, *, asker_id: int, asker_name: str, request: str,
+    channel: str = "chat",
+) -> ImageResult:
+    """Друн рисует картинку по просьбе (#10). Коммит — на вызывающем.
+
+    Сначала просим narrator-модель собрать насыщенный визуальный промпт в духе
+    мира Возни (на английском — диффузионки его лучше понимают), потом зовём
+    image-провайдер. Дневной кап (``image_daily_cap``) — анти-расход.
+    """
+    cfg = await drun_config.get_config(session)
+    if not cfg.image_usable:
+        return ImageResult(ok=False, error="disabled")
+    if await _images_today(session) >= cfg.image_daily_cap:
+        return ImageResult(ok=False, error="cap")
+
+    req = drun_actions.sanitize_user_text((request or "").strip())[:400]
+    if not req:
+        return ImageResult(ok=False, error="empty")
+
+    # 1) narrator превращает просьбу в визуальный промпт (и короткую подпись).
+    try:
+        system = await drun_persona.build_system_prompt(session)
+        prompt_task = (
+            "Игрок просит тебя нарисовать картинку. Составь ОДИН насыщенный "
+            "промпт для диффузионной модели на английском (стиль, сюжет, свет, "
+            "детали, без текста на картинке). Верни только промпт, одной "
+            f"строкой, без кавычек.\n\n# ПРОСЬБА: {req}"
+        )
+        img_prompt = await drun_provider.chat(
+            cfg, system=system,
+            messages=[{"role": "user", "content": prompt_task}],
+            model=cfg.model_for(drun_config.ROLE_NARRATOR),
+        )
+        img_prompt = drun_filter.clean(img_prompt, max_chars=1000) or req
+    except drun_provider.LlmError:
+        img_prompt = req  # фолбэк: рисуем прямо по просьбе
+
+    # 2) генерим картинку.
+    try:
+        image = await drun_provider.generate_image(cfg, prompt=img_prompt)
+    except drun_provider.LlmError as exc:
+        logger.warning("drun image gen failed: %s", exc)
+        return ImageResult(ok=False, error=str(exc))
+
+    # Учитываем для дневного капа.
+    await drun_memory.add_message(
+        session, role=_IMAGE_ROLE, content=img_prompt[:500], channel=channel,
+        user_id=asker_id,
+    )
+    return ImageResult(ok=True, image=image, caption=req)

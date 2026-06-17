@@ -47,6 +47,16 @@ KEY_ECON_MAX_PCT = "econ_max_pct"            # макс. доля баланса
 KEY_ECON_MAX_ABS = "econ_max_abs"            # макс. абсолют ешек за операцию
 KEY_ECON_COOLDOWN_SEC = "econ_cooldown_sec"  # пауза между операциями над одним игроком
 KEY_ECON_DAILY_CAP = "econ_daily_cap"        # макс. операций в день на весь чат
+# Веб-доступ (#11): друн может искать в интернете на запрос. Жёстко off по умолч.
+KEY_WEB_ENABLED = "web_enabled"
+KEY_WEB_SEARCH_URL = "web_search_url"        # endpoint поиска (SearXNG/совместимый JSON)
+KEY_WEB_DAILY_CAP = "web_daily_cap"          # макс. веб-запросов в сутки
+# Генерация картинок (#10): друн может рисовать. Жёстко off по умолчанию.
+KEY_IMAGE_ENABLED = "image_enabled"
+KEY_IMAGE_BASE_URL = "image_base_url"        # endpoint генерации (OpenAI images-совместимый)
+KEY_IMAGE_API_KEY = "image_api_key"          # ключ (если пуст — берём api_key)
+KEY_IMAGE_MODEL = "image_model"              # модель генерации
+KEY_IMAGE_DAILY_CAP = "image_daily_cap"      # макс. картинок в сутки
 
 # Дефолты (БД переопределяет). base_url пустой → OpenAI по умолчанию в провайдере.
 DEFAULTS: dict[str, Any] = {
@@ -69,6 +79,14 @@ DEFAULTS: dict[str, Any] = {
     KEY_ECON_MAX_ABS: 1000,
     KEY_ECON_COOLDOWN_SEC: 7200,
     KEY_ECON_DAILY_CAP: 20,
+    KEY_WEB_ENABLED: False,
+    KEY_WEB_SEARCH_URL: "",
+    KEY_WEB_DAILY_CAP: 50,
+    KEY_IMAGE_ENABLED: False,
+    KEY_IMAGE_BASE_URL: "",
+    KEY_IMAGE_API_KEY: "",
+    KEY_IMAGE_MODEL: "gpt-image-1",
+    KEY_IMAGE_DAILY_CAP: 20,
 }
 
 # Имена промптов.
@@ -136,10 +154,33 @@ class AiConfig:
     econ_cooldown_sec: int
     econ_daily_cap: int
 
+    # Веб-доступ (#11) и генерация картинок (#10) — опциональны, off по умолчанию.
+    web_enabled: bool = False
+    web_search_url: str = ""
+    web_daily_cap: int = 50
+    image_enabled: bool = False
+    image_base_url: str = ""
+    image_api_key: str = ""
+    image_model: str = ""
+    image_daily_cap: int = 20
+
     @property
     def usable(self) -> bool:
         """Можно ли реально дёргать модель (включено и есть ключ)."""
         return bool(self.enabled and self.api_key and self.model)
+
+    @property
+    def web_usable(self) -> bool:
+        """Веб-поиск доступен (включён и задан endpoint)."""
+        return bool(self.web_enabled and self.web_search_url)
+
+    @property
+    def image_usable(self) -> bool:
+        """Генерация картинок доступна (включена, есть endpoint/модель/ключ)."""
+        key = self.image_api_key or self.api_key
+        return bool(
+            self.image_enabled and self.image_base_url and self.image_model and key
+        )
 
     def model_for(self, role: str) -> str:
         """Модель для конкретной роли (мульти-модельность).
@@ -266,10 +307,21 @@ async def get_config(session: AsyncSession) -> AiConfig:
             _g(KEY_ECON_COOLDOWN_SEC), DEFAULTS[KEY_ECON_COOLDOWN_SEC]
         ),
         econ_daily_cap=_as_int(_g(KEY_ECON_DAILY_CAP), DEFAULTS[KEY_ECON_DAILY_CAP]),
+        web_enabled=_as_bool(_g(KEY_WEB_ENABLED)),
+        web_search_url=str(_g(KEY_WEB_SEARCH_URL) or "").rstrip("/"),
+        web_daily_cap=_as_int(_g(KEY_WEB_DAILY_CAP), DEFAULTS[KEY_WEB_DAILY_CAP]),
+        image_enabled=_as_bool(_g(KEY_IMAGE_ENABLED)),
+        image_base_url=str(_g(KEY_IMAGE_BASE_URL) or "").rstrip("/"),
+        image_api_key=str(_g(KEY_IMAGE_API_KEY) or ""),
+        image_model=str(_g(KEY_IMAGE_MODEL) or DEFAULTS[KEY_IMAGE_MODEL]),
+        image_daily_cap=_as_int(_g(KEY_IMAGE_DAILY_CAP), DEFAULTS[KEY_IMAGE_DAILY_CAP]),
     )
 
 
 async def get_prompt(session: AsyncSession, name: str, default: str = "") -> str:
+    """Возвращает тело промпта по имени (или ``default``, если не задан)."""
+    await _ensure_loaded(session)
+    return _prompts_cache.get(name, default)
     """Возвращает тело промпта по имени (или ``default``, если не задан)."""
     await _ensure_loaded(session)
     return _prompts_cache.get(name, default)
