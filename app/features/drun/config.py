@@ -39,6 +39,12 @@ KEY_REPLY_ENABLED = "reply_enabled"          # отвечать ли на обр
 KEY_REPLY_COOLDOWN = "reply_cooldown_sec"    # анти-спам: пауза между ответами
 KEY_NAME_TRIGGERS = "name_triggers"          # слова-обращения (по имени)
 KEY_RANDOM_CHANCE = "random_butt_in_chance"  # шанс случайного встревания (0..1)
+# Экономическая власть друна (налог/подачка). Жёсткие предохранители.
+KEY_ECON_ENABLED = "econ_enabled"            # включена ли власть над ешками
+KEY_ECON_MAX_PCT = "econ_max_pct"            # макс. доля баланса за операцию (0..1)
+KEY_ECON_MAX_ABS = "econ_max_abs"            # макс. абсолют ешек за операцию
+KEY_ECON_COOLDOWN_SEC = "econ_cooldown_sec"  # пауза между операциями над одним игроком
+KEY_ECON_DAILY_CAP = "econ_daily_cap"        # макс. операций в день на весь чат
 
 # Дефолты (БД переопределяет). base_url пустой → OpenAI по умолчанию в провайдере.
 DEFAULTS: dict[str, Any] = {
@@ -54,6 +60,11 @@ DEFAULTS: dict[str, Any] = {
     KEY_REPLY_COOLDOWN: 20,
     KEY_NAME_TRIGGERS: ["друн", "drun"],
     KEY_RANDOM_CHANCE: 0.03,
+    KEY_ECON_ENABLED: False,
+    KEY_ECON_MAX_PCT: 0.05,
+    KEY_ECON_MAX_ABS: 1000,
+    KEY_ECON_COOLDOWN_SEC: 7200,
+    KEY_ECON_DAILY_CAP: 20,
 }
 
 # Имена промптов.
@@ -80,6 +91,11 @@ class AiConfig:
     reply_cooldown_sec: int
     name_triggers: list[str]
     random_butt_in_chance: float
+    econ_enabled: bool
+    econ_max_pct: float
+    econ_max_abs: int
+    econ_cooldown_sec: int
+    econ_daily_cap: int
 
     @property
     def usable(self) -> bool:
@@ -169,6 +185,13 @@ async def get_config(session: AsyncSession) -> AiConfig:
         random_butt_in_chance=_as_float(
             _g(KEY_RANDOM_CHANCE), DEFAULTS[KEY_RANDOM_CHANCE]
         ),
+        econ_enabled=_as_bool(_g(KEY_ECON_ENABLED)),
+        econ_max_pct=_as_float(_g(KEY_ECON_MAX_PCT), DEFAULTS[KEY_ECON_MAX_PCT]),
+        econ_max_abs=_as_int(_g(KEY_ECON_MAX_ABS), DEFAULTS[KEY_ECON_MAX_ABS]),
+        econ_cooldown_sec=_as_int(
+            _g(KEY_ECON_COOLDOWN_SEC), DEFAULTS[KEY_ECON_COOLDOWN_SEC]
+        ),
+        econ_daily_cap=_as_int(_g(KEY_ECON_DAILY_CAP), DEFAULTS[KEY_ECON_DAILY_CAP]),
     )
 
 

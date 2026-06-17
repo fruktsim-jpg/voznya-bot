@@ -125,6 +125,45 @@ async def recent_chat(
     return list(reversed(rows))
 
 
+async def recent_self_posts(
+    session: AsyncSession, *, channel: str = "chat", limit: int = 6
+) -> list[str]:
+    """Последние СОБСТВЕННЫЕ реплики друна (role='assistant') — для анти-повтора.
+
+    Возвращает только тексты (новые первыми), чтобы подмешать в контекст
+    «вот что ты уже говорил, не повторяй зачины/обороты/жертв».
+    """
+    rows = (
+        await session.execute(
+            select(AiMessage.content)
+            .where(AiMessage.channel == channel)
+            .where(AiMessage.role == "assistant")
+            .order_by(AiMessage.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    return [r for r in rows if r]
+
+
+async def recent_chat_count(
+    session: AsyncSession, *, channel: str = "chat", seconds: int = 180
+) -> int:
+    """Сколько живых реплик игроков было за последние ``seconds`` секунд.
+
+    Индикатор «движа» в чате: используется, чтобы случайные вкиды друна
+    случались только когда есть о чём говорить, а не в мёртвой тишине.
+    """
+    since = now_utc() - timedelta(seconds=seconds)
+    total = await session.scalar(
+        select(func.count())
+        .select_from(AiMessage)
+        .where(AiMessage.channel == channel)
+        .where(AiMessage.role == "chat")
+        .where(AiMessage.created_at >= since)
+    )
+    return int(total or 0)
+
+
 async def count_replies_today(
     session: AsyncSession, *, channel: str = "chat"
 ) -> int:

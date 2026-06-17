@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logger import get_logger
 from app.features.drun import config as drun_config
 from app.features.drun import context as drun_context
+from app.features.drun import actions as drun_actions
 from app.features.drun import filter as drun_filter
 from app.features.drun import memory as drun_memory
 from app.features.drun import persona as drun_persona
@@ -52,6 +53,7 @@ class GenerateResult:
     ok: bool
     text: str = ""
     error: str = ""
+    econ: object | None = None  # econ.EconResult, если друн применил налог/подачку
 
 
 async def generate(
@@ -66,6 +68,7 @@ async def generate(
     remember_message: bool = True,
     memory_user_content: str | None = None,
     memory_kind: str = "monologue",
+    allow_actions: bool = False,
 ) -> GenerateResult:
     """Генерирует одну реплику друна под конкретное задание ``task``.
 
@@ -83,7 +86,9 @@ async def generate(
     if not cfg.usable:
         return GenerateResult(ok=False, error="disabled")
 
-    system = await drun_persona.build_system_prompt(session)
+    system = await drun_persona.build_system_prompt(
+        session, econ_enabled=(allow_actions and cfg.econ_enabled)
+    )
     ctx = await drun_context.build_context(
         session,
         subject_id=subject_id,
@@ -111,6 +116,18 @@ async def generate(
     if not text:
         return GenerateResult(ok=False, error="empty")
 
+    # Экономическая выходка (налог/подачка), если друн вставил директиву и
+    # власть включена. Применяем к собеседнику; директиву вырезаем из текста.
+    econ_result = None
+    if allow_actions and cfg.econ_enabled:
+        econ_result = await drun_actions.apply_if_any(
+            session, cfg=cfg, target_id=subject_id, text=text
+        )
+    if drun_actions.parse(text) is not None:
+        text = drun_actions.strip_directives(text)
+        if not text:
+            text = "..."
+
     if remember_message:
         # В историю кладём чистую реплику (а не весь шаблон), чтобы диалог
         # читался по-человечески и не засорял контекст инструкциями. Тип хода
@@ -135,7 +152,7 @@ async def generate(
             meta={"kind": memory_kind},
         )
 
-    return GenerateResult(ok=True, text=text)
+    return GenerateResult(ok=True, text=text, econ=econ_result)
 
 
 async def observe(
@@ -193,4 +210,5 @@ async def respond(
         channel=channel,
         memory_user_content=f"{asker_name}: {text.strip()}",
         memory_kind="reply",
+        allow_actions=True,
     )

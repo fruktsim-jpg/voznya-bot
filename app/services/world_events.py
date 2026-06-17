@@ -42,6 +42,9 @@ EVENT_MARRIAGE_CREATED = "marriage_created"
 EVENT_MMR_RANK_UP = "mmr_rank_up"
 EVENT_DUEL_WON = "duel_won"
 EVENT_SEASON_ENDED = "season_ended"
+# Экономические выходки друна (налоговая/подачка из жалости).
+EVENT_DRUN_TAX = "drun_tax"
+EVENT_DRUN_GRANT = "drun_grant"
 
 DEFAULT_SEVERITY: dict[str, int] = {
     EVENT_CASE_OPEN: 0,
@@ -57,6 +60,8 @@ DEFAULT_SEVERITY: dict[str, int] = {
     EVENT_MMR_RANK_UP: 2,
     EVENT_DUEL_WON: 1,
     EVENT_SEASON_ENDED: 3,
+    EVENT_DRUN_TAX: 2,
+    EVENT_DRUN_GRANT: 2,
 }
 
 _INSERT = text(

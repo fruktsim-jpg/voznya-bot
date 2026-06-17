@@ -231,6 +231,31 @@ async def _chat_block(session: AsyncSession, channel: str, limit: int = 24) -> s
         return ""
 
 
+async def _antirepeat_block(session: AsyncSession, channel: str) -> str:
+    """Последние собственные реплики друна — чтобы он НЕ повторялся.
+
+    Друн склонен долбить одни зачины («бедыч», «ам ам», «бэм бэм») и одни
+    жертвы. Показываем ему его свежие реплики с прямым запретом копировать
+    структуру/обороты/мишени.
+    """
+    try:
+        posts = await drun_memory.recent_self_posts(session, channel=channel, limit=6)
+        if not posts:
+            return ""
+        lines = [
+            "# ТЫ НЕДАВНО УЖЕ ПИСАЛ ЭТО (НЕ ПОВТОРЯЙСЯ!):",
+            "# Не начинай так же, не используй те же обороты, приколы и "
+            "слова-паразиты, не долби одну и ту же жертву. Звучи по-новому.",
+        ]
+        for p in posts:
+            short = p if len(p) <= 160 else p[:159] + "…"
+            lines.append(f"- {short}")
+        return "\n".join(lines)
+    except Exception:  # noqa: BLE001
+        logger.debug("antirepeat_block failed", exc_info=True)
+        return ""
+
+
 async def build_context(
     session: AsyncSession,
     *,
@@ -254,4 +279,5 @@ async def build_context(
     blocks.append(await _season_block(session))
     if include_events:
         blocks.append(await _events_block(session))
+    blocks.append(await _antirepeat_block(session, channel))
     return "\n\n".join(b for b in blocks if b).strip()

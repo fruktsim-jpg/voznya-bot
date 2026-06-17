@@ -107,8 +107,13 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
         or _has_name_trigger(message, cfg.name_triggers)
     )
 
-    # Адресные сообщения отвечаем всегда (в рамках капа); иначе — редкий рандом.
+    # Адресные сообщения отвечаем всегда (в рамках капа); иначе — редкий рандом,
+    # и то лишь когда в чате есть «движ» (несколько свежих реплик подряд), а не
+    # на одинокое сообщение в тишине — так вкиды реже и всегда в тему.
     if not addressed:
+        chat_hot = await drun_memory.recent_chat_count(session, channel="chat", seconds=180)
+        if chat_hot < 4:
+            return
         if random.random() >= max(0.0, cfg.random_butt_in_chance):
             return
 
@@ -137,4 +142,12 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
     await _set_cooldown(session, cfg.reply_cooldown_sec)
     # Текст друна — свободный (может содержать < > & и т.п.). Шлём как обычный
     # текст без разметки, иначе Telegram падает на HTML-парсинге.
-    await message.reply(result.text, parse_mode=None)
+    out = result.text
+    econ = getattr(result, "econ", None)
+    if econ is not None and getattr(econ, "ok", False):
+        # Маленькая прозрачная пометка о реальном движении ешек.
+        if econ.kind == "tax":
+            out += f"\n\n💸 Налоговая друна: −{econ.applied} ешек (баланс: {econ.balance})"
+        else:
+            out += f"\n\n🎁 Друн сжалился: +{econ.applied} ешек (баланс: {econ.balance})"
+    await message.reply(out, parse_mode=None)
