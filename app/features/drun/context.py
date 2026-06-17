@@ -37,7 +37,8 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
         if user is None:
             return ""
         rep = await rep_repo.get_summary(session, user_id)
-        rep_total = getattr(rep, "total", None)
+        # ReputationSummary.score = плюсы − минусы (нет поля total).
+        rep_total = getattr(rep, "score", None)
         name = getattr(user, "display_name", None) or user.first_name or str(user_id)
         lines = [
             f"Игрок: {name} (id={user_id})",
