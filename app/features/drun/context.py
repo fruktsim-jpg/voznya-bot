@@ -32,71 +32,90 @@ async def _player_assets_block(session: AsyncSession, user_id: int) -> list[str]
     """Дополнительная видимость по игроку: инвентарь, ачивки, сезон, модерация,
     активность в кейсах/подарках. Каждый под-блок изолирован try/except — любой
     сбой не рушит досье. Возвращает список строк (может быть пустым).
+
+    Под-блоки оформлены отдельными корутинами для читаемости, но выполняются
+    последовательно: общая AsyncSession не допускает конкурентных запросов.
     """
+    async def _inv() -> str:
+        try:
+            from app.repositories import inventory as inv_repo
+
+            total = await inv_repo.count_items(session, user_id)
+            distinct = await inv_repo.count_distinct_items(session, user_id)
+            if total:
+                return f"- Инвентарь: {total} предметов ({distinct} видов)"
+        except Exception:  # noqa: BLE001
+            logger.debug("inv block failed", exc_info=True)
+        return ""
+
+    async def _ach() -> str:
+        try:
+            from app.features.achievements import service as ach_service
+
+            codes = await ach_service.get_unlocked_codes(session, user_id)
+            if codes:
+                return f"- Ачивок открыто: {len(codes)}"
+        except Exception:  # noqa: BLE001
+            logger.debug("ach block failed", exc_info=True)
+        return ""
+
+    async def _season() -> str:
+        try:
+            from app.repositories import season as season_repo
+
+            smmr = await season_repo.get_season_mmr(session, user_id)
+            streak = await season_repo.get_streak(session, user_id)
+            bits = []
+            if smmr:
+                bits.append(f"сезонный MMR {smmr}")
+            if streak is not None and getattr(streak, "current_streak", 0):
+                bits.append(f"заход подряд {streak.current_streak} дн")
+            if bits:
+                return "- Сезон: " + ", ".join(bits)
+        except Exception:  # noqa: BLE001
+            logger.debug("season block failed", exc_info=True)
+        return ""
+
+    async def _mod() -> str:
+        try:
+            from app.repositories import moderation as mod_repo
+
+            state = await mod_repo.get_state(session, user_id)
+            if state is not None:
+                warns = int(getattr(state, "warn_count", 0) or 0)
+                mbits = []
+                if getattr(state, "banned_until", None):
+                    mbits.append("ЗАБАНЕН")
+                if getattr(state, "muted_until", None):
+                    mbits.append("в муте")
+                if warns:
+                    mbits.append(f"варнов {warns}")
+                if mbits:
+                    return "- Модерация: " + ", ".join(mbits)
+        except Exception:  # noqa: BLE001
+            logger.debug("mod block failed", exc_info=True)
+        return ""
+
+    async def _cases() -> str:
+        try:
+            from app.repositories import cases as cases_repo
+
+            opened = await cases_repo.count_openings(session, user_id)
+            if opened:
+                return f"- Открыл кейсов: {opened}"
+        except Exception:  # noqa: BLE001
+            logger.debug("cases block failed", exc_info=True)
+        return ""
+
+    # ВАЖНО: одну AsyncSession НЕЛЬЗЯ дёргать конкурентно (SQLAlchemy бросит
+    # «another operation is in progress»), поэтому под-блоки идут последовательно.
+    # Запросы дешёвые и по индексам, а путь ответа ограничен кулдауном — суммарная
+    # задержка незаметна. Параллелизм тут дал бы баг, а не выигрыш.
     out: list[str] = []
-    # Инвентарь: сколько предметов и сколько уникальных.
-    try:
-        from app.repositories import inventory as inv_repo
-
-        total = await inv_repo.count_items(session, user_id)
-        distinct = await inv_repo.count_distinct_items(session, user_id)
-        if total:
-            out.append(f"- Инвентарь: {total} предметов ({distinct} видов)")
-    except Exception:  # noqa: BLE001
-        logger.debug("inv block failed", exc_info=True)
-    # Ачивки: сколько открыто.
-    try:
-        from app.features.achievements import service as ach_service
-
-        codes = await ach_service.get_unlocked_codes(session, user_id)
-        if codes:
-            out.append(f"- Ачивок открыто: {len(codes)}")
-    except Exception:  # noqa: BLE001
-        logger.debug("ach block failed", exc_info=True)
-    # Сезон: текущий season MMR + login-стрик.
-    try:
-        from app.repositories import season as season_repo
-
-        smmr = await season_repo.get_season_mmr(session, user_id)
-        streak = await season_repo.get_streak(session, user_id)
-        bits = []
-        if smmr:
-            bits.append(f"сезонный MMR {smmr}")
-        if streak is not None and getattr(streak, "current_streak", 0):
-            bits.append(f"заход подряд {streak.current_streak} дн")
-        if bits:
-            out.append("- Сезон: " + ", ".join(bits))
-    except Exception:  # noqa: BLE001
-        logger.debug("season block failed", exc_info=True)
-    # Модерация: активный мут/бан/варны — друн должен знать, кто «на карандаше».
-    try:
-        from app.repositories import moderation as mod_repo
-
-        state = await mod_repo.get_state(session, user_id)
-        if state is not None:
-            warns = int(getattr(state, "warn_count", 0) or 0)
-            muted = getattr(state, "muted_until", None)
-            banned = getattr(state, "banned_until", None)
-            mbits = []
-            if banned:
-                mbits.append("ЗАБАНЕН")
-            if muted:
-                mbits.append("в муте")
-            if warns:
-                mbits.append(f"варнов {warns}")
-            if mbits:
-                out.append("- Модерация: " + ", ".join(mbits))
-    except Exception:  # noqa: BLE001
-        logger.debug("mod block failed", exc_info=True)
-    # Активность в кейсах.
-    try:
-        from app.repositories import cases as cases_repo
-
-        opened = await cases_repo.count_openings(session, user_id)
-        if opened:
-            out.append(f"- Открыл кейсов: {opened}")
-    except Exception:  # noqa: BLE001
-        logger.debug("cases block failed", exc_info=True)
+    for sub in (_inv, _ach, _season, _mod, _cases):
+        line = await sub()
+        if line:
+            out.append(line)
     return out
 
 
