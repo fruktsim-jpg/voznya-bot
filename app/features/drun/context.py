@@ -263,17 +263,22 @@ async def build_context(
     include_events: bool = True,
     channel: str = "chat",
     include_chat: bool = True,
+    chat_limit: int = 24,
 ) -> str:
     """Собирает полный контекстный блок (всё, что друн «видит» сейчас).
 
     Порядок = приоритет внимания модели: сначала ДОСЬЕ на собеседника и ЖИВОЙ
     ЧАТ, потом ПАМЯТЬ про людей, и лишь в конце — фон (сезон, события).
+
+    ``chat_limit`` — сколько реплик чата подмешивать. Для прямого ответа человеку
+    берём меньше (чтобы его сообщение не утонуло в логе), для автономного вкида —
+    больше (друну нужно почувствовать беседу).
     """
     blocks: list[str] = []
     if subject_id is not None:
         blocks.append(await _player_block(session, subject_id))
     if include_chat:
-        blocks.append(await _chat_block(session, channel))
+        blocks.append(await _chat_block(session, channel, limit=chat_limit))
     blocks.append(await _memory_block(session, subject_id))
     blocks.append(await _overview_block(session))
     blocks.append(await _season_block(session))

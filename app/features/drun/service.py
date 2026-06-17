@@ -38,11 +38,16 @@ _DEFAULT_REACTION = (
     "по настроению. Без лент и списков."
 )
 _DEFAULT_REPLY = (
-    "Тебе написал человек (реплика — в конце). Ответь как живой Меллстрой и "
-    "СООТВЕТСТВУЙ МОМЕНТУ: на короткое — коротко 1-2 фразы, не вываливай "
-    "простыню и не перечисляй людей. Прочитай ЖИВОЙ ЧАТ, пойми тему и "
-    "настроение, отвечай как часть беседы. Учитывай ТВОЁ ОТНОШЕНИЕ к нему. "
-    "Зови по нику, жёстко и дерзко, на суть. Не ассистент."
+    "К ТЕБЕ ЛИЧНО ОБРАТИЛСЯ ЧЕЛОВЕК. Его сообщение — в самом низу, в блоке "
+    "«СООБЩЕНИЕ ДЛЯ ТЕБЯ». Твоя задача №1 — ОТВЕТИТЬ ИМЕННО НА ЭТО СООБЩЕНИЕ, "
+    "по сути, как в живом диалоге один на один.\n"
+    "- Если спросил «как дела» — скажи как у тебя дела (дерзко, в образе).\n"
+    "- Если сказал «люблю тебя» — отреагируй на это, а не на посторонних.\n"
+    "- Если задал вопрос — ОТВЕТЬ на вопрос.\n"
+    "ЖИВОЙ ЧАТ выше — это ТОЛЬКО фон для настроения. НЕ пересказывай его, НЕ "
+    "комментируй Машу/Рому/казино и прочих, если человек спросил не про них. "
+    "Отвечай НА РЕПЛИКУ ЧЕЛОВЕКА, обращайся к НЕМУ по нику. Коротко (1-2 фразы), "
+    "жёстко, дерзко, в образе Меллстроя. Не ассистент, но и не мимо темы."
 )
 
 
@@ -64,6 +69,7 @@ async def generate(
     channel: str = "chat",
     include_events: bool = True,
     include_chat: bool = True,
+    chat_limit: int = 24,
     trigger_event_id: int | None = None,
     remember_message: bool = True,
     memory_user_content: str | None = None,
@@ -95,6 +101,7 @@ async def generate(
         include_events=include_events,
         channel=channel,
         include_chat=include_chat,
+        chat_limit=chat_limit,
     )
 
     history = await drun_memory.recent_messages(session, channel=channel, limit=8)
@@ -206,12 +213,19 @@ async def respond(
     # бы написать [[econ:grant:1000:...]] и через эхо модели спровоцировать
     # самоначисление. Чистим до отправки в LLM и до сохранения в память.
     safe_text = drun_actions.sanitize_user_text(text.strip())
-    task = f'{template}\n\nРеплика игрока {asker_name}: «{safe_text}»'
+    task = (
+        f"{template}\n\n"
+        f"========================\n"
+        f"# СООБЩЕНИЕ ДЛЯ ТЕБЯ от {asker_name} (ответь именно на него):\n"
+        f"«{safe_text}»\n"
+        f"========================"
+    )
     return await generate(
         session,
         task=task,
         subject_id=asker_id,
         channel=channel,
+        chat_limit=10,
         memory_user_content=f"{asker_name}: {safe_text}",
         memory_kind="reply",
         allow_actions=True,
