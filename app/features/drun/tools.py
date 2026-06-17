@@ -422,3 +422,176 @@ async def set_eshki_multiplier(
         ok=True, summary=f"множитель заработка ешек теперь ×{value:g}",
         meta={"value": value},
     )
+
+
+# --- Инструмент: снять мут с игрока ------------------------------------------
+
+
+async def unmute_one(
+    session: AsyncSession, *, owner_id: int, target_id: int,
+) -> ToolResult:
+    """Снимает мут с игрока (DB-мут, его читает MuteEnforcementMiddleware)."""
+    from app.repositories import moderation as mod_repo
+    from app.features.drun.names import name_for, resolve_names
+
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    try:
+        await mod_repo.set_mute(session, target_id, None, None, owner_id)
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло размутить {nm}: {exc}")
+    await _audit(session, owner_id, "owner_unmute", target_id, "размут", {})
+    return ToolResult(
+        ok=True, summary=f"снял мут с {nm}", affected=1,
+        meta={"target": target_id},
+    )
+
+
+# --- Инструмент: варн игрока (с авто-мутом по порогу) ------------------------
+
+
+async def warn_one(
+    session: AsyncSession, *, owner_id: int, target_id: int, reason: str = "",
+) -> ToolResult:
+    """Выдаёт варн; при достижении порога — авто-мут (DB-мут, как у модерации).
+
+    TG-side restriction (apply_mute_telegram) тут НЕ зовём — нет bot-объекта;
+    но DB-мут читает MuteEnforcementMiddleware и удаляет сообщения, так что
+    эффект для чата реальный.
+    """
+    from app.repositories import moderation as mod_repo
+    from app.settings import moderation as mod_settings
+    from app.core.utils import now_utc as _now
+    from app.features.drun.names import name_for, resolve_names
+
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    ttl = _now() + timedelta(seconds=mod_settings.WARN_TTL_SECONDS)
+    try:
+        count = await mod_repo.add_warning(
+            session, target_id, owner_id, reason or "по воле друна", ttl
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло варнуть {nm}: {exc}")
+    automuted = False
+    if count >= mod_settings.WARN_MUTE_THRESHOLD:
+        until = _now() + timedelta(seconds=mod_settings.WARN_MUTE_SECONDS)
+        try:
+            await mod_repo.set_mute(
+                session, target_id, until, "авто-мьют по варнам", owner_id
+            )
+            automuted = True
+        except Exception:  # noqa: BLE001
+            logger.debug("warn automute failed for %s", target_id, exc_info=True)
+    await _audit(
+        session, owner_id, "owner_warn", target_id, reason or "варн",
+        {"count": count, "automuted": automuted},
+    )
+    summary = f"варнул {nm} ({count}/{mod_settings.WARN_MUTE_THRESHOLD})"
+    if automuted:
+        summary += " — порог, авто-мут"
+    return ToolResult(
+        ok=True, summary=summary, affected=1,
+        meta={"target": target_id, "count": count, "automuted": automuted},
+    )
+
+
+# --- Инструмент: снять все варны ---------------------------------------------
+
+
+async def unwarn_one(
+    session: AsyncSession, *, owner_id: int, target_id: int,
+) -> ToolResult:
+    """Снимает все активные варны игрока."""
+    from app.repositories import moderation as mod_repo
+    from app.features.drun.names import name_for, resolve_names
+
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    try:
+        cleared = await mod_repo.clear_warnings(session, target_id, owner_id)
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло снять варны у {nm}: {exc}")
+    await _audit(
+        session, owner_id, "owner_unwarn", target_id, "снятие варнов",
+        {"cleared": cleared},
+    )
+    if cleared <= 0:
+        return ToolResult(ok=True, summary=f"у {nm} не было активных варнов",
+                          affected=0, meta={"target": target_id})
+    return ToolResult(
+        ok=True, summary=f"снял {cleared} варн(ов) с {nm}", affected=1,
+        meta={"target": target_id, "cleared": cleared},
+    )
+
+
+# --- Инструмент: начислить/снять MMR -----------------------------------------
+
+MAX_MMR_DELTA = 1000  # потолок изменения рейтинга за одну операцию
+
+
+async def award_mmr_one(
+    session: AsyncSession, *, owner_id: int, target_id: int, amount: int,
+) -> ToolResult:
+    """Начисляет (или снимает при amount<0) MMR игроку. Кламп: ±1000."""
+    from app.features.mmr import service as mmr_service
+    from app.features.drun.names import name_for, resolve_names
+
+    if amount == 0:
+        return ToolResult(ok=False, error="нулевой MMR")
+    amount = max(-MAX_MMR_DELTA, min(MAX_MMR_DELTA, int(amount)))
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    try:
+        await mmr_service.award_mmr(
+            session, player_id=target_id, amount=amount,
+            source="owner_drun", reason="по воле друна",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло изменить MMR у {nm}: {exc}")
+    await _audit(
+        session, owner_id, "owner_award_mmr", target_id, "MMR", {"amount": amount},
+    )
+    verb = "накинул" if amount > 0 else "срезал"
+    return ToolResult(
+        ok=True, summary=f"{verb} {nm} {abs(amount)} MMR", affected=1,
+        meta={"target": target_id, "amount": amount},
+    )
+
+
+# --- Инструмент: выдать предмет в инвентарь ----------------------------------
+
+MAX_ITEM_QTY = 100  # потолок штук за одну выдачу
+
+
+async def grant_item_one(
+    session: AsyncSession, *, owner_id: int, target_id: int, item_code: str,
+    quantity: int = 1,
+) -> ToolResult:
+    """Выдаёт предмет ``item_code`` игроку (кламп кол-ва 1..100)."""
+    from app.services import inventory_grant
+    from app.features.drun.names import name_for, resolve_names
+
+    item_code = (item_code or "").strip()
+    if not item_code:
+        return ToolResult(ok=False, error="не указан предмет")
+    quantity = max(1, min(int(quantity), MAX_ITEM_QTY))
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    try:
+        await inventory_grant.grant_item(
+            session, user_id=target_id, item_code=item_code, quantity=quantity,
+            source="owner_drun", event="owner_grant", actor_user_id=owner_id,
+        )
+    except inventory_grant.UnknownItem:
+        return ToolResult(ok=False, error=f"нет такого предмета: «{item_code}»")
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло выдать предмет {nm}: {exc}")
+    await _audit(
+        session, owner_id, "owner_grant_item", target_id, "выдача предмета",
+        {"item": item_code, "qty": quantity},
+    )
+    return ToolResult(
+        ok=True, summary=f"выдал {nm} «{item_code}» ×{quantity}", affected=1,
+        meta={"target": target_id, "item": item_code, "qty": quantity},
+    )
