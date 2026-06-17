@@ -85,12 +85,19 @@ async def add_message(
 async def recent_messages(
     session: AsyncSession, *, channel: str = "chat", limit: int = 10
 ) -> list[AiMessage]:
-    """Возвращает последние реплики канала в хронологическом порядке."""
+    """Последние ходы РЕАЛЬНОГО диалога (человек ↔ друн) в хронологии.
+
+    Только обмены, помеченные ``meta.kind == 'reply'`` — то есть когда игрок
+    обратился и друн ответил. Автономные вкиды/реакции (монологи про мир) сюда
+    НЕ попадают: иначе друн, видя свою же ленту рофлов, продолжает её и
+    игнорирует короткий вопрос собеседника.
+    """
     rows = (
         await session.execute(
             select(AiMessage)
             .where(AiMessage.channel == channel)
             .where(AiMessage.role.in_(("user", "assistant")))
+            .where(AiMessage.meta["kind"].astext == "reply")
             .order_by(AiMessage.created_at.desc())
             .limit(limit)
         )

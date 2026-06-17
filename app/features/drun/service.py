@@ -65,6 +65,7 @@ async def generate(
     trigger_event_id: int | None = None,
     remember_message: bool = True,
     memory_user_content: str | None = None,
+    memory_kind: str = "monologue",
 ) -> GenerateResult:
     """Генерирует одну реплику друна под конкретное задание ``task``.
 
@@ -72,6 +73,11 @@ async def generate(
     пользователя (по умолчанию = ``task``). Для ответов игроку сюда кладут
     чистую реплику человека, а не громоздкий шаблон-промпт, чтобы история
     диалога оставалась читаемой и не раздувала контекст инструкциями.
+
+    ``memory_kind`` — тип хода: ``reply`` (реальный диалог человек↔друн,
+    участвует в истории) или ``monologue`` (автономный вкид/реакция — НЕ
+    подмешивается в историю, чтобы друн не продолжал свою же ленту рофлов
+    вместо ответа на короткий вопрос).
     """
     cfg = await drun_config.get_config(session)
     if not cfg.usable:
@@ -107,7 +113,9 @@ async def generate(
 
     if remember_message:
         # В историю кладём чистую реплику (а не весь шаблон), чтобы диалог
-        # читался по-человечески и не засорял контекст инструкциями.
+        # читался по-человечески и не засорял контекст инструкциями. Тип хода
+        # (reply/monologue) — в meta, чтобы автономные вкиды не подмешивались
+        # в историю диалога.
         await drun_memory.add_message(
             session,
             role="user",
@@ -115,6 +123,7 @@ async def generate(
             channel=channel,
             user_id=subject_id,
             trigger_event_id=trigger_event_id,
+            meta={"kind": memory_kind},
         )
         await drun_memory.add_message(
             session,
@@ -123,6 +132,7 @@ async def generate(
             channel=channel,
             user_id=subject_id,
             trigger_event_id=trigger_event_id,
+            meta={"kind": memory_kind},
         )
 
     return GenerateResult(ok=True, text=text)
@@ -182,4 +192,5 @@ async def respond(
         subject_id=asker_id,
         channel=channel,
         memory_user_content=f"{asker_name}: {text.strip()}",
+        memory_kind="reply",
     )
