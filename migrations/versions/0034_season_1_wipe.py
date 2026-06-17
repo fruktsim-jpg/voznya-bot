@@ -16,12 +16,23 @@ docs/SEASON_1_WIPE_AND_DESIGN.md.
 ВАЖНО: вайп — РАЗОВАЯ операция перед Сезоном 1. ``downgrade`` восстановить
 данные не может (они удалены безвозвратно) — это no-op с пояснением.
 
-Запуск: ``alembic upgrade 0034_season_1_wipe`` (после 0033).
+🛡️ ЗАЩИТА ОТ СЛУЧАЙНОГО ВАЙПА (P0): Dockerfile запускает ``alembic upgrade head``
+при КАЖДОМ деплое. Если развернуть бота на новой/восстановленной из старого
+бэкапа БД, которая ещё не прошла 0034, авто-upgrade молча сотрёт всю экономику.
+Поэтому деструктивная часть выполняется ТОЛЬКО при явном
+``ALLOW_SEASON_1_WIPE=true`` в окружении. Без флага миграция помечается как
+применённая, но НИЧЕГО не удаляет (громкий warning в лог). Прод уже прошёл 0034
+(Alembic его не перезапустит), новая БД пуста — поэтому флаг нужен лишь в тот
+единственный момент, когда вайп действительно намеренный.
+
+Запуск (намеренный вайп): ``ALLOW_SEASON_1_WIPE=true alembic upgrade 0034_season_1_wipe``.
 
 Revision ID: 0034_season_1_wipe
 Revises: 0033_season_system
 Create Date: 2026-06-08
 """
+import logging
+import os
 from typing import Sequence, Union
 
 from alembic import op
@@ -65,7 +76,33 @@ def _safe(conn, sql: str) -> None:
         pass
 
 
+def _wipe_allowed() -> bool:
+    """Деструктивный вайп разрешён только явным ALLOW_SEASON_1_WIPE=true."""
+    return os.environ.get("ALLOW_SEASON_1_WIPE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def upgrade() -> None:
+    log = logging.getLogger("alembic.runtime.migration")
+
+    # P0-защита: без явного флага НЕ удаляем ничего. Миграция всё равно
+    # помечается применённой (цепочка ревизий не ломается), но данные целы —
+    # это спасает новые/восстановленные БД от молчаливого авто-вайпа при деплое.
+    if not _wipe_allowed():
+        log.warning(
+            "0034_season_1_wipe: ПРОПУЩЕН (ALLOW_SEASON_1_WIPE не задан). "
+            "Деструктивный вайп экономики НЕ выполнен — данные сохранены. "
+            "Для намеренного вайпа: ALLOW_SEASON_1_WIPE=true alembic upgrade head."
+        )
+        return
+
+    log.warning(
+        "0034_season_1_wipe: ALLOW_SEASON_1_WIPE задан — выполняю НЕОБРАТИМЫЙ "
+        "вайп экономики (балансы, MMR, инвентарь, журналы, gift_transactions)."
+    )
     conn = op.get_bind()
 
     # 1. Чистим игровые журналы и сезонные таблицы.
