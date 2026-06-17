@@ -117,8 +117,20 @@ async def _anthropic_chat(
         if resp.status >= 400:
             raise LlmError(f"HTTP {resp.status}: {_err(data)}")
         try:
-            return data["content"][0]["text"].strip()
-        except (KeyError, IndexError, TypeError) as exc:
+            # Модель может вернуть несколько блоков (thinking + text при
+            # extended thinking). Берём первый блок типа "text", а не [0].
+            blocks = data.get("content") or []
+            text = next(
+                (b.get("text", "") for b in blocks if b.get("type") == "text"),
+                "",
+            )
+            if not text and blocks:
+                # Фолбэк: вдруг блок без type, но с text.
+                text = blocks[0].get("text", "")
+            if not text:
+                raise KeyError("no text block")
+            return text.strip()
+        except (KeyError, IndexError, TypeError, AttributeError) as exc:
             raise LlmError(f"bad response shape: {data}") from exc
 
 
