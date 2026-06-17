@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
 from app.core.money import money
+from app.core.utils import now_utc
 from app.features.drun import attitude as drun_attitude
 from app.features.drun import memory as drun_memory
 from app.features.drun.names import name_for, resolve_names
@@ -318,23 +319,27 @@ async def _now_block() -> str:
     """Текущая дата/время — чтобы друн ориентировался во времени, а не висел вне его."""
     from datetime import timezone, timedelta
 
-    # Москва (UTC+3) — основная аудитория чата.
-    now = now_utc().astimezone(timezone(timedelta(hours=3)))
-    days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-    months = [
-        "января", "февраля", "марта", "апреля", "мая", "июня",
-        "июля", "августа", "сентября", "октября", "ноября", "декабря",
-    ]
-    dow = days[now.weekday()]
-    part = (
-        "глубокая ночь" if now.hour < 5 else "утро" if now.hour < 12
-        else "день" if now.hour < 18 else "вечер"
-    )
-    return (
-        "# СЕЙЧАС (реальное время, ты живёшь во времени):\n"
-        f"- {dow}, {now.day} {months[now.month - 1]} {now.year}, "
-        f"{now.hour:02d}:{now.minute:02d} по мск ({part})."
-    )
+    try:
+        # Москва (UTC+3) — основная аудитория чата.
+        now = now_utc().astimezone(timezone(timedelta(hours=3)))
+        days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+        months = [
+            "января", "февраля", "марта", "апреля", "мая", "июня",
+            "июля", "августа", "сентября", "октября", "ноября", "декабря",
+        ]
+        dow = days[now.weekday()]
+        part = (
+            "глубокая ночь" if now.hour < 5 else "утро" if now.hour < 12
+            else "день" if now.hour < 18 else "вечер"
+        )
+        return (
+            "# СЕЙЧАС (реальное время, ты живёшь во времени):\n"
+            f"- {dow}, {now.day} {months[now.month - 1]} {now.year}, "
+            f"{now.hour:02d}:{now.minute:02d} по мск ({part})."
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("now_block failed", exc_info=True)
+        return ""
 
 
 async def _vibe_block(session: AsyncSession, channel: str) -> str:
