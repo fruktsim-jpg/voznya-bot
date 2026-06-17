@@ -382,7 +382,11 @@ async def build_context(
     берём меньше (чтобы его сообщение не утонуло в логе), для автономного вкида —
     больше (друну нужно почувствовать беседу).
     """
-    blocks: list[str] = [await _now_block(), await _vibe_block(session, channel)]
+    blocks: list[str] = [await _now_block()]
+    # Вайб чата осмыслен только когда мы вообще подмешиваем чат: для отчётов/
+    # объявлений (include_chat=False) он не нужен — не тратим лишний COUNT-запрос.
+    if include_chat:
+        blocks.append(await _vibe_block(session, channel))
     if subject_id is not None:
         blocks.append(await _player_block(session, subject_id))
     if include_chat:
