@@ -14,13 +14,12 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
 from app.core.money import money
+from app.features.drun import attitude as drun_attitude
 from app.features.drun import memory as drun_memory
 from app.features.drun.names import name_for, resolve_names
 from app.models import User, WorldEvent
@@ -29,28 +28,55 @@ logger = get_logger(__name__)
 
 
 async def _player_block(session: AsyncSession, user_id: int) -> str:
-    """Статистика игрока: баланс, MMR, репутация, дуэли, сообщения."""
+    """Досье игрока: статистика + брак + ОТНОШЕНИЕ Друна к нему.
+
+    Это самый важный блок: он делает ответ персональным. Кроме сухих цифр сюда
+    идёт «стойка» (stance) — как Друну держаться именно с этим человеком.
+    """
     try:
-        from app.repositories import mmr as mmr_repo
+        from app.repositories import marriages as marr_repo
         from app.repositories import reputation as rep_repo
 
         user = await session.get(User, user_id)
         if user is None:
             return ""
         rep = await rep_repo.get_summary(session, user_id)
-        # ReputationSummary.score = плюсы − минусы (нет поля total).
-        rep_total = getattr(rep, "score", None)
-        name = user.display_name() if user else str(user_id)
+        rep_score = getattr(rep, "score", 0) or 0
+        rep_plus = getattr(rep, "plus", 0) or 0
+        rep_minus = getattr(rep, "minus", 0) or 0
+        name = user.display_name()
+
         lines = [
-            f"Игрок: {name} (id={user_id})",
-            f"- Баланс: {money(user.balance)}",
-            f"- Всего заработано: {money(getattr(user, 'total_earned', 0))}",
-            f"- MMR: {getattr(user, 'mmr', 0)}",
-            f"- Репутация: {rep_total if rep_total is not None else 0}",
-            f"- Дуэли: {getattr(user, 'duels_won', 0)} побед / "
-            f"{getattr(user, 'duels_lost', 0)} поражений",
-            f"- Сообщений: {getattr(user, 'messages_count', 0)}",
+            f"# ДОСЬЕ НА СОБЕСЕДНИКА: {name} (id={user_id})",
+            f"- Баланс: {money(user.balance)}, всего заработано: "
+            f"{money(getattr(user, 'total_earned', 0))}",
+            f"- MMR: {getattr(user, 'mmr', 0)}, дуэли: "
+            f"{getattr(user, 'duels_won', 0)}W/{getattr(user, 'duels_lost', 0)}L",
+            f"- Репутация в чате: {rep_score:+d} (плюсов {rep_plus}, минусов {rep_minus})",
+            f"- Сообщений в чате: {getattr(user, 'messages_count', 0)}",
         ]
+
+        # Брак — повод для подколов/контекста отношений.
+        try:
+            marriage = await marr_repo.get_active_marriage(session, user_id)
+            if marriage is not None:
+                partner_id = (
+                    marriage.user_id_2
+                    if marriage.user_id_1 == user_id
+                    else marriage.user_id_1
+                )
+                pnames = await resolve_names(session, [partner_id])
+                lines.append(f"- В браке с {name_for(pnames, partner_id)}")
+        except Exception:  # noqa: BLE001
+            logger.debug("marriage lookup failed", exc_info=True)
+
+        # Стойка Друна к этому игроку — ключ к персональности.
+        stance = await drun_attitude.get_stance(session, user_id)
+        if stance is not None:
+            lines.append(
+                f"- ТВОЁ ОТНОШЕНИЕ [{stance.label}]: {stance.directive}"
+            )
+
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
         logger.debug("player_block failed", exc_info=True)
@@ -71,10 +97,11 @@ async def _season_block(session: AsyncSession) -> str:
         return ""
 
 
-async def _events_block(session: AsyncSession, limit: int = 12) -> str:
-    """Последние события мира из world_events (для «что происходит»).
+async def _events_block(session: AsyncSession, limit: int = 6) -> str:
+    """Краткая сводка последних событий мира — ФОН, не главный материал.
 
-    Участники резолвятся в ники одним запросом (без сырых id в контексте).
+    Намеренно компактно (6 строк): события — это приправа, а не суть разговора.
+    Друн не должен в каждой реплике пересказывать ленту дуэлей.
     """
     try:
         rows = (
@@ -85,11 +112,11 @@ async def _events_block(session: AsyncSession, limit: int = 12) -> str:
             )
         ).scalars().all()
         if not rows:
-            return "События: пока тихо, мир спит."
+            return ""
         names = await resolve_names(
             session, [e.actor_id for e in rows] + [e.target_id for e in rows]
         )
-        lines = ["Последние события мира:"]
+        lines = ["Фоном в мире (можешь упомянуть, если в тему, но не пересказывай):"]
         for ev in rows:
             amount = f" ({money(ev.amount)})" if ev.amount else ""
             who = f" {name_for(names, ev.actor_id)}" if ev.actor_id else ""
@@ -104,11 +131,11 @@ async def _events_block(session: AsyncSession, limit: int = 12) -> str:
 async def _memory_block(session: AsyncSession, subject_id: int | None) -> str:
     try:
         mems = await drun_memory.relevant_memories(
-            session, subject_id=subject_id, limit=8
+            session, subject_id=subject_id, limit=16
         )
         if not mems:
             return ""
-        lines = ["Что ты помнишь:"]
+        lines = ["Что ты помнишь про людей и мир (используй для подколов и связей):"]
         for m in mems:
             lines.append(f"- {m.fact}")
         return "\n".join(lines)
@@ -117,22 +144,21 @@ async def _memory_block(session: AsyncSession, subject_id: int | None) -> str:
         return ""
 
 
-async def _chat_block(session: AsyncSession, channel: str, limit: int = 14) -> str:
+async def _chat_block(session: AsyncSession, channel: str, limit: int = 24) -> str:
     """Свежая болтовня игроков в чате (кто что сказал) — по никам.
 
-    Берём последние сообщения из ``ai_messages`` роли ``chat`` (реплики живых
-    игроков, которые пишет middleware) и показываем как мини-стенограмму, чтобы
-    друн отвечал ПО КОНТЕКСТУ беседы, а не в вакууме.
+    ГЛАВНЫЙ материал для ответа: о чём реально говорят люди прямо сейчас. Берём
+    широкое окно (24 реплики), чтобы Друн чувствовал беседу, а не одну фразу.
     """
     try:
         msgs = await drun_memory.recent_chat(session, channel=channel, limit=limit)
         if not msgs:
             return ""
         names = await resolve_names(session, [m.user_id for m in msgs])
-        lines = ["Недавно в чате говорили:"]
+        lines = ["# ЖИВОЙ ЧАТ ПРЯМО СЕЙЧАС (на это и реагируй в первую очередь):"]
         for m in msgs:
             who = (m.meta or {}).get("name") or name_for(names, m.user_id)
-            lines.append(f"- {who}: {m.content}")
+            lines.append(f"{who}: {m.content}")
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
         logger.debug("chat_block failed", exc_info=True)
@@ -147,14 +173,18 @@ async def build_context(
     channel: str = "chat",
     include_chat: bool = True,
 ) -> str:
-    """Собирает полный контекстный блок (всё, что друн «видит» сейчас)."""
+    """Собирает полный контекстный блок (всё, что друн «видит» сейчас).
+
+    Порядок = приоритет внимания модели: сначала ДОСЬЕ на собеседника и ЖИВОЙ
+    ЧАТ, потом ПАМЯТЬ про людей, и лишь в конце — фон (сезон, события).
+    """
     blocks: list[str] = []
     if subject_id is not None:
         blocks.append(await _player_block(session, subject_id))
-    blocks.append(await _season_block(session))
-    if include_events:
-        blocks.append(await _events_block(session))
     if include_chat:
         blocks.append(await _chat_block(session, channel))
     blocks.append(await _memory_block(session, subject_id))
+    blocks.append(await _season_block(session))
+    if include_events:
+        blocks.append(await _events_block(session))
     return "\n\n".join(b for b in blocks if b).strip()

@@ -65,12 +65,14 @@ async def distill(session: AsyncSession) -> int:
 
     # --- Агрегаты по игрокам и парам ----------------------------------------
     duel_wins: Counter[int] = Counter()
+    duel_losses: Counter[int] = Counter()
     pair_duels: Counter[tuple[int, int]] = Counter()
     big_casino: set[int] = set()
     for e in events:
         if e.type == "duel_won" and e.actor_id:
             duel_wins[e.actor_id] += 1
             if e.target_id:
+                duel_losses[e.target_id] += 1
                 pair = tuple(sorted((e.actor_id, e.target_id)))
                 pair_duels[pair] += 1
         elif e.type == "casino_big_win" and e.actor_id:
@@ -99,6 +101,11 @@ async def distill(session: AsyncSession) -> int:
     for uid, wins in duel_wins.items():
         if wins >= 3:
             _add(uid, "trait", f"{name_for(names, uid)} — задира, часто побеждает в дуэлях", 2)
+
+    # Лохи по дуэлям: кого регулярно опускают (повод для рофла).
+    for uid, losses in duel_losses.items():
+        if losses >= 4 and duel_wins.get(uid, 0) < losses:
+            _add(uid, "trait", f"{name_for(names, uid)} — постоянно сливает дуэли, груша для битья", 2)
 
     # Казино-везунчики.
     for uid in big_casino:
