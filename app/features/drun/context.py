@@ -217,10 +217,14 @@ async def _chat_block(session: AsyncSession, channel: str, limit: int = 24) -> s
         if not msgs:
             return ""
         names = await resolve_names(session, [m.user_id for m in msgs])
-        lines = ["# ЖИВОЙ ЧАТ ПРЯМО СЕЙЧАС (на это и реагируй в первую очередь):"]
+        lines = [
+            "# ЖИВОЙ ЧАТ ПРЯМО СЕЙЧАС (снизу — самые свежие реплики).",
+            "# Прочитай и пойми НАСТРОЕНИЕ и О ЧЁМ базар, прежде чем встревать:",
+        ]
         for m in msgs:
             who = (m.meta or {}).get("name") or name_for(names, m.user_id)
             lines.append(f"{who}: {m.content}")
+        lines.append("# (последняя строка выше — самое свежее в чате)")
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
         logger.debug("chat_block failed", exc_info=True)
