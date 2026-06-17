@@ -9,7 +9,9 @@ from app.models import PendingAction, User
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run создаёт и закрывает свежий event loop. get_event_loop() без
+    # запущенного цикла бросает RuntimeError на Python 3.10+ (жёстко в 3.14).
+    return asyncio.run(coro)
 
 
 async def _make_session():

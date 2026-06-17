@@ -24,6 +24,16 @@
   заработку) + частичный `ix_gift_tx_pending_withdraw` на
   `gift_transactions(status, created_at) WHERE kind='tg_gift'` (воркер вывода).
   Аддитивно, без потери данных.
+- **`0044_feed_indexes`** — индексы под ленту событий сайта (глобальная выборка
+  по времени): `ix_case_openings_created_at`, `ix_gift_tx_status_created`,
+  `ix_user_achievements_unlocked_at`, `ix_marriages_married_at`,
+  `ix_mmr_entries_created_at`. Аддитивно.
+
+### Тесты
+- Хелперы `_run` в `test_duel_accept`/`test_dynamic_settings` переведены с
+  `asyncio.get_event_loop().run_until_complete` на `asyncio.run` — починка под
+  Python 3.14 (раньше 7 тестов падали с `no current event loop`). Теперь весь
+  набор зелёный (56/56).
 
 ### Заметки
 - Единая `AsyncSession` на апдейт сохранена: параллельный `asyncio.gather` по
