@@ -48,6 +48,8 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
 
         lines = [
             f"# ДОСЬЕ НА СОБЕСЕДНИКА: {name} (id={user_id})",
+            "# (Это твоя ПАМЯТЬ о нём. НЕ зачитывай эти цифры в ответе — "
+            "доставай деталь, только если она реально в тему разговора.)",
             f"- Баланс: {money(user.balance)}, всего заработано: "
             f"{money(getattr(user, 'total_earned', 0))}",
             f"- MMR: {getattr(user, 'mmr', 0)}, дуэли: "
@@ -95,6 +97,19 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                 topics = pdata.get("topics") or []
                 if topics:
                     lines.append("- ЧАСТО ПРО: " + ", ".join(topics[:5]))
+                rels = pdata.get("relationships") or []
+                if rels:
+                    label = {
+                        "spouse": "в браке с", "rival": "соперник —",
+                        "ally": "симпатизирует", "foe": "недолюбливает",
+                        "buddy": "кореша с",
+                    }
+                    rel_str = "; ".join(
+                        f"{label.get(r.get('kind'), r.get('kind'))} {r.get('name')}"
+                        for r in rels[:5] if r.get("name")
+                    )
+                    if rel_str:
+                        lines.append("- СВЯЗИ: " + rel_str)
         except Exception:  # noqa: BLE001
             logger.debug("profile block failed", exc_info=True)
 
@@ -271,6 +286,15 @@ async def _antirepeat_block(session: AsyncSession, channel: str) -> str:
         for p in posts:
             short = p if len(p) <= 160 else p[:159] + "…"
             lines.append(f"- {short}")
+        # Умный анти-повтор: явный стоп-лист зажёванных зачинов/оборотов.
+        try:
+            from app.features.drun import antirepeat as ar_mod
+
+            stop = ar_mod.render_block(posts)
+            if stop:
+                lines.append(stop)
+        except Exception:  # noqa: BLE001
+            logger.debug("antirepeat stop-list failed", exc_info=True)
         return "\n".join(lines)
     except Exception:  # noqa: BLE001
         logger.debug("antirepeat_block failed", exc_info=True)

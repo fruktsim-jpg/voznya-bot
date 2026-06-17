@@ -50,10 +50,18 @@ _SYSTEM = (
     "- grant: выдать (или снять, если сумма отрицательная) ешки аудитории.\n"
     "    args: amount (int), scope ('recent'|'active'|'all'),\n"
     "          minutes (int, для recent), days (int, для active), note (str).\n"
+    "- grant_one: выдать/снять ешки ОДНОМУ игроку.\n"
+    "    args: who (str: @username/имя/id), amount (int), note (str).\n"
     "- reset_cooldown: сбросить кулдаун действия аудитории.\n"
     "    args: action ('farm'|'casino'|...), scope, minutes, days.\n"
     "- giveaway: розыгрыш призового фонда между случайными из аудитории.\n"
     "    args: pool (int, всего ешек), winners (int), scope, minutes, days, note.\n"
+    "- mute: замутить одного игрока на время.\n"
+    "    args: who (str), minutes (int), reason (str).\n"
+    "- multiplier: глобальный множитель заработка ешек (эконом-ивент).\n"
+    "    args: value (float, напр. 2 = x2).\n"
+    "- spawn_treasure: вкинуть клад (раздачу) в чат прямо сейчас.\n"
+    "    args: {} (без аргументов).\n"
     "- none: это НЕ команда-действие, а обычная болтовня/вопрос.\n"
     "\n"
     "Правила:\n"
@@ -79,7 +87,8 @@ async def _plan(session: AsyncSession, text: str) -> dict | None:
     user_msg = f"Команда владельца: «{text}»\n\nВерни JSON."
     try:
         raw = await drun_provider.chat(
-            cfg, system=_SYSTEM, messages=[{"role": "user", "content": user_msg}]
+            cfg, system=_SYSTEM, messages=[{"role": "user", "content": user_msg}],
+            model=cfg.fast_model or None,
         )
     except drun_provider.LlmError as exc:
         logger.debug("agent plan llm failed: %s", exc)
@@ -126,6 +135,52 @@ async def try_handle(
     days = _arg_int(args, "days", 7)
     note = str(args.get("note", "")).strip()[:120]
 
+    # Инструменты без аудитории (точечные / глобальные).
+    if tool == "grant_one":
+        who = str(args.get("who", "")).strip()
+        target = await drun_tools.find_user_id(session, who)
+        if target is None:
+            return AgentOutcome(
+                handled=True, ok=False,
+                summary=f"не нашёл игрока «{who}»", tool=tool,
+            )
+        res = await drun_tools.grant_one(
+            session, owner_id=owner_id, target_id=target,
+            amount=_arg_int(args, "amount", 0), note=note,
+        )
+        return AgentOutcome(handled=True, ok=res.ok, summary=res.summary or res.error, tool=tool)
+
+    if tool == "mute":
+        who = str(args.get("who", "")).strip()
+        target = await drun_tools.find_user_id(session, who)
+        if target is None:
+            return AgentOutcome(
+                handled=True, ok=False, summary=f"не нашёл игрока «{who}»", tool=tool
+            )
+        res = await drun_tools.mute_one(
+            session, owner_id=owner_id, target_id=target,
+            minutes=_arg_int(args, "minutes", 30),
+            reason=str(args.get("reason", "")).strip()[:120],
+        )
+        return AgentOutcome(handled=True, ok=res.ok, summary=res.summary or res.error, tool=tool)
+
+    if tool == "multiplier":
+        try:
+            value = float(args.get("value", 1))
+        except (TypeError, ValueError):
+            value = 1.0
+        res = await drun_tools.set_eshki_multiplier(
+            session, owner_id=owner_id, value=value
+        )
+        return AgentOutcome(handled=True, ok=res.ok, summary=res.summary or res.error, tool=tool)
+
+    if tool == "spawn_treasure":
+        # Спавн клада требует bot+sessionmaker и своей сессии — помечаем как
+        # отложенное действие, исполнит вызывающий (reply_handlers).
+        return AgentOutcome(
+            handled=True, ok=True, summary="__spawn_treasure__", tool=tool
+        )
+
     audience = await drun_tools.resolve_audience(
         session, scope=scope, minutes=minutes, days=days
     )
@@ -164,6 +219,9 @@ _ACTION_HINTS = (
     "сбрось", "сбрось кд", "обнули", "ресетни", "reset", "откати кд",
     "разыграй", "розыгрыш", "раздача", "giveaway", "разыгран",
     "всем", "каждому", "активным", "кто писал", "участник",
+    "замуть", "замути", "мут", "забань", "бан",
+    "множитель", "x2", "х2", "удвой", "ивент",
+    "клад", "клады", "сокровище", "спавн",
 )
 
 

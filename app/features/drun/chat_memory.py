@@ -75,7 +75,8 @@ async def distill_chat(session: AsyncSession) -> int:
     )
     try:
         raw = await drun_provider.chat(
-            cfg, system=_SYSTEM, messages=[{"role": "user", "content": user_msg}]
+            cfg, system=_SYSTEM, messages=[{"role": "user", "content": user_msg}],
+            model=cfg.fast_model or None,
         )
     except drun_provider.LlmError as exc:
         logger.debug("chat distill llm failed: %s", exc)

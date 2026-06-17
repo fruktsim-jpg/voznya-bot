@@ -151,6 +151,21 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
                 logger.warning("drun agent failed", exc_info=True)
                 outcome = None
             if outcome is not None and outcome.handled:
+                # Спавн клада исполняется отдельно (нужен bot + своя сессия).
+                if outcome.ok and outcome.summary == "__spawn_treasure__":
+                    try:
+                        from app.core.db import get_sessionmaker
+                        from app.features.treasure.service import spawn_treasure
+
+                        await session.commit()
+                        await spawn_treasure(
+                            message.bot, get_sessionmaker(), settings.chat_id
+                        )
+                        await _set_cooldown(session, cfg.reply_cooldown_sec)
+                    except Exception:  # noqa: BLE001
+                        logger.warning("owner spawn_treasure failed", exc_info=True)
+                        await message.reply("клад застрял в кармане, попробуй ещё", parse_mode=None)
+                    return
                 announce = await drun_service.announce_action(
                     session,
                     owner_name=_display_name(message),

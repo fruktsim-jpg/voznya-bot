@@ -227,3 +227,127 @@ async def giveaway(
         affected=len(won),
         meta={"pool": pool, "share": share, "winners": [u for u, _ in won]},
     )
+
+
+# --- Инструмент: выдать/снять одному игроку (по имени/@username) --------------
+
+
+async def find_user_id(session: AsyncSession, who: str) -> int | None:
+    """Ищет игрока по @username, числовому id или отображаемому имени."""
+    from app.repositories import users as users_repo
+
+    who = (who or "").strip()
+    if not who:
+        return None
+    if who.startswith("@"):
+        u = await users_repo.get_user_by_username(session, who)
+        return u.user_id if u else None
+    if who.lstrip("-").isdigit():
+        return int(who)
+    u = await users_repo.get_user_by_username(session, "@" + who)
+    if u:
+        return u.user_id
+    # По отображаемому имени (first_name) — берём самого активного при коллизии.
+    row = (
+        await session.execute(
+            select(User)
+            .where(User.first_name.ilike(who))
+            .order_by(User.messages_count.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row.user_id if row else None
+
+
+async def grant_one(
+    session: AsyncSession, *, owner_id: int, target_id: int, amount: int, note: str = "",
+) -> ToolResult:
+    """Начисляет/снимает ешки одному игроку (с предохранителем суммы)."""
+    if amount == 0:
+        return ToolResult(ok=False, error="нулевая сумма")
+    amount = max(-MAX_GRANT_PER_USER, min(MAX_GRANT_PER_USER, int(amount)))
+    from app.features.drun.names import name_for, resolve_names
+
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    try:
+        await economy.change_balance(
+            session, target_id, amount, REASON_OWNER,
+            {"action": "owner_grant_one", "note": note, "by": owner_id},
+            allow_negative=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло начислить {nm}: {exc}")
+    await _audit(
+        session, owner_id, "owner_grant_one", target_id, note or "выдача",
+        {"amount": amount},
+    )
+    verb = "выдал" if amount > 0 else "снял"
+    return ToolResult(
+        ok=True, summary=f"{verb} {nm} {money(abs(amount))}", affected=1,
+        meta={"amount": amount, "target": target_id},
+    )
+
+
+# --- Инструмент: мут игрока ---------------------------------------------------
+
+
+async def mute_one(
+    session: AsyncSession, *, owner_id: int, target_id: int, minutes: int,
+    reason: str = "",
+) -> ToolResult:
+    """Мутит игрока на ``minutes`` минут (предохранитель: ≤ 7 дней)."""
+    from app.repositories import moderation as mod_repo
+
+    minutes = max(1, min(int(minutes), 7 * 24 * 60))
+    until = now_utc() + timedelta(minutes=minutes)
+    from app.features.drun.names import name_for, resolve_names
+
+    names = await resolve_names(session, [target_id])
+    nm = name_for(names, target_id)
+    try:
+        await mod_repo.set_mute(
+            session, target_id, until, reason or "по воле друна", owner_id
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ToolResult(ok=False, error=f"не вышло замутить {nm}: {exc}")
+    await _audit(
+        session, owner_id, "owner_mute", target_id, reason or "мут",
+        {"minutes": minutes},
+    )
+    return ToolResult(
+        ok=True, summary=f"замутил {nm} на {minutes} мин", affected=1,
+        meta={"minutes": minutes, "target": target_id},
+    )
+
+
+# --- Инструмент: множитель ешек (эконом-ивент) -------------------------------
+
+
+async def set_eshki_multiplier(
+    session: AsyncSession, *, owner_id: int, value: float,
+) -> ToolResult:
+    """Ставит глобальный множитель заработка ешек (предохранитель: 0.1..5x)."""
+    from app.models import AppSetting
+    from app.settings import dynamic as dyn
+
+    value = max(0.1, min(5.0, float(value)))
+    row = await session.get(AppSetting, "modifier.eshki")
+    if row is None:
+        session.add(
+            AppSetting(key="modifier.eshki", value=value, category="economy")
+        )
+    else:
+        row.value = value
+    try:
+        dyn.invalidate_cache()
+    except Exception:  # noqa: BLE001
+        pass
+    await _audit(
+        session, owner_id, "owner_eshki_multiplier", None,
+        f"множитель ешек ×{value}", {"value": value},
+    )
+    return ToolResult(
+        ok=True, summary=f"множитель заработка ешек теперь ×{value:g}",
+        meta={"value": value},
+    )

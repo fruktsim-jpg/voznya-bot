@@ -30,6 +30,7 @@ KEY_ENABLED = "enabled"
 KEY_BASE_URL = "base_url"
 KEY_API_KEY = "api_key"
 KEY_MODEL = "model"
+KEY_FAST_MODEL = "fast_model"  # дешёвая/быстрая модель для служебных задач
 KEY_TEMPERATURE = "temperature"
 KEY_MAX_TOKENS = "max_tokens"
 KEY_POSTS_PER_DAY = "posts_per_day_max"
@@ -52,6 +53,7 @@ DEFAULTS: dict[str, Any] = {
     KEY_BASE_URL: "https://api.openai.com/v1",
     KEY_API_KEY: "",
     KEY_MODEL: "gpt-4o-mini",
+    KEY_FAST_MODEL: "",
     KEY_TEMPERATURE: 0.9,
     KEY_MAX_TOKENS: 320,
     KEY_POSTS_PER_DAY: 6,
@@ -83,6 +85,7 @@ class AiConfig:
     base_url: str
     api_key: str
     model: str
+    fast_model: str
     temperature: float
     max_tokens: int
     posts_per_day_max: int
@@ -175,6 +178,7 @@ async def get_config(session: AsyncSession) -> AiConfig:
         base_url=str(_g(KEY_BASE_URL) or DEFAULTS[KEY_BASE_URL]).rstrip("/"),
         api_key=str(_g(KEY_API_KEY) or ""),
         model=str(_g(KEY_MODEL) or DEFAULTS[KEY_MODEL]),
+        fast_model=str(_g(KEY_FAST_MODEL) or ""),
         temperature=_as_float(_g(KEY_TEMPERATURE), DEFAULTS[KEY_TEMPERATURE]),
         max_tokens=_as_int(_g(KEY_MAX_TOKENS), DEFAULTS[KEY_MAX_TOKENS]),
         posts_per_day_max=_as_int(_g(KEY_POSTS_PER_DAY), DEFAULTS[KEY_POSTS_PER_DAY]),

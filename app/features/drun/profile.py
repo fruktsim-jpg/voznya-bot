@@ -165,6 +165,7 @@ async def _build_portrait(session: AsyncSession, name: str, msgs: list[str]) -> 
         raw = await drun_provider.chat(
             cfg, system=_PORTRAIT_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
+            model=cfg.fast_model or None,
         )
     except drun_provider.LlmError as exc:
         logger.debug("portrait llm failed: %s", exc)
@@ -225,10 +226,27 @@ async def refresh_profile(
     msgs = await _player_messages(session, user_id)
     portrait = await _build_portrait(session, rs.name, msgs)
 
+    # Граф отношений: с кем связан игрок (брак/соперники/кореша/репа).
+    edges_data: list[dict] = []
+    try:
+        from app.features.drun import relationships as rel_mod
+
+        edges = await rel_mod.compute_edges(session, user_id)
+        edges_data = [
+            {
+                "id": e.other_id, "name": e.other_name,
+                "kind": e.kind, "strength": e.strength,
+            }
+            for e in edges
+        ]
+    except Exception:  # noqa: BLE001
+        logger.debug("relationship edges failed", exc_info=True)
+
     data = {
         "traits": portrait.get("traits", []),
         "topics": portrait.get("topics", []),
         "stat_lines": rs.lines,
+        "relationships": edges_data,
     }
     if prof is None:
         prof = AiProfile(user_id=user_id)

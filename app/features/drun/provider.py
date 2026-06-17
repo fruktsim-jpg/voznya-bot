@@ -43,13 +43,17 @@ async def chat(
     *,
     system: str,
     messages: list[dict[str, str]],
+    model: str | None = None,
 ) -> str:
     """Один запрос к модели. ``messages`` — список {role, content} (user/assistant).
 
-    Возвращает текст ответа. Бросает :class:`LlmError` при любой проблеме.
+    ``model`` переопределяет модель из конфига (например быстрая модель для
+    служебных задач). Возвращает текст ответа. Бросает :class:`LlmError`.
     """
     if not cfg.usable:
         raise LlmError("AI disabled or api_key/model missing")
+
+    use_model = (model or cfg.model).strip() or cfg.model
 
     # aiohttp поставляется вместе с aiogram (рантайм-зависимость). Импорт
     # ленивый, чтобы модуль импортировался даже там, где aiohttp не установлен
@@ -59,9 +63,9 @@ async def chat(
     timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as http:
-            if _is_anthropic(cfg.base_url, cfg.model):
-                return await _anthropic_chat(http, cfg, system, messages)
-            return await _openai_chat(http, cfg, system, messages)
+            if _is_anthropic(cfg.base_url, use_model):
+                return await _anthropic_chat(http, cfg, system, messages, use_model)
+            return await _openai_chat(http, cfg, system, messages, use_model)
     except aiohttp.ClientError as exc:
         raise LlmError(f"network error: {exc}") from exc
 
@@ -71,10 +75,11 @@ async def _openai_chat(
     cfg: AiConfig,
     system: str,
     messages: list[dict[str, str]],
+    model: str,
 ) -> str:
     url = f"{cfg.base_url}/chat/completions"
     payload: dict[str, Any] = {
-        "model": cfg.model,
+        "model": model,
         "temperature": cfg.temperature,
         "max_tokens": cfg.max_tokens,
         "messages": [{"role": "system", "content": system}, *messages],
@@ -98,10 +103,11 @@ async def _anthropic_chat(
     cfg: AiConfig,
     system: str,
     messages: list[dict[str, str]],
+    model: str,
 ) -> str:
     url = f"{cfg.base_url}/messages"
     payload: dict[str, Any] = {
-        "model": cfg.model,
+        "model": model,
         "max_tokens": cfg.max_tokens,
         "temperature": cfg.temperature,
         "system": system,
