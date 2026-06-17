@@ -81,6 +81,7 @@ async def generate(
     memory_user_content: str | None = None,
     memory_kind: str = "monologue",
     allow_actions: bool = False,
+    role: str | None = None,
 ) -> GenerateResult:
     """Генерирует одну реплику друна под конкретное задание ``task``.
 
@@ -129,7 +130,10 @@ async def generate(
     messages.append({"role": "user", "content": user_content})
 
     try:
-        raw = await drun_provider.chat(cfg, system=system, messages=messages)
+        raw = await drun_provider.chat(
+            cfg, system=system, messages=messages,
+            model=cfg.model_for(role or drun_config.ROLE_NARRATOR),
+        )
     except drun_provider.LlmError as exc:
         logger.warning("drun generate failed: %s", exc)
         return GenerateResult(ok=False, error=str(exc))

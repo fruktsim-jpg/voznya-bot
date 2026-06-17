@@ -28,6 +28,7 @@ from app.core.logger import get_logger
 from app.core.money import money
 from app.core.utils import now_utc
 from app.models import AiMessage, User
+from app.repositories import users as users_repo
 from app.services import economy
 
 logger = get_logger(__name__)
@@ -64,6 +65,27 @@ async def _audit(
         )
     except Exception:  # noqa: BLE001
         logger.debug("tool audit failed", exc_info=True)
+
+
+async def _debit_clamped_to_balance(
+    session: AsyncSession, user_id: int, debit: int, reason: str, meta: dict,
+) -> tuple[int, int]:
+    """Снимает у игрока не больше, чем у него есть (как admin «забрать»).
+
+    ``debit`` — положительная величина к снятию. Возвращает (реально снято,
+    новый баланс). Не уводит в минус и НЕ падает на нехватке средств: это
+    осознанная семантика снятия — забираем сколько есть. Возврат (0, balance),
+    если снимать нечего.
+    """
+    user = await users_repo.get_user(session, user_id)
+    have = int(getattr(user, "balance", 0) or 0) if user else 0
+    take = min(int(debit), max(have, 0))
+    if take <= 0:
+        return 0, have
+    updated = await economy.change_balance(
+        session, user_id, -take, reason, meta, allow_negative=False
+    )
+    return take, int(getattr(updated, "balance", 0) or 0)
 
 
 async def _audience_recent_chat(
@@ -130,17 +152,25 @@ async def grant_to_audience(
     skipped_broke = 0
     for uid in targets:
         try:
-            await economy.change_balance(
-                session, uid, amount, REASON_OWNER,
-                {"action": "owner_grant", "note": note, "by": owner_id},
-                allow_negative=False,
-            )
-            done += 1
-        except economy.InsufficientFunds:
-            # При снятии (amount < 0) у игрока может не хватать средств —
-            # это не сбой, а ожидаемый пропуск. Считаем отдельно, чтобы НЕ
-            # выдавать частичное снятие за чистый успех.
-            skipped_broke += 1
+            if amount < 0:
+                # Снятие у группы: с каждого забираем сколько есть (clamp),
+                # а не пропускаем тех, у кого меньше суммы. «done» считаем по
+                # факту реального списания > 0.
+                took, _ = await _debit_clamped_to_balance(
+                    session, uid, -amount, REASON_OWNER,
+                    {"action": "owner_grant", "note": note, "by": owner_id},
+                )
+                if took > 0:
+                    done += 1
+                else:
+                    skipped_broke += 1
+            else:
+                await economy.change_balance(
+                    session, uid, amount, REASON_OWNER,
+                    {"action": "owner_grant", "note": note, "by": owner_id},
+                    allow_negative=False,
+                )
+                done += 1
         except Exception:  # noqa: BLE001
             logger.debug("grant to %s failed", uid, exc_info=True)
     await _audit(
@@ -151,7 +181,7 @@ async def grant_to_audience(
     verb = "раздал" if amount > 0 else "снял"
     summary = f"{verb} по {money(abs(amount))} — {done} игрокам"
     if skipped_broke:
-        summary += f" (у {skipped_broke} не хватило — пропустил)"
+        summary += f" (у {skipped_broke} было пусто)"
     return ToolResult(
         ok=done > 0,
         summary=summary,
@@ -291,30 +321,41 @@ async def grant_one(
     names = await resolve_names(session, [target_id])
     nm = name_for(names, target_id)
     try:
-        user = await economy.change_balance(
-            session, target_id, amount, REASON_OWNER,
-            {"action": "owner_grant_one", "note": note, "by": owner_id},
-            allow_negative=False,
-        )
-    except economy.InsufficientFunds:
-        return ToolResult(ok=False, error=f"у {nm} не хватает ешек для снятия")
+        if amount < 0:
+            # Снятие: забираем не больше, чем есть (как admin «забрать»), а
+            # не падаем на нехватке. Иначе «забери 5000» у того, у кого 3000,
+            # не снимало бы НИЧЕГО — это и был баг снятия денег.
+            took, new_balance = await _debit_clamped_to_balance(
+                session, target_id, -amount, REASON_OWNER,
+                {"action": "owner_grant_one", "note": note, "by": owner_id},
+            )
+            applied = -took
+        else:
+            user = await economy.change_balance(
+                session, target_id, amount, REASON_OWNER,
+                {"action": "owner_grant_one", "note": note, "by": owner_id},
+                allow_negative=False,
+            )
+            applied = amount
+            new_balance = int(getattr(user, "balance", 0) or 0)
     except Exception as exc:  # noqa: BLE001
         op = "выдать" if amount > 0 else "снять"
         return ToolResult(ok=False, error=f"не вышло {op} у {nm}: {exc}")
-    new_balance = int(getattr(user, "balance", 0) or 0)
+    if applied == 0:
+        return ToolResult(ok=False, error=f"у {nm} нечего снимать (баланс пуст)")
     await _audit(
         session, owner_id, "owner_grant_one", target_id, note or "выдача",
-        {"amount": amount, "balance_after": new_balance},
+        {"amount": applied, "balance_after": new_balance},
     )
-    verb = "выдал" if amount > 0 else "снял"
+    verb = "выдал" if applied > 0 else "снял"
     return ToolResult(
         ok=True,
-        summary=f"{verb} {nm} {money(abs(amount))} (стало {money(new_balance)})",
+        summary=f"{verb} {nm} {money(abs(applied))} (стало {money(new_balance)})",
         affected=1,
         meta={
-            "amount": amount,
+            "amount": applied,
             "target": target_id,
-            "targets": [{"id": target_id, "delta": amount, "balance": new_balance}],
+            "targets": [{"id": target_id, "delta": applied, "balance": new_balance}],
         },
     )
 

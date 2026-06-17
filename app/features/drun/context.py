@@ -28,11 +28,84 @@ from app.models import User, WorldEvent
 logger = get_logger(__name__)
 
 
+async def _player_assets_block(session: AsyncSession, user_id: int) -> list[str]:
+    """Дополнительная видимость по игроку: инвентарь, ачивки, сезон, модерация,
+    активность в кейсах/подарках. Каждый под-блок изолирован try/except — любой
+    сбой не рушит досье. Возвращает список строк (может быть пустым).
+    """
+    out: list[str] = []
+    # Инвентарь: сколько предметов и сколько уникальных.
+    try:
+        from app.repositories import inventory as inv_repo
+
+        total = await inv_repo.count_items(session, user_id)
+        distinct = await inv_repo.count_distinct_items(session, user_id)
+        if total:
+            out.append(f"- Инвентарь: {total} предметов ({distinct} видов)")
+    except Exception:  # noqa: BLE001
+        logger.debug("inv block failed", exc_info=True)
+    # Ачивки: сколько открыто.
+    try:
+        from app.features.achievements import service as ach_service
+
+        codes = await ach_service.get_unlocked_codes(session, user_id)
+        if codes:
+            out.append(f"- Ачивок открыто: {len(codes)}")
+    except Exception:  # noqa: BLE001
+        logger.debug("ach block failed", exc_info=True)
+    # Сезон: текущий season MMR + login-стрик.
+    try:
+        from app.repositories import season as season_repo
+
+        smmr = await season_repo.get_season_mmr(session, user_id)
+        streak = await season_repo.get_streak(session, user_id)
+        bits = []
+        if smmr:
+            bits.append(f"сезонный MMR {smmr}")
+        if streak is not None and getattr(streak, "current_streak", 0):
+            bits.append(f"заход подряд {streak.current_streak} дн")
+        if bits:
+            out.append("- Сезон: " + ", ".join(bits))
+    except Exception:  # noqa: BLE001
+        logger.debug("season block failed", exc_info=True)
+    # Модерация: активный мут/бан/варны — друн должен знать, кто «на карандаше».
+    try:
+        from app.repositories import moderation as mod_repo
+
+        state = await mod_repo.get_state(session, user_id)
+        if state is not None:
+            warns = int(getattr(state, "warn_count", 0) or 0)
+            muted = getattr(state, "muted_until", None)
+            banned = getattr(state, "banned_until", None)
+            mbits = []
+            if banned:
+                mbits.append("ЗАБАНЕН")
+            if muted:
+                mbits.append("в муте")
+            if warns:
+                mbits.append(f"варнов {warns}")
+            if mbits:
+                out.append("- Модерация: " + ", ".join(mbits))
+    except Exception:  # noqa: BLE001
+        logger.debug("mod block failed", exc_info=True)
+    # Активность в кейсах.
+    try:
+        from app.repositories import cases as cases_repo
+
+        opened = await cases_repo.count_openings(session, user_id)
+        if opened:
+            out.append(f"- Открыл кейсов: {opened}")
+    except Exception:  # noqa: BLE001
+        logger.debug("cases block failed", exc_info=True)
+    return out
+
+
 async def _player_block(session: AsyncSession, user_id: int) -> str:
     """Досье игрока: статистика + брак + ОТНОШЕНИЕ Друна к нему.
 
     Это самый важный блок: он делает ответ персональным. Кроме сухих цифр сюда
-    идёт «стойка» (stance) — как Друну держаться именно с этим человеком.
+    идёт «стойка» (stance) — как Друну держаться именно с этим человеком, плюс
+    расширенная видимость: инвентарь, ачивки, сезон, модерация, кейсы.
     """
     try:
         from app.repositories import reputation as rep_repo
@@ -76,6 +149,12 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
             lines.append(
                 f"- ТВОЁ ОТНОШЕНИЕ [{stance.label}]: {stance.directive}"
             )
+
+        # Расширенная видимость: инвентарь/ачивки/сезон/модерация/кейсы.
+        try:
+            lines.extend(await _player_assets_block(session, user_id))
+        except Exception:  # noqa: BLE001
+            logger.debug("assets block failed", exc_info=True)
 
         # Собранный портрет (личность + манера речи + темы): делает друна
         # «знающим» собеседника как человека, а не по сухим цифрам.
@@ -233,6 +312,32 @@ async def _overview_block(session: AsyncSession) -> str:
                 lines.append(f"- В браках состоит: {len(married)} чел.")
         except Exception:  # noqa: BLE001
             logger.debug("overview marriages failed", exc_info=True)
+
+        # Топ-3 по MMR — кто короли рейтинга.
+        try:
+            from app.repositories import mmr as mmr_repo
+
+            top_mmr = await mmr_repo.top_by_mmr(session, 3)
+            if top_mmr:
+                mnames = await resolve_names(session, [r.user_id for r in top_mmr])
+                parts = [
+                    f"{name_for(mnames, r.user_id)} ({r.mmr})"
+                    for r in top_mmr if r.mmr
+                ]
+                if parts:
+                    lines.append(f"- Короли MMR: {', '.join(parts)}")
+        except Exception:  # noqa: BLE001
+            logger.debug("overview mmr failed", exc_info=True)
+
+        # Экономика: сумма ешек на руках у всех — пульс инфляции.
+        try:
+            total_eshki = await session.scalar(
+                select(func.coalesce(func.sum(User.balance), 0))
+            )
+            if total_eshki:
+                lines.append(f"- Всего ешек в обороте: {money(int(total_eshki))}")
+        except Exception:  # noqa: BLE001
+            logger.debug("overview economy failed", exc_info=True)
 
         return "\n".join(lines) if len(lines) > 1 else ""
     except Exception:  # noqa: BLE001

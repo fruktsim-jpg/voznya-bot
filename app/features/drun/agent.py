@@ -74,6 +74,9 @@ _SYSTEM = (
     "(безопаснее, чем all).\n"
     "- «дай/выдай/закинь/накинь/подари по 100» → grant amount=100.\n"
     "- «забери/сними/отними/штрафани 50» → grant/grant_one amount=-50.\n"
+    "- «забери всё/обнули баланс/обнули» у игрока → grant_one с большим "
+    "отрицательным amount (напр. -100000000): снимется ровно сколько есть, "
+    "в минус не уйдёт.\n"
     "- Конкретный человек («@vasya», «дай Пете», «сними у Кота») → grant_one с "
     "who. «разыграй»/«розыгрыш»/«раздача с победителями» → giveaway.\n"
     "- «замути/мут/заткни» → mute. «x2/удвой/множитель/ивент на ешки» → "
@@ -100,7 +103,7 @@ async def _plan(session: AsyncSession, text: str) -> dict | None:
     try:
         raw = await drun_provider.chat(
             cfg, system=_SYSTEM, messages=[{"role": "user", "content": user_msg}],
-            model=cfg.fast_model or None,
+            model=cfg.model_for(drun_config.ROLE_PLANNING),
         )
     except drun_provider.LlmError as exc:
         logger.debug("agent plan llm failed: %s", exc)

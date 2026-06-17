@@ -170,7 +170,7 @@ async def _build_portrait(session: AsyncSession, name: str, msgs: list[str]) -> 
         raw = await drun_provider.chat(
             cfg, system=_PORTRAIT_SYSTEM,
             messages=[{"role": "user", "content": user_msg}],
-            model=cfg.fast_model or None,
+            model=cfg.model_for(drun_config.ROLE_MEMORY_SUMMARY),
         )
     except drun_provider.LlmError as exc:
         logger.debug("portrait llm failed: %s", exc)

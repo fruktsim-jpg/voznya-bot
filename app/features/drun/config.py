@@ -31,6 +31,7 @@ KEY_BASE_URL = "base_url"
 KEY_API_KEY = "api_key"
 KEY_MODEL = "model"
 KEY_FAST_MODEL = "fast_model"  # дешёвая/быстрая модель для служебных задач
+KEY_MODELS_BY_ROLE = "models_by_role"  # JSON: роль→модель (мульти-модельность)
 KEY_TEMPERATURE = "temperature"
 KEY_MAX_TOKENS = "max_tokens"
 KEY_POSTS_PER_DAY = "posts_per_day_max"
@@ -54,6 +55,7 @@ DEFAULTS: dict[str, Any] = {
     KEY_API_KEY: "",
     KEY_MODEL: "gpt-4o-mini",
     KEY_FAST_MODEL: "",
+    KEY_MODELS_BY_ROLE: {},
     KEY_TEMPERATURE: 0.9,
     KEY_MAX_TOKENS: 600,
     KEY_POSTS_PER_DAY: 6,
@@ -71,10 +73,41 @@ DEFAULTS: dict[str, Any] = {
 
 # Имена промптов.
 PROMPT_PERSONA = "persona"        # кто такой друн (голос) — обычно копия ПЕРСОНАЖ.txt
+PROMPT_PERSONA = "persona"        # кто такой друн (голос) — обычно копия ПЕРСОНАЖ.txt
 PROMPT_WORLD = "world"            # лор мира — обычно копия МИР.txt
 PROMPT_OBSERVATION = "observation"  # инструкция для одиночного наблюдения
 PROMPT_REACTION = "reaction"      # инструкция для реакции на событие
 PROMPT_REPLY = "reply"            # инструкция для ответа на обращение в чате
+
+
+# --- Мульти-модельность: специализированные роли ------------------------------
+# Каждой задаче — оптимальная модель. Дорогие/умные — на голос и нарратив,
+# дешёвые/быстрые — на служебную обработку (извлечение/суммаризация фактов).
+ROLE_NARRATOR = "narrator"            # голос друна: ответы, реакции, истории
+ROLE_MEMORY_EXTRACT = "memory_extract"  # вытащить факты из чата
+ROLE_MEMORY_SUMMARY = "memory_summary"  # портреты/сжатие памяти
+ROLE_EVENT_ANALYSIS = "event_analysis"  # анализ событий мира
+ROLE_PLANNING = "planning"            # парсинг owner-команд в tool-вызовы
+ROLE_VISION = "vision"                # понимание изображений
+ROLE_MODERATION = "moderation"        # модерационные рассуждения
+
+ALL_ROLES = (
+    ROLE_NARRATOR, ROLE_MEMORY_EXTRACT, ROLE_MEMORY_SUMMARY, ROLE_EVENT_ANALYSIS,
+    ROLE_PLANNING, ROLE_VISION, ROLE_MODERATION,
+)
+
+# Дефолтная раскладка ролей по доступным моделям. Это РЕКОМЕНДАЦИЯ; реальные
+# имена моделей задаются в БД (models_by_role) и переопределяют дефолты. Пустая
+# строка означает «используй основную model».
+DEFAULT_ROLE_MODELS: dict[str, str] = {
+    ROLE_NARRATOR: "claude-opus-4.8",        # живой голос — самая сильная
+    ROLE_MEMORY_EXTRACT: "gemini-3.5-flash", # дёшево и быстро, много вызовов
+    ROLE_MEMORY_SUMMARY: "claude-haiku-4.5", # компактные портреты
+    ROLE_EVENT_ANALYSIS: "gpt-5.4-mini",     # анализ событий
+    ROLE_PLANNING: "gpt-5.4",                # точный разбор команд в JSON
+    ROLE_VISION: "gemini-3.1-pro-preview",   # мультимодальность
+    ROLE_MODERATION: "claude-sonnet-4.6",    # взвешенные модерац-решения
+}
 
 
 @dataclass
@@ -86,6 +119,7 @@ class AiConfig:
     api_key: str
     model: str
     fast_model: str
+    models_by_role: dict[str, str]
     temperature: float
     max_tokens: int
     posts_per_day_max: int
@@ -104,6 +138,27 @@ class AiConfig:
     def usable(self) -> bool:
         """Можно ли реально дёргать модель (включено и есть ключ)."""
         return bool(self.enabled and self.api_key and self.model)
+
+    def model_for(self, role: str) -> str:
+        """Модель для конкретной роли (мульти-модельность).
+
+        Безопасные дефолты: пока оператор НЕ задал ``models_by_role`` в БД, мы
+        сохраняем текущее поведение — служебные роли идут на ``fast_model``
+        (если задана), голосовые/планировочные — на основную ``model``. Так мы
+        не ломаем работу, подставляя имена моделей, которых нет на endpoint.
+        Рекомендованную раскладку (DEFAULT_ROLE_MODELS) оператор видит в админке
+        и включает явно.
+        """
+        explicit = (self.models_by_role or {}).get(role, "")
+        if explicit:
+            return explicit
+        # Без явной настройки: дешёвые служебные роли → fast_model, если есть.
+        cheap_roles = {
+            ROLE_MEMORY_EXTRACT, ROLE_MEMORY_SUMMARY, ROLE_EVENT_ANALYSIS,
+        }
+        if role in cheap_roles and self.fast_model:
+            return self.fast_model
+        return self.model
 
 
 _settings_cache: dict[str, Any] = {}
@@ -173,12 +228,25 @@ async def get_config(session: AsyncSession) -> AiConfig:
             return out or d
         return d
 
+    def _as_role_map(v: Any) -> dict[str, str]:
+        """Парсит models_by_role: только известные роли, значения — строки."""
+        if not isinstance(v, dict):
+            return {}
+        out: dict[str, str] = {}
+        for role, model in v.items():
+            r = str(role).strip().lower()
+            m = str(model).strip()
+            if r in ALL_ROLES and m:
+                out[r] = m
+        return out
+
     return AiConfig(
         enabled=_as_bool(_g(KEY_ENABLED)),
         base_url=str(_g(KEY_BASE_URL) or DEFAULTS[KEY_BASE_URL]).rstrip("/"),
         api_key=str(_g(KEY_API_KEY) or ""),
         model=str(_g(KEY_MODEL) or DEFAULTS[KEY_MODEL]),
         fast_model=str(_g(KEY_FAST_MODEL) or ""),
+        models_by_role=_as_role_map(_g(KEY_MODELS_BY_ROLE)),
         temperature=_as_float(_g(KEY_TEMPERATURE), DEFAULTS[KEY_TEMPERATURE]),
         max_tokens=_as_int(_g(KEY_MAX_TOKENS), DEFAULTS[KEY_MAX_TOKENS]),
         posts_per_day_max=_as_int(_g(KEY_POSTS_PER_DAY), DEFAULTS[KEY_POSTS_PER_DAY]),
