@@ -134,12 +134,20 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
         # (защита от строчки из @упоминаний) — но обычно отвечаем.
 
     text = (message.text or message.caption or "").strip()
-    result = await drun_service.respond(
-        session,
-        asker_id=user.id,
-        asker_name=_display_name(message),
-        text=text,
-    )
+    if addressed:
+        # Прямое обращение — отвечаем НА КОНКРЕТНУЮ реплику человека.
+        result = await drun_service.respond(
+            session,
+            asker_id=user.id,
+            asker_name=_display_name(message),
+            text=text,
+        )
+    else:
+        # Случайный вкид — это НЕ ответ на вопрос, а живое встревание по
+        # настроению чата. Берём observe-режим (читает живой чат и вкидывает
+        # реплику в тему), иначе друн отвечал бы на случайную фразу как на
+        # адресованный ему вопрос и выдавал бы несвязную дичь.
+        result = await drun_service.observe(session, subject_id=user.id)
     if not result.ok:
         return
 
@@ -154,4 +162,8 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
             out += f"\n\n💸 Налоговая друна: −{econ.applied} ешек (баланс: {econ.balance})"
         else:
             out += f"\n\n🎁 Друн сжалился: +{econ.applied} ешек (баланс: {econ.balance})"
-    await message.reply(out, parse_mode=None)
+    # Адресные — реплаем (видно, кому отвечает); вкиды — обычным сообщением.
+    if addressed:
+        await message.reply(out, parse_mode=None)
+    else:
+        await message.answer(out, parse_mode=None)
