@@ -175,7 +175,7 @@ async def _h_grant_item(ctx: ToolContext) -> drun_tools.ToolResult:
         return drun_tools.ToolResult(ok=False, error=f"не нашёл игрока «{who}»")
     return await drun_tools.grant_item_one(
         ctx.session, owner_id=ctx.owner_id, target_id=target,
-        item_code=ctx.arg_str("item", limit=64), quantity=ctx.arg_int("quantity", 1),
+        item_code=ctx.arg_str("item"), quantity=ctx.arg_int("quantity", 1),
     )
 
 

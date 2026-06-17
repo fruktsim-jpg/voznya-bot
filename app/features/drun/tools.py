@@ -477,6 +477,11 @@ async def warn_one(
     if count >= mod_settings.WARN_MUTE_THRESHOLD:
         until = _now() + timedelta(seconds=mod_settings.WARN_MUTE_SECONDS)
         try:
+            # ВНИМАНИЕ: команда /warn модерации на пороге зовёт ОБА —
+            # apply_mute_telegram (реальный TG-restrict) И set_mute (DB). Здесь
+            # bot-объекта нет, поэтому ставим ТОЛЬКО DB-мут. Он не банит ввод в
+            # Telegram, но MuteEnforcementMiddleware удаляет сообщения мутнутого
+            # — эффект для чата есть, хоть и не полный паритет с /warn.
             await mod_repo.set_mute(
                 session, target_id, until, "авто-мьют по варнам", owner_id
             )
@@ -533,7 +538,14 @@ MAX_MMR_DELTA = 1000  # потолок изменения рейтинга за 
 async def award_mmr_one(
     session: AsyncSession, *, owner_id: int, target_id: int, amount: int,
 ) -> ToolResult:
-    """Начисляет (или снимает при amount<0) MMR игроку. Кламп: ±1000."""
+    """Начисляет (или снимает при amount<0) MMR игроку. Кламп: ±1000.
+
+    ВАЖНО: кламп применяется ДО множителей опыта. award_mmr для начислений
+    (>0) домножает на modifier.xp / season.xp_bonus из админки, поэтому при
+    активном ивенте фактический прирост может превысить 1000 (напр. ×2 → 2000).
+    Это осознанно: потолок страхует от опечатки owner'а, а ивент-бонус —
+    отдельная управляемая операторами величина. Списания (<0) не масштабируются.
+    """
     from app.features.mmr import service as mmr_service
     from app.features.drun.names import name_for, resolve_names
 
