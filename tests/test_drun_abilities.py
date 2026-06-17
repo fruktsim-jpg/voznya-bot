@@ -15,6 +15,7 @@ def _cfg(**over) -> AiConfig:
         enabled=True, base_url="https://api.openai.com/v1", api_key="k",
         model="m", fast_model="", models_by_role={}, temperature=0.9,
         max_tokens=600, posts_per_day_max=6, min_severity=2,
+        autonomous_enabled=False,
         reply_enabled=True, reply_cooldown_sec=20, name_triggers=["друн"],
         random_butt_in_chance=0.0, econ_enabled=False, econ_max_pct=0.05,
         econ_max_abs=1000, econ_cooldown_sec=7200, econ_daily_cap=20,
@@ -63,3 +64,27 @@ def test_extract_searxng_results():
 def test_extract_bad_shape():
     assert websearch._extract({"results": "nope"}) == []
     assert websearch._extract([]) == []
+
+
+def test_ssrf_guard_rejects_non_https():
+    from app.features.drun import provider
+
+    for bad in ("http://example.com/x.png", "ftp://h/x", "file:///etc/passwd"):
+        try:
+            provider._assert_safe_public_url(bad)
+            assert False, f"expected rejection for {bad}"
+        except provider.LlmError:
+            pass
+
+
+def test_ssrf_guard_rejects_private_and_loopback():
+    from app.features.drun import provider
+
+    # Резолвится в loopback/приватные адреса — должно отклоняться.
+    for bad in ("https://localhost/x.png", "https://127.0.0.1/x.png"):
+        try:
+            provider._assert_safe_public_url(bad)
+            assert False, f"expected rejection for {bad}"
+        except provider.LlmError:
+            pass
+

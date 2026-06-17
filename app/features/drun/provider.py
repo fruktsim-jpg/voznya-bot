@@ -20,6 +20,40 @@ from app.features.drun.config import AiConfig
 
 logger = get_logger(__name__)
 
+# Предел размера скачиваемой картинки (анти-DoS при следовании по url).
+_MAX_IMAGE_BYTES = 12 * 1024 * 1024
+
+
+def _assert_safe_public_url(raw_url: str) -> None:
+    """Валидирует URL перед серверным GET — анти-SSRF.
+
+    Картинка-эндпоинт может вернуть произвольный ``url`` в ответе; слепой GET по
+    нему позволил бы увести запрос на внутренние адреса (метаданные облака,
+    localhost, приватные сети). Поэтому требуем https и публичный IP. Бросает
+    :class:`LlmError` при любом нарушении.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(raw_url)
+    if parts.scheme != "https":
+        raise LlmError("image url must be https")
+    host = parts.hostname
+    if not host:
+        raise LlmError("image url has no host")
+    try:
+        infos = socket.getaddrinfo(host, parts.port or 443, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        raise LlmError(f"image url host unresolved: {exc}") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+        ):
+            raise LlmError("image url resolves to a non-public address")
+
 _TIMEOUT_SECONDS = 45
 
 
@@ -253,12 +287,18 @@ async def generate_image(cfg: AiConfig, *, prompt: str) -> bytes:
             raise LlmError(f"bad b64 image: {exc}") from exc
     img_url = item.get("url")
     if img_url:
+        # Анти-SSRF: ответ-управляемый url нельзя качать вслепую. Проверяем
+        # схему/адрес, запрещаем редиректы и ограничиваем размер.
+        _assert_safe_public_url(str(img_url))
         try:
             async with aiohttp.ClientSession(timeout=timeout) as http:
-                async with http.get(img_url) as r2:
-                    if r2.status >= 400:
+                async with http.get(str(img_url), allow_redirects=False) as r2:
+                    if r2.status >= 400 or r2.status in (301, 302, 303, 307, 308):
                         raise LlmError(f"image fetch HTTP {r2.status}")
-                    return await r2.read()
+                    body = await r2.content.read(_MAX_IMAGE_BYTES + 1)
+                    if len(body) > _MAX_IMAGE_BYTES:
+                        raise LlmError("image too large")
+                    return body
         except aiohttp.ClientError as exc:
             raise LlmError(f"image fetch error: {exc}") from exc
     raise LlmError("no image payload (b64_json/url) in response")

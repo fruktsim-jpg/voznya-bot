@@ -36,6 +36,7 @@ KEY_TEMPERATURE = "temperature"
 KEY_MAX_TOKENS = "max_tokens"
 KEY_POSTS_PER_DAY = "posts_per_day_max"
 KEY_MIN_SEVERITY = "min_severity"
+KEY_AUTONOMOUS_ENABLED = "autonomous_enabled"  # сам по себе постит в чат (off по умолч.)
 # Реактивный режим (ответы в чате).
 KEY_REPLY_ENABLED = "reply_enabled"          # отвечать ли на обращения в чате
 KEY_REPLY_COOLDOWN = "reply_cooldown_sec"    # анти-спам: пауза между ответами
@@ -70,6 +71,7 @@ DEFAULTS: dict[str, Any] = {
     KEY_MAX_TOKENS: 600,
     KEY_POSTS_PER_DAY: 6,
     KEY_MIN_SEVERITY: 2,
+    KEY_AUTONOMOUS_ENABLED: False,
     KEY_REPLY_ENABLED: True,
     KEY_REPLY_COOLDOWN: 20,
     KEY_NAME_TRIGGERS: ["друн", "drun"],
@@ -119,6 +121,8 @@ ALL_ROLES = (
 # админка как «пресет одним кликом»: оператор копирует нужные строки в БД-ключ
 # models_by_role, и только тогда раскладка вступает в силу. Имена моделей здесь
 # — пожелания, а не гарантия доступности у провайдера.
+# ВНИМАНИЕ: дублируется в v0-voznya/app/admin/ai/ai-manager.tsx
+# (RECOMMENDED_ROLE_MODELS) — при правке моделей синхронизируй оба места.
 DEFAULT_ROLE_MODELS: dict[str, str] = {
     ROLE_NARRATOR: "claude-opus-4.8",        # живой голос — самая сильная
     ROLE_MEMORY_EXTRACT: "gemini-3.5-flash", # дёшево и быстро, много вызовов
@@ -144,6 +148,7 @@ class AiConfig:
     max_tokens: int
     posts_per_day_max: int
     min_severity: int
+    autonomous_enabled: bool
     reply_enabled: bool
     reply_cooldown_sec: int
     name_triggers: list[str]
@@ -294,6 +299,7 @@ async def get_config(session: AsyncSession) -> AiConfig:
         max_tokens=_as_int(_g(KEY_MAX_TOKENS), DEFAULTS[KEY_MAX_TOKENS]),
         posts_per_day_max=_as_int(_g(KEY_POSTS_PER_DAY), DEFAULTS[KEY_POSTS_PER_DAY]),
         min_severity=_as_int(_g(KEY_MIN_SEVERITY), DEFAULTS[KEY_MIN_SEVERITY]),
+        autonomous_enabled=_as_bool(_g(KEY_AUTONOMOUS_ENABLED)),
         reply_enabled=_as_bool(_g(KEY_REPLY_ENABLED)),
         reply_cooldown_sec=_as_int(_g(KEY_REPLY_COOLDOWN), DEFAULTS[KEY_REPLY_COOLDOWN]),
         name_triggers=_as_str_list(_g(KEY_NAME_TRIGGERS), DEFAULTS[KEY_NAME_TRIGGERS]),
@@ -319,9 +325,6 @@ async def get_config(session: AsyncSession) -> AiConfig:
 
 
 async def get_prompt(session: AsyncSession, name: str, default: str = "") -> str:
-    """Возвращает тело промпта по имени (или ``default``, если не задан)."""
-    await _ensure_loaded(session)
-    return _prompts_cache.get(name, default)
     """Возвращает тело промпта по имени (или ``default``, если не задан)."""
     await _ensure_loaded(session)
     return _prompts_cache.get(name, default)

@@ -482,9 +482,12 @@ async def ban_one(
 
     names = await resolve_names(session, [target_id])
     nm = name_for(names, target_id)
+    # Нормализуем срок: только явный 0 = перманент. Отрицательные/мусорные
+    # значения от планировщика НЕ должны эскалировать до вечного бана.
+    days = max(0, min(int(days), 365))
     until = None
-    if days and days > 0:
-        until = now_utc() + timedelta(days=min(int(days), 365))
+    if days > 0:
+        until = now_utc() + timedelta(days=days)
     try:
         await mod_repo.set_ban(
             session, target_id, until, reason or "по воле друна", owner_id
@@ -492,7 +495,7 @@ async def ban_one(
         await _mark_tg_pending(session, target_id)
     except Exception as exc:  # noqa: BLE001
         return ToolResult(ok=False, error=f"не вышло забанить {nm}: {exc}")
-    span = "навсегда" if until is None else f"на {min(int(days), 365)} дн"
+    span = "навсегда" if until is None else f"на {days} дн"
     await _audit(
         session, owner_id, "owner_ban", target_id, reason or "бан",
         {"days": days},
@@ -527,18 +530,21 @@ async def unban_one(
 async def kick_one(
     session: AsyncSession, *, owner_id: int, target_id: int, reason: str = "",
 ) -> ToolResult:
-    """Кикает игрока: краткий бан (~1 мин), который тут же истекает.
+    """Кикает игрока: короткий бан, который затем снимает scheduler.
 
-    Telegram-кик = ban + немедленный unban. Здесь ставим бан на минуту с
-    ``tg_pending``; scheduler применит бан (удалит из чата), а ``due_unbans``
-    в ближайшем тике снимет его — игрок сможет вернуться по ссылке.
+    Telegram-кик = ban + последующий unban. Ставим бан на 5 минут с
+    ``tg_pending``: moderation-scheduler (тик раз в минуту) гарантированно
+    увидит активный бан и удалит игрока из чата, а ``due_unbans`` снимет бан
+    после истечения — игрок сможет вернуться по ссылке. ВАЖНО: срок должен быть
+    заметно больше интервала тика (1 мин), иначе бан истечёт раньше, чем тик
+    его применит, и кик не сработает.
     """
     from app.repositories import moderation as mod_repo
     from app.features.drun.names import name_for, resolve_names
 
     names = await resolve_names(session, [target_id])
     nm = name_for(names, target_id)
-    until = now_utc() + timedelta(minutes=1)
+    until = now_utc() + timedelta(minutes=5)
     try:
         await mod_repo.set_ban(
             session, target_id, until, reason or "кик друна", owner_id

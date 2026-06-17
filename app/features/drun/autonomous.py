@@ -17,12 +17,15 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.logger import get_logger
 from app.core.money import money
+from app.core.utils import now_utc
 from app.features.drun import config as drun_config
 from app.features.drun import memory as drun_memory
 from app.features.drun import service as drun_service
@@ -35,6 +38,10 @@ logger = get_logger(__name__)
 _KEY_LAST_EVENT = "autonomous_last_event_id"
 # Если чат сейчас активнее этого — не перебиваем живую беседу автопостом.
 _BUSY_CHAT_THRESHOLD = 12
+# Комментируем только ДЕЙСТВИТЕЛЬНО свежие события: без нижней границы по времени
+# на первом запуске (high-water-mark пуст) друн мог бы выдать событие недельной
+# давности за «только что произошло».
+_EVENT_FRESH_MIN = 30
 
 
 async def _get_last_event_id(session: AsyncSession) -> int:
@@ -86,6 +93,10 @@ async def comment_on_fresh_events(
     cfg = await drun_config.get_config(session)
     if not cfg.usable:
         return None
+    # Автономный постинг — отдельный явный опт-ин (по умолчанию off): друн не
+    # должен сам заговаривать в чате только потому, что включён реактивный режим.
+    if not cfg.autonomous_enabled:
+        return None
 
     # Дневной кап постов — друн не спамер.
     posts_today = await drun_memory.count_replies_today(session, channel=channel)
@@ -100,12 +111,15 @@ async def comment_on_fresh_events(
         return None
 
     last_id = await _get_last_event_id(session)
-    # Самое свежее значимое событие новее high-water-mark.
+    # Самое свежее значимое событие новее high-water-mark И не старше окна — чтобы
+    # на первом запуске (last_id=0) не выдать древнее событие за «только что».
+    fresh_since = now_utc() - timedelta(minutes=_EVENT_FRESH_MIN)
     ev = (
         await session.execute(
             select(WorldEvent)
             .where(WorldEvent.id > last_id)
             .where(WorldEvent.severity >= cfg.min_severity)
+            .where(WorldEvent.created_at >= fresh_since)
             .order_by(WorldEvent.created_at.desc())
             .limit(1)
         )
