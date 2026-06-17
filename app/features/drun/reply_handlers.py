@@ -151,6 +151,10 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
                 logger.warning("drun agent failed", exc_info=True)
                 outcome = None
             if outcome is not None and outcome.handled:
+                logger.info(
+                    "drun owner-command by %s: tool=%s ok=%s",
+                    user.id, outcome.tool, outcome.ok,
+                )
                 # Спавн клада исполняется отдельно (нужен bot + своя сессия).
                 if outcome.ok and outcome.summary == "__spawn_treasure__":
                     try:
@@ -166,6 +170,11 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
                         logger.warning("owner spawn_treasure failed", exc_info=True)
                         await message.reply("клад застрял в кармане, попробуй ещё", parse_mode=None)
                     return
+                # Фиксируем результат инструмента ДО медленного announce-вызова к
+                # LLM: иначе строковые блокировки FOR UPDATE на затронутых
+                # игроках висят весь сетевой запрос и тормозят их операции.
+                await session.commit()
+                await _set_cooldown(session, cfg.reply_cooldown_sec)
                 announce = await drun_service.announce_action(
                     session,
                     owner_name=_display_name(message),
@@ -173,7 +182,6 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
                     result_summary=outcome.summary,
                     ok=outcome.ok,
                 )
-                await _set_cooldown(session, cfg.reply_cooldown_sec)
                 out_text = (
                     announce.text if announce.ok and announce.text
                     else (f"Сделано: {outcome.summary}" if outcome.ok

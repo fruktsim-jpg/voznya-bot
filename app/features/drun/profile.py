@@ -98,16 +98,11 @@ async def _augment_social(session: AsyncSession, user_id: int, rs: RawStats) -> 
         logger.debug("profile reputation failed", exc_info=True)
 
     try:
+        from app.features.drun import relationships as rel_mod
         from app.features.drun.names import name_for, resolve_names
-        from app.repositories import marriages as marr_repo
 
-        marriage = await marr_repo.get_active_marriage(session, user_id)
-        if marriage is not None:
-            partner_id = (
-                marriage.user_id_2
-                if marriage.user_id_1 == user_id
-                else marriage.user_id_1
-            )
+        partner_id = await rel_mod.spouse_of(session, user_id)
+        if partner_id is not None:
             pnames = await resolve_names(session, [partner_id])
             partner = name_for(pnames, partner_id)
             rs.stats["married_to"] = partner
@@ -261,55 +256,52 @@ async def refresh_profile(
     return prof
 
 
-def render_profile_block(prof: AiProfile | None, name: str) -> str:
-    """Текстовый блок профиля для подмешивания в контекст ответа друна."""
-    if prof is None:
-        return ""
-    parts: list[str] = [f"# ДОСЬЕ НА {name} (это ты ЗНАЕШЬ, не зачитывай списком):"]
-    if prof.summary:
-        parts.append(f"Кто это: {prof.summary}")
-    if prof.speech_style:
-        parts.append(f"Как пишет: {prof.speech_style}")
-    data = prof.data or {}
-    traits = data.get("traits") or []
-    if traits:
-        parts.append("Черты: " + "; ".join(traits))
-    topics = data.get("topics") or []
-    if topics:
-        parts.append("Любимые темы: " + ", ".join(topics))
-    stat_lines = data.get("stat_lines") or []
-    for line in stat_lines:
-        parts.append(line)
-    if len(parts) == 1:
-        return ""
-    return "\n".join(parts)
-
-
-async def sweep_active(session: AsyncSession, *, since_minutes: int = 20) -> int:
+async def sweep_active(
+    session: AsyncSession,
+    *,
+    since_minutes: int = 20,
+    max_rebuilds: int = 25,
+) -> int:
     """Пересобирает профили игроков, писавших за последние ``since_minutes``.
 
     Это «реалтайм» без задержки для ответов: фоновый свип держит досье свежим.
     Дебаунс внутри ``refresh_profile`` не даёт пересобирать одно и то же зря.
+
+    ``max_rebuilds`` ограничивает число РЕАЛЬНЫХ пересборок за один цикл (каждая
+    — это LLM-вызов): на холодном старте активных может быть много, и без капа
+    один свип сделал бы сотни последовательных запросов к модели. Стейлые
+    профили (давно/никогда не обновлялись) идут первыми. Коммитим по ходу, чтобы
+    не держать одну длинную транзакцию и не копить блокировки.
+
     Возвращает число реально перестроенных профилей.
     """
     since = now_utc() - timedelta(minutes=since_minutes)
+    # Стейлость первой: сначала те, у кого профиля нет (NULL), затем самые
+    # старые refreshed_at — так кап тратится на самых «протухших».
     ids = (
         await session.execute(
             select(AiMessage.user_id)
+            .outerjoin(AiProfile, AiProfile.user_id == AiMessage.user_id)
             .where(AiMessage.role == "chat")
             .where(AiMessage.user_id.is_not(None))
             .where(AiMessage.created_at >= since)
-            .group_by(AiMessage.user_id)
+            .group_by(AiMessage.user_id, AiProfile.refreshed_at)
+            .order_by(AiProfile.refreshed_at.asc().nulls_first())
         )
     ).scalars().all()
     rebuilt = 0
     for uid in ids:
+        if rebuilt >= max_rebuilds:
+            break
         try:
             prof = await session.get(AiProfile, uid)
             before = prof.refreshed_at if prof is not None else None
             prof = await refresh_profile(session, uid)
             if prof is not None and prof.refreshed_at != before:
                 rebuilt += 1
+                # Фиксируем по одному: освобождаем ресурсы и не копим длинную
+                # транзакцию на весь (потенциально долгий) цикл свипа.
+                await session.commit()
         except Exception:  # noqa: BLE001
             logger.debug("sweep refresh failed for %s", uid, exc_info=True)
     return rebuilt

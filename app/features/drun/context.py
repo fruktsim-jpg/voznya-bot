@@ -34,7 +34,6 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
     идёт «стойка» (stance) — как Друну держаться именно с этим человеком.
     """
     try:
-        from app.repositories import marriages as marr_repo
         from app.repositories import reputation as rep_repo
 
         user = await session.get(User, user_id)
@@ -58,15 +57,13 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
             f"- Сообщений в чате: {getattr(user, 'messages_count', 0)}",
         ]
 
-        # Брак — повод для подколов/контекста отношений.
+        # Брак — повод для подколов/контекста отношений. Единый источник пары
+        # — relationships.spouse_of (та же конвенция, что в профиле и графе).
         try:
-            marriage = await marr_repo.get_active_marriage(session, user_id)
-            if marriage is not None:
-                partner_id = (
-                    marriage.user_id_2
-                    if marriage.user_id_1 == user_id
-                    else marriage.user_id_1
-                )
+            from app.features.drun import relationships as rel_mod
+
+            partner_id = await rel_mod.spouse_of(session, user_id)
+            if partner_id is not None:
                 pnames = await resolve_names(session, [partner_id])
                 lines.append(f"- В браке с {name_for(pnames, partner_id)}")
         except Exception:  # noqa: BLE001
@@ -100,13 +97,15 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                 rels = pdata.get("relationships") or []
                 if rels:
                     label = {
-                        "spouse": "в браке с", "rival": "соперник —",
+                        "rival": "соперник —",
                         "ally": "симпатизирует", "foe": "недолюбливает",
                         "buddy": "кореша с",
                     }
+                    # Брак уже отрендерен отдельной строкой выше — не дублируем.
                     rel_str = "; ".join(
                         f"{label.get(r.get('kind'), r.get('kind'))} {r.get('name')}"
-                        for r in rels[:5] if r.get("name")
+                        for r in rels[:6]
+                        if r.get("name") and r.get("kind") != "spouse"
                     )
                     if rel_str:
                         lines.append("- СВЯЗИ: " + rel_str)

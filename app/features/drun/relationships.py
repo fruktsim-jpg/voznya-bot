@@ -47,35 +47,37 @@ class RelEdge:
     strength: int = 1
     note: str = ""
 
-    def describe(self) -> str:
-        labels = {
-            "spouse": "в браке с",
-            "rival": "заклятый соперник по дуэлям —",
-            "ally": "симпатизирует",
-            "foe": "недолюбливает",
-            "buddy": "кореша с",
-        }
-        return f"{labels.get(self.kind, self.kind)} {self.other_name}"
 
+async def spouse_of(session: AsyncSession, user_id: int) -> int | None:
+    """ID партнёра по активному браку (или None). Единый источник правила пары.
 
-async def _spouse_edge(session: AsyncSession, user_id: int) -> tuple[int, str] | None:
-    """Партнёр по активному браку (id, имя) или None."""
+    Все места, где нужен супруг (досье, профиль, граф связей), должны ходить
+    сюда, чтобы конвенция ``user_id_1``/``user_id_2`` жила в одном месте и не
+    разъезжалась между поверхностями при изменении модели брака.
+    """
     try:
         from app.repositories import marriages as marr_repo
 
         marriage = await marr_repo.get_active_marriage(session, user_id)
         if marriage is None:
             return None
-        pid = (
+        return (
             marriage.user_id_2
             if marriage.user_id_1 == user_id
             else marriage.user_id_1
         )
-        names = await resolve_names(session, [pid])
-        return pid, name_for(names, pid)
     except Exception:  # noqa: BLE001
-        logger.debug("spouse edge failed", exc_info=True)
+        logger.debug("spouse_of failed", exc_info=True)
         return None
+
+
+async def _spouse_edge(session: AsyncSession, user_id: int) -> tuple[int, str] | None:
+    """Партнёр по активному браку (id, имя) или None."""
+    pid = await spouse_of(session, user_id)
+    if pid is None:
+        return None
+    names = await resolve_names(session, [pid])
+    return pid, name_for(names, pid)
 
 
 async def _rival_counts(session: AsyncSession, user_id: int) -> Counter[int]:
@@ -209,10 +211,3 @@ async def compute_edges(
 
     ranked = sorted(edges.values(), key=lambda e: e.strength, reverse=True)
     return ranked[:max_edges]
-
-
-def render_edges(edges: list[RelEdge]) -> str:
-    """Строка связей для досье («в браке с X; соперник Y; кореша с Z»)."""
-    if not edges:
-        return ""
-    return "; ".join(e.describe() for e in edges)

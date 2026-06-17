@@ -127,6 +127,7 @@ async def grant_to_audience(
         return ToolResult(ok=False, error="пустая аудитория")
 
     done = 0
+    skipped_broke = 0
     for uid in targets:
         try:
             await economy.change_balance(
@@ -135,19 +136,27 @@ async def grant_to_audience(
                 allow_negative=False,
             )
             done += 1
+        except economy.InsufficientFunds:
+            # При снятии (amount < 0) у игрока может не хватать средств —
+            # это не сбой, а ожидаемый пропуск. Считаем отдельно, чтобы НЕ
+            # выдавать частичное снятие за чистый успех.
+            skipped_broke += 1
         except Exception:  # noqa: BLE001
             logger.debug("grant to %s failed", uid, exc_info=True)
     await _audit(
         session, owner_id, "owner_grant_bulk", None,
         note or "массовая выдача",
-        {"amount": amount, "targets": done, "note": note},
+        {"amount": amount, "targets": done, "skipped": skipped_broke, "note": note},
     )
     verb = "раздал" if amount > 0 else "снял"
+    summary = f"{verb} по {money(abs(amount))} — {done} игрокам"
+    if skipped_broke:
+        summary += f" (у {skipped_broke} не хватило — пропустил)"
     return ToolResult(
         ok=done > 0,
-        summary=f"{verb} по {money(abs(amount))} — {done} игрокам",
+        summary=summary,
         affected=done,
-        meta={"amount": amount, "per_user": amount},
+        meta={"amount": amount, "per_user": amount, "skipped": skipped_broke},
     )
 
 
@@ -276,8 +285,11 @@ async def grant_one(
             {"action": "owner_grant_one", "note": note, "by": owner_id},
             allow_negative=False,
         )
+    except economy.InsufficientFunds:
+        return ToolResult(ok=False, error=f"у {nm} не хватает ешек для снятия")
     except Exception as exc:  # noqa: BLE001
-        return ToolResult(ok=False, error=f"не вышло начислить {nm}: {exc}")
+        op = "выдать" if amount > 0 else "снять"
+        return ToolResult(ok=False, error=f"не вышло {op} у {nm}: {exc}")
     await _audit(
         session, owner_id, "owner_grant_one", target_id, note or "выдача",
         {"amount": amount},
