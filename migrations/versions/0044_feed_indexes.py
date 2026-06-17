@@ -19,6 +19,11 @@
 
 ``transactions(created_at)`` уже покрыт миграцией ``0043``.
 
+Индексы создаются ``CONCURRENTLY`` (без блокировки записи на больших
+append-only журналах) в autocommit-блоке — DDL идёт вне общей транзакции
+миграции. ``IF NOT EXISTS`` / ``IF EXISTS`` делают шаг идемпотентным
+(безопасен при повторном или частично применённом прогоне).
+
 Revision ID: 0044_feed_indexes
 Revises: 0043_perf_indexes
 Create Date: 2026-06-17
@@ -34,20 +39,34 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_index("ix_case_openings_created_at", "case_openings", ["created_at"])
-    op.create_index(
-        "ix_gift_tx_status_created", "gift_transactions", ["status", "created_at"]
-    )
-    op.create_index(
-        "ix_user_achievements_unlocked_at", "user_achievements", ["unlocked_at"]
-    )
-    op.create_index("ix_marriages_married_at", "marriages", ["married_at"])
-    op.create_index("ix_mmr_entries_created_at", "mmr_entries", ["created_at"])
+    # CONCURRENTLY нельзя выполнять внутри транзакции — открываем autocommit-блок.
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_case_openings_created_at "
+            "ON case_openings (created_at)"
+        )
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_gift_tx_status_created "
+            "ON gift_transactions (status, created_at)"
+        )
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_user_achievements_unlocked_at "
+            "ON user_achievements (unlocked_at)"
+        )
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_marriages_married_at "
+            "ON marriages (married_at)"
+        )
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_mmr_entries_created_at "
+            "ON mmr_entries (created_at)"
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_mmr_entries_created_at", table_name="mmr_entries")
-    op.drop_index("ix_marriages_married_at", table_name="marriages")
-    op.drop_index("ix_user_achievements_unlocked_at", table_name="user_achievements")
-    op.drop_index("ix_gift_tx_status_created", table_name="gift_transactions")
-    op.drop_index("ix_case_openings_created_at", table_name="case_openings")
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_mmr_entries_created_at")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_marriages_married_at")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_user_achievements_unlocked_at")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_gift_tx_status_created")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_case_openings_created_at")

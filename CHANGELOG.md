@@ -28,6 +28,9 @@
   по времени): `ix_case_openings_created_at`, `ix_gift_tx_status_created`,
   `ix_user_achievements_unlocked_at`, `ix_marriages_married_at`,
   `ix_mmr_entries_created_at`. Аддитивно.
+- **`0043`/`0044`** создают индексы через `CREATE INDEX CONCURRENTLY IF NOT
+  EXISTS` в `autocommit_block` — без блокировки записи на больших append-only
+  таблицах при деплое; идемпотентны при повторном/частичном применении.
 
 ### Тесты
 - Хелперы `_run` в `test_duel_accept`/`test_dynamic_settings` переведены с

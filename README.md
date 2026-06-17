@@ -9,8 +9,8 @@
   **только чтение**; пишет лишь через явные админ-роуты и OIDC-флоу.
 
 Сводная документация по обеим кодовым базам находится в `../docs/`:
-`REPOSITORY_MAP.md`, `ARCHITECTURE.md`, `DATABASE.md`, `FEATURES.md`,
-`ADMIN.md`, `PROJECT_STATUS.md`, `DOCUMENTATION_DRIFT.md`.
+`PROJECT_STATUS.md` (текущее состояние и журнал изменений),
+`PRIORITIES.md` (приоритеты) и `AI_HANDOFF.md` (контекст для агентов).
 
 > Источник истины — код, а не документация. Этот README описывает фактическое
 > состояние на момент правки. Завершённые планы и одноразовые отчёты лежат в
@@ -125,13 +125,10 @@ PostgreSQL, прописать `DATABASE_URL`, затем `alembic upgrade head`
 Актуальная (поддерживается):
 
 - `CHANGELOG.md` — история изменений.
-- `docs/ECONOMY.md` — баланс экономики (числа из реального конфига).
-- `docs/ADMIN_PLATFORM.md` — RBAC и audit.
-- `docs/DELETION_ARCHITECTURE.md` — архитектура удаления данных.
-- `docs/VOZNYA_RANKS.md`, `docs/VOZNYA_DICTIONARY.md` — справочники.
-- `docs/STARS_FLOW.md`, `docs/STARS_FUNDING_GUIDE.md` — Telegram Stars.
-- `docs/DEBUG_INSTRUCTIONS.md`, `docs/VPS_*.md` — операционные шпаргалки.
-- `../docs/*.md` — актуальная сводная документация по обеим кодовым базам.
+- `../docs/PROJECT_STATUS.md` — текущее состояние и журнал изменений обеих баз.
+- `../docs/PRIORITIES.md` — приоритеты.
+- `../docs/AI_HANDOFF.md` — контекст для агентов.
 
-Историческое (НЕ источник истины): `docs/archive/` — завершённые планы,
-foundation-доки, аудиты и одноразовые отчёты.
+> Источник истины — код (`app/settings/*.py` для экономики/рангов, миграции
+> Alembic для схемы). Отдельных справочных доков в `docs/` сейчас нет —
+> описания вынесены в код и в `../docs/`.

@@ -13,13 +13,16 @@
   редкому ``kind='tg_gift'`` держит индекс маленьким; ``meta @> {...}``
   (после снятия лишнего cast) доостаётся фильтром на уже суженном наборе.
 
+Индексы создаются ``CONCURRENTLY`` (без блокировки записи на больших таблицах) в
+autocommit-блоке — DDL идёт вне общей транзакции миграции. ``IF NOT EXISTS`` /
+``IF EXISTS`` делают шаг идемпотентным (безопасен при повторном/частичном прогоне).
+
 Revision ID: 0043_perf_indexes
 Revises: 0042_case_gift_rewards
 Create Date: 2026-06-16
 """
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0043_perf_indexes"
@@ -29,19 +32,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_index(
-        "ix_transactions_created_at",
-        "transactions",
-        ["created_at"],
-    )
-    op.create_index(
-        "ix_gift_tx_pending_withdraw",
-        "gift_transactions",
-        ["status", "created_at"],
-        postgresql_where=sa.text("kind = 'tg_gift'"),
-    )
+    # CONCURRENTLY нельзя выполнять внутри транзакции — открываем autocommit-блок.
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_transactions_created_at "
+            "ON transactions (created_at)"
+        )
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_gift_tx_pending_withdraw "
+            "ON gift_transactions (status, created_at) WHERE kind = 'tg_gift'"
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_gift_tx_pending_withdraw", table_name="gift_transactions")
-    op.drop_index("ix_transactions_created_at", table_name="transactions")
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_gift_tx_pending_withdraw")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_transactions_created_at")
