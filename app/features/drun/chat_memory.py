@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.logger import get_logger
@@ -60,12 +60,14 @@ async def distill_chat(session: AsyncSession) -> int:
         return 0
 
     lines = []
-    name_to_id: dict[str, int] = {}
+    # Имя может быть неуникальным (несколько игроков с одинаковым ником в окне).
+    # Копим МНОЖЕСТВО id на имя, чтобы при коллизии не приписать факт не тому.
+    name_to_ids: dict[str, set[int]] = {}
     for m in msgs:
         nm = (m.meta or {}).get("name") or f"id{m.user_id}"
         lines.append(f"{nm}: {m.content}")
         if m.user_id:
-            name_to_id.setdefault(nm.lower(), m.user_id)
+            name_to_ids.setdefault(nm.lower(), set()).add(m.user_id)
 
     log = "\n".join(lines)
     user_msg = (
@@ -88,7 +90,11 @@ async def distill_chat(session: AsyncSession) -> int:
     added = 0
     for item in facts:
         fact = item["fact"]
-        subject_id = name_to_id.get(item["name"].lower())
+        ids = name_to_ids.get(item["name"].lower(), set())
+        # Однозначное имя → привязываем к игроку; коллизия или неизвестное имя →
+        # храним как факт про мир/чат (subject_id=None), но НЕ приписываем
+        # конкретному человеку, чтобы не путать досье.
+        subject_id = next(iter(ids)) if len(ids) == 1 else None
         if (subject_id, fact) in existing:
             continue
         existing.add((subject_id, fact))
@@ -141,11 +147,35 @@ def _parse_facts(raw: str) -> list[dict]:
 
 
 async def _existing_chat_facts(session: AsyncSession) -> set[tuple[int | None, str]]:
-    """Уже сохранённые (subject_id, fact) — грубая дедупликация."""
+    """Уже сохранённые НЕ протухшие (subject_id, fact) — грубая дедупликация.
+
+    Ограничиваем выборку живыми записями (``expires_at`` пуст или в будущем),
+    чтобы дедуп-сет не рос вместе с накопленной протухшей памятью.
+    """
+    now = now_utc()
     rows = (
-        await session.execute(select(AiMemory.subject_id, AiMemory.fact))
+        await session.execute(
+            select(AiMemory.subject_id, AiMemory.fact).where(
+                or_(AiMemory.expires_at.is_(None), AiMemory.expires_at > now)
+            )
+        )
     ).all()
     return {(r[0], r[1]) for r in rows}
+
+
+async def purge_expired(session: AsyncSession) -> int:
+    """Физически удаляет протухшие факты (``expires_at`` в прошлом).
+
+    Без этого таблица ``ai_memories`` только растёт: read-фильтр прячет
+    протухшее, но не освобождает место. Возвращает число удалённых строк.
+    """
+    now = now_utc()
+    result = await session.execute(
+        delete(AiMemory).where(
+            AiMemory.expires_at.is_not(None), AiMemory.expires_at <= now
+        )
+    )
+    return int(result.rowcount or 0)
 
 
 def setup_chat_distill(
@@ -159,10 +189,13 @@ def setup_chat_distill(
     async def _job() -> None:
         try:
             async with sessionmaker() as session:
+                removed = await purge_expired(session)
                 n = await distill_chat(session)
                 await session.commit()
-                if n:
-                    logger.info("drun chat memory: +%d facts", n)
+                if n or removed:
+                    logger.info(
+                        "drun chat memory: +%d facts, -%d expired", n, removed
+                    )
         except Exception:  # noqa: BLE001
             logger.warning("drun chat distill failed", exc_info=True)
 

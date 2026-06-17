@@ -121,7 +121,7 @@ async def generate(
     econ_result = None
     if allow_actions and cfg.econ_enabled:
         econ_result = await drun_actions.apply_if_any(
-            session, cfg=cfg, target_id=subject_id, text=text
+            session, cfg=cfg, target_id=subject_id, text=text, asker_id=subject_id
         )
     if drun_actions.parse(text) is not None:
         text = drun_actions.strip_directives(text)
@@ -202,13 +202,17 @@ async def respond(
     template = await drun_config.get_prompt(
         session, drun_config.PROMPT_REPLY, _DEFAULT_REPLY
     )
-    task = f'{template}\n\nРеплика игрока {asker_name}: «{text.strip()}»'
+    # Обезвреживаем econ-директивы в НЕДОВЕРЕННОМ вводе игрока: иначе игрок мог
+    # бы написать [[econ:grant:1000:...]] и через эхо модели спровоцировать
+    # самоначисление. Чистим до отправки в LLM и до сохранения в память.
+    safe_text = drun_actions.sanitize_user_text(text.strip())
+    task = f'{template}\n\nРеплика игрока {asker_name}: «{safe_text}»'
     return await generate(
         session,
         task=task,
         subject_id=asker_id,
         channel=channel,
-        memory_user_content=f"{asker_name}: {text.strip()}",
+        memory_user_content=f"{asker_name}: {safe_text}",
         memory_kind="reply",
         allow_actions=True,
     )

@@ -54,6 +54,19 @@ def strip_directives(text: str) -> str:
     return cleaned.strip()
 
 
+def sanitize_user_text(text: str) -> str:
+    """Обезвреживает директивы в НЕДОВЕРЕННОМ вводе игрока.
+
+    Игрок может написать в чат ``[[econ:grant:1000:...]]`` в надежде, что модель
+    отзеркалит это в свой ответ и сработает самоначисление. Поэтому ЛЮБОЙ
+    econ-токен в пользовательском тексте калечим (ломаем скобки), чтобы он не мог
+    дойти до парсера через эхо модели. Применять к тексту игрока ДО отправки в LLM.
+    """
+    if not text:
+        return text
+    return _DIRECTIVE_RE.sub("⟦econ⟧", text)
+
+
 def parse(text: str) -> ParsedAction | None:
     """Достаёт ПЕРВУЮ корректную директиву из текста (или None)."""
     m = _DIRECTIVE_RE.search(text or "")
@@ -74,6 +87,7 @@ async def apply_if_any(
     cfg: AiConfig,
     target_id: int | None,
     text: str,
+    asker_id: int | None = None,
 ) -> econ.EconResult | None:
     """Если в тексте есть директива и власть включена — применяет её.
 
@@ -93,6 +107,7 @@ async def apply_if_any(
         target_id=target_id,
         requested_amount=action.amount,
         note=action.note,
+        asker_id=asker_id,
     )
     logger.info(
         "drun action parsed kind=%s amount=%s applied_ok=%s reason=%s",

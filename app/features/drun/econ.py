@@ -75,17 +75,24 @@ async def apply(
     target_id: int,
     requested_amount: int,
     note: str = "",
+    asker_id: int | None = None,
 ) -> EconResult:
     """Применяет налог/подачку с соблюдением всех предохранителей.
 
     :param kind: ``"tax"`` (списать) или ``"grant"`` (выдать).
     :param requested_amount: сколько ПРОСИТ модель; будет обрезано лимитами.
     :param note: короткая причина «за что» (для леджера и события).
+    :param asker_id: кто обратился; подачку самому себе запрещаем (анти-абуз
+        через эхо директивы в чужом вводе).
     """
     if not cfg.econ_enabled:
         return EconResult(ok=False, reason="disabled")
     if kind not in ("tax", "grant"):
         return EconResult(ok=False, reason="bad_kind")
+    # Защита от самоначисления: grant самому себе запрещён (см. ревью —
+    # reflected prompt-injection). Налог самому себе безвреден (только теряешь).
+    if kind == "grant" and asker_id is not None and target_id == asker_id:
+        return EconResult(ok=False, reason="self_grant")
 
     # Дневной лимит на весь чат.
     if await _ops_today(session) >= cfg.econ_daily_cap:
@@ -112,8 +119,10 @@ async def apply(
         reason = REASON_TAX
         event_type = world_events.EVENT_DRUN_TAX
     else:  # grant
-        # Для подачки доля считается от абсолютного лимита, чтобы нищий получил
-        # ощутимое, а не процент от нуля.
+        # Подачка — это «жалость» ДРУГОМУ игроку (самому себе запрещено выше).
+        # Капается абсолютным лимитом, чтобы нельзя было печатать валюту; объём
+        # минтинга дополнительно ограничен кулдауном на игрока и дневным капом
+        # на весь чат.
         amount = min(max(abs(int(requested_amount)), _MIN_AMOUNT), max(0, cfg.econ_max_abs))
         if amount < _MIN_AMOUNT:
             return EconResult(ok=False, reason="too_small")
