@@ -55,7 +55,7 @@ DEFAULTS: dict[str, Any] = {
     KEY_MODEL: "gpt-4o-mini",
     KEY_FAST_MODEL: "",
     KEY_TEMPERATURE: 0.9,
-    KEY_MAX_TOKENS: 320,
+    KEY_MAX_TOKENS: 600,
     KEY_POSTS_PER_DAY: 6,
     KEY_MIN_SEVERITY: 2,
     KEY_REPLY_ENABLED: True,

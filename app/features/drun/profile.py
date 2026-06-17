@@ -28,7 +28,7 @@ from app.models import AiMessage, AiProfile, User
 logger = get_logger(__name__)
 
 # Сколько последних реплик игрока отдаём модели на анализ личности/речи.
-_MSG_WINDOW = 40
+_MSG_WINDOW = 80
 # Дебаунс реалтайма: не пересобирать профиль чаще, чем раз в N минут…
 _REFRESH_DEBOUNCE_MIN = 12
 # …кроме случая, когда накопилось достаточно новых реплик с прошлой сборки.
@@ -126,17 +126,27 @@ async def _player_messages(session: AsyncSession, user_id: int) -> list[str]:
 
 
 _PORTRAIT_SYSTEM = (
-    "Ты — психолог-портретист. По репликам человека из чата составь сжатый, но "
-    "живой портрет: какой у него характер, чем он живёт, как себя ведёт, и "
-    "ОТДЕЛЬНО — как он ПИШЕТ (манера речи: словечки, мат, капс, смайлы, длина "
-    "реплик, грамотность, фишки). Без воды и морали — это рабочая заметка."
+    "Ты — психолог-портретист и внимательный слушатель. По репликам человека из "
+    "чата составь сжатый, но живой портрет: какой у него характер, чем он живёт, "
+    "как себя ведёт, и ОТДЕЛЬНО — как он ПИШЕТ (манера речи: словечки, мат, "
+    "капс, смайлы, длина реплик, грамотность, фишки). Особое внимание — тому, "
+    "что человек САМ о себе сообщает: как его зовут («я Дима», «зовите меня "
+    "Кот»), его пол (по словам и по форме глаголов: «я сделалА» → женский, «я "
+    "устал» → мужской), возраст, чем занимается, что любит/ненавидит, на что "
+    "жалуется. Это важнее статистики. Без воды и морали — рабочая заметка."
 )
 _PORTRAIT_INSTRUCTION = (
     "Верни СТРОГО JSON-объект (без пояснений, без ```):\n"
     '{{"summary":"1-3 фразы кто это и какой по характеру",'
     '"speech":"1-2 фразы как именно он пишет",'
+    '"gender":"male|female|unknown — по тому, как человек себя называет и по '
+    'формам глаголов; unknown если непонятно",'
+    '"preferred_name":"как человек просил/назвал себя, иначе пусто",'
+    '"self_facts":["факт, который человек сам про себя сказал (имя/возраст/'
+    'работа/город/что любит/на что жалуется)"],'
     '"traits":["короткая черта", "ещё черта"],'
     '"topics":["о чём чаще говорит"]}}\n'
+    "Пол и self_facts выводи ТОЛЬКО из слов самого человека, не выдумывай. "
     "Пиши по-русски, живо, конкретно. Если реплик мало — заполни что можешь, "
     "остальное оставь пустым/[]."
 )
@@ -188,6 +198,17 @@ async def _build_portrait(session: AsyncSession, name: str, msgs: list[str]) -> 
     topics = data.get("topics")
     if isinstance(topics, list):
         out["topics"] = [str(t).strip()[:60] for t in topics[:6] if str(t).strip()]
+    gender = str(data.get("gender", "")).strip().lower()
+    if gender in ("male", "female", "unknown"):
+        out["gender"] = gender
+    pref = str(data.get("preferred_name", "")).strip()
+    if pref:
+        out["preferred_name"] = pref[:64]
+    self_facts = data.get("self_facts")
+    if isinstance(self_facts, list):
+        out["self_facts"] = [
+            str(f).strip()[:160] for f in self_facts[:8] if str(f).strip()
+        ]
     return out
 
 
@@ -237,11 +258,30 @@ async def refresh_profile(
     except Exception:  # noqa: BLE001
         logger.debug("relationship edges failed", exc_info=True)
 
+    # Идентичность со слов игрока «липкая»: пол и желаемое имя, раз узнанные,
+    # не затираем пустотой/«unknown» при следующих пересборках (человек мог
+    # просто не повторять это в свежих репликах). Накапливаем и self_facts.
+    prev = (prof.data or {}) if prof is not None else {}
+    new_gender = portrait.get("gender")
+    gender = (
+        new_gender if new_gender and new_gender != "unknown"
+        else prev.get("gender", "unknown")
+    )
+    preferred_name = portrait.get("preferred_name") or prev.get("preferred_name", "")
+    merged_facts = list(
+        dict.fromkeys(
+            (prev.get("self_facts") or []) + (portrait.get("self_facts") or [])
+        )
+    )[-12:]
+
     data = {
         "traits": portrait.get("traits", []),
         "topics": portrait.get("topics", []),
         "stat_lines": rs.lines,
         "relationships": edges_data,
+        "gender": gender,
+        "preferred_name": preferred_name,
+        "self_facts": merged_facts,
     }
     if prof is None:
         prof = AiProfile(user_id=user_id)

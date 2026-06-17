@@ -49,6 +49,38 @@ def _display_name(message: Message) -> str:
     return u.full_name or (f"@{u.username}" if u.username else f"игрок#{u.id}")
 
 
+async def _build_mentions_line(session: AsyncSession, targets: list[dict]) -> str:
+    """HTML-строка с кликабельными тегами игроков и их новым балансом.
+
+    ``targets`` — из ToolResult.meta: [{id, delta, balance}, ...]. Тегаем через
+    ``tg://user?id=`` (кликабельно и пингует, если игрок в чате). Имена и всё
+    динамическое экранируем — строку шлём в parse_mode=HTML.
+    """
+    from html import escape
+
+    from app.core.money import money
+    from app.features.drun.names import name_for, resolve_names
+
+    items = [t for t in targets if isinstance(t, dict) and t.get("id")]
+    if not items:
+        return ""
+    names = await resolve_names(session, [t["id"] for t in items])
+    parts: list[str] = []
+    for t in items:
+        uid = t["id"]
+        nm = escape(name_for(names, uid))
+        mention = f'<a href="tg://user?id={uid}">{nm}</a>'
+        delta = int(t.get("delta", 0) or 0)
+        bal = t.get("balance")
+        sign = "+" if delta > 0 else ""
+        tail = f" ({sign}{money(delta)}"
+        if bal is not None:
+            tail += f", стало {money(int(bal))}"
+        tail += ")"
+        parts.append(mention + escape(tail))
+    return " · ".join(parts)
+
+
 def _is_reply_to_bot(message: Message, bot_id: int) -> bool:
     r = message.reply_to_message
     return bool(r and r.from_user and r.from_user.id == bot_id)
@@ -188,6 +220,18 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
                           else f"Не вышло: {outcome.summary}")
                 )
                 await message.reply(out_text, parse_mode=None)
+                # Кликабельные теги затронутых игроков + их новый баланс
+                # (победители розыгрыша, кому выдал/снял). Отдельным сообщением
+                # в HTML, чтобы свободный текст друна не ломал парсер.
+                if outcome.ok:
+                    try:
+                        line = await _build_mentions_line(
+                            session, outcome.meta.get("targets") or []
+                        )
+                        if line:
+                            await message.answer(line, parse_mode="HTML")
+                    except Exception:  # noqa: BLE001
+                        logger.debug("mentions line failed", exc_info=True)
                 return
 
         # Прямое обращение — отвечаем НА КОНКРЕТНУЮ реплику человека.

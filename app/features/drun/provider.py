@@ -20,7 +20,7 @@ from app.features.drun.config import AiConfig
 
 logger = get_logger(__name__)
 
-_TIMEOUT_SECONDS = 30
+_TIMEOUT_SECONDS = 45
 
 
 class LlmError(RuntimeError):

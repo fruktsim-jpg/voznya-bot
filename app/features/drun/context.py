@@ -83,11 +83,25 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
 
             prof = await session.get(AiProfile, user_id)
             if prof is not None:
+                pdata = prof.data or {}
+                # Идентичность со слов самого человека — приоритетна.
+                pref = (pdata.get("preferred_name") or "").strip()
+                if pref:
+                    lines.append(f"- ПРОСИЛ ЗВАТЬ ЕГО: {pref} (используй это имя)")
+                gender = (pdata.get("gender") or "unknown").strip()
+                if gender == "male":
+                    lines.append("- ПОЛ: мужской (говори о нём в мужском роде)")
+                elif gender == "female":
+                    lines.append("- ПОЛ: женский (говори о ней в женском роде, "
+                                 "это девушка — не лажай с родом)")
                 if prof.summary:
                     lines.append(f"- ЛИЧНОСТЬ: {prof.summary}")
                 if prof.speech_style:
                     lines.append(f"- МАНЕРА РЕЧИ: {prof.speech_style}")
-                pdata = prof.data or {}
+                self_facts = pdata.get("self_facts") or []
+                if self_facts:
+                    lines.append("- САМ О СЕБЕ РАССКАЗЫВАЛ (помни это): "
+                                 + "; ".join(self_facts[:8]))
                 traits = pdata.get("traits") or []
                 if traits:
                     lines.append("- ЧЕРТЫ: " + "; ".join(traits[:5]))
@@ -228,7 +242,7 @@ async def _overview_block(session: AsyncSession) -> str:
 async def _memory_block(session: AsyncSession, subject_id: int | None) -> str:
     try:
         mems = await drun_memory.relevant_memories(
-            session, subject_id=subject_id, limit=16
+            session, subject_id=subject_id, limit=24
         )
         if not mems:
             return ""
@@ -300,6 +314,51 @@ async def _antirepeat_block(session: AsyncSession, channel: str) -> str:
         return ""
 
 
+async def _now_block() -> str:
+    """Текущая дата/время — чтобы друн ориентировался во времени, а не висел вне его."""
+    from datetime import timezone, timedelta
+
+    # Москва (UTC+3) — основная аудитория чата.
+    now = now_utc().astimezone(timezone(timedelta(hours=3)))
+    days = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+    months = [
+        "января", "февраля", "марта", "апреля", "мая", "июня",
+        "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    ]
+    dow = days[now.weekday()]
+    part = (
+        "глубокая ночь" if now.hour < 5 else "утро" if now.hour < 12
+        else "день" if now.hour < 18 else "вечер"
+    )
+    return (
+        "# СЕЙЧАС (реальное время, ты живёшь во времени):\n"
+        f"- {dow}, {now.day} {months[now.month - 1]} {now.year}, "
+        f"{now.hour:02d}:{now.minute:02d} по мск ({part})."
+    )
+
+
+async def _vibe_block(session: AsyncSession, channel: str) -> str:
+    """Живой вайб чата прямо сейчас: насколько горячо и о чём.
+
+    Не выдумка: считаем реальную активность за последние минуты и даём друну
+    подсказку, какое сейчас настроение движа, чтобы он попадал в тон.
+    """
+    try:
+        hot = await drun_memory.recent_chat_count(session, channel=channel, seconds=300)
+        if hot >= 25:
+            vibe = "ЧАТ КИПИТ — поток сообщений, все активны. Влетай дерзко и быстро."
+        elif hot >= 10:
+            vibe = "движ идёт — живая беседа. Держи темп, будь в потоке."
+        elif hot >= 3:
+            vibe = "вялый движ — пара человек переписывается. Без надрыва."
+        else:
+            vibe = "почти тишина — чат спит. Если влезать, то метко и не натужно."
+        return f"# ВАЙБ ЧАТА: {vibe} (за 5 мин ~{hot} реплик)"
+    except Exception:  # noqa: BLE001
+        logger.debug("vibe_block failed", exc_info=True)
+        return ""
+
+
 async def build_context(
     session: AsyncSession,
     *,
@@ -311,14 +370,14 @@ async def build_context(
 ) -> str:
     """Собирает полный контекстный блок (всё, что друн «видит» сейчас).
 
-    Порядок = приоритет внимания модели: сначала ДОСЬЕ на собеседника и ЖИВОЙ
-    ЧАТ, потом ПАМЯТЬ про людей, и лишь в конце — фон (сезон, события).
+    Порядок = приоритет внимания модели: сначала ВРЕМЯ и ВАЙБ, потом ДОСЬЕ на
+    собеседника и ЖИВОЙ ЧАТ, потом ПАМЯТЬ про людей, и лишь в конце — фон.
 
     ``chat_limit`` — сколько реплик чата подмешивать. Для прямого ответа человеку
     берём меньше (чтобы его сообщение не утонуло в логе), для автономного вкида —
     больше (друну нужно почувствовать беседу).
     """
-    blocks: list[str] = []
+    blocks: list[str] = [await _now_block(), await _vibe_block(session, channel)]
     if subject_id is not None:
         blocks.append(await _player_block(session, subject_id))
     if include_chat:

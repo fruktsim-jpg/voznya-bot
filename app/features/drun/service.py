@@ -39,15 +39,20 @@ _DEFAULT_REACTION = (
 )
 _DEFAULT_REPLY = (
     "К ТЕБЕ ЛИЧНО ОБРАТИЛСЯ ЧЕЛОВЕК. Его сообщение — в самом низу, в блоке "
-    "«СООБЩЕНИЕ ДЛЯ ТЕБЯ». Твоя задача №1 — ОТВЕТИТЬ ИМЕННО НА ЭТО СООБЩЕНИЕ, "
-    "по сути, как в живом диалоге один на один.\n"
+    "«СООБЩЕНИЕ ДЛЯ ТЕБЯ», там же его ИМЯ. Твоя задача №1 — ОТВЕТИТЬ ИМЕННО "
+    "ЭТОМУ ЧЕЛОВЕКУ на ЭТО сообщение, как в живом диалоге.\n"
+    "- В чате пишут РАЗНЫЕ люди. В истории у каждой реплики есть имя автора, а "
+    "у твоих прошлых ответов — пометка, КОМУ ты отвечал. НЕ путай людей: если "
+    "тебя оскорбил один, а сейчас спрашивает ДРУГОЙ — отвечай тому, кто "
+    "написал СЕЙЧАС, и не переноси на него чужие слова/обиды.\n"
     "- Если спросил «как дела» — скажи как у тебя дела (дерзко, в образе).\n"
     "- Если сказал «люблю тебя» — отреагируй на это, а не на посторонних.\n"
     "- Если задал вопрос — ОТВЕТЬ на вопрос.\n"
     "ЖИВОЙ ЧАТ выше — это ТОЛЬКО фон для настроения. НЕ пересказывай его, НЕ "
-    "комментируй Машу/Рому/казино и прочих, если человек спросил не про них. "
-    "Отвечай НА РЕПЛИКУ ЧЕЛОВЕКА, обращайся к НЕМУ по нику. Коротко (1-2 фразы), "
-    "жёстко, дерзко, в образе Меллстроя. Не ассистент, но и не мимо темы."
+    "комментируй посторонних, если человек спросил не про них. "
+    "Отвечай НА РЕПЛИКУ ЧЕЛОВЕКА, обращайся к НЕМУ по имени. Подстраивай тон "
+    "под него и его состояние (см. правила режимов). Не ассистент, но и не "
+    "мимо темы."
 )
 
 
@@ -66,6 +71,7 @@ async def generate(
     *,
     task: str,
     subject_id: int | None = None,
+    subject_name: str | None = None,
     channel: str = "chat",
     include_events: bool = True,
     include_chat: bool = True,
@@ -104,12 +110,21 @@ async def generate(
         chat_limit=chat_limit,
     )
 
-    history = await drun_memory.recent_messages(session, channel=channel, limit=8)
-    messages: list[dict[str, str]] = [
-        {"role": m.role, "content": m.content}
-        for m in history
-        if m.role in {"user", "assistant"}
-    ]
+    history = await drun_memory.recent_messages(session, channel=channel, limit=10)
+    messages: list[dict[str, str]] = []
+    for m in history:
+        if m.role == "user":
+            # У user-хода в content уже есть префикс «Имя: текст» (см.
+            # memory_user_content). Оставляем как есть — модель видит автора.
+            messages.append({"role": "user", "content": m.content})
+        elif m.role == "assistant":
+            # Помечаем, КОМУ именно друн отвечал в тот ход, чтобы он не путал
+            # адресата при смене собеседника в общем чате.
+            to_name = (m.meta or {}).get("to_name")
+            content = (
+                f"(ты ответил {to_name}): {m.content}" if to_name else m.content
+            )
+            messages.append({"role": "assistant", "content": content})
     user_content = (f"{ctx}\n\n# ЗАДАНИЕ\n{task}" if ctx else task).strip()
     messages.append({"role": "user", "content": user_content})
 
@@ -156,7 +171,7 @@ async def generate(
             channel=channel,
             user_id=subject_id,
             trigger_event_id=trigger_event_id,
-            meta={"kind": memory_kind},
+            meta={"kind": memory_kind, "to_name": subject_name},
         )
 
     return GenerateResult(ok=True, text=text, econ=econ_result)
@@ -224,8 +239,9 @@ async def respond(
         session,
         task=task,
         subject_id=asker_id,
+        subject_name=asker_name,
         channel=channel,
-        chat_limit=10,
+        chat_limit=16,
         memory_user_content=f"{asker_name}: {safe_text}",
         memory_kind="reply",
         allow_actions=True,

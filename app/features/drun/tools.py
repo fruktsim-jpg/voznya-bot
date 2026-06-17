@@ -214,13 +214,19 @@ async def giveaway(
 
     names = await resolve_names(session, chosen)
     won: list[tuple[int, int]] = []
+    win_meta: list[dict] = []
     for uid in chosen:
         try:
-            await economy.change_balance(
+            user = await economy.change_balance(
                 session, uid, share, REASON_OWNER,
                 {"action": "owner_giveaway", "note": note, "by": owner_id},
             )
             won.append((uid, share))
+            win_meta.append({
+                "id": uid,
+                "delta": share,
+                "balance": int(getattr(user, "balance", 0) or 0),
+            })
         except Exception:  # noqa: BLE001
             logger.debug("giveaway payout to %s failed", uid, exc_info=True)
     await _audit(
@@ -234,7 +240,12 @@ async def giveaway(
         ok=bool(won),
         summary=f"розыгрыш: победител{'и' if len(won) > 1 else 'ь'} — {winners_str}",
         affected=len(won),
-        meta={"pool": pool, "share": share, "winners": [u for u, _ in won]},
+        meta={
+            "pool": pool,
+            "share": share,
+            "winners": [u for u, _ in won],
+            "targets": win_meta,
+        },
     )
 
 
@@ -280,7 +291,7 @@ async def grant_one(
     names = await resolve_names(session, [target_id])
     nm = name_for(names, target_id)
     try:
-        await economy.change_balance(
+        user = await economy.change_balance(
             session, target_id, amount, REASON_OWNER,
             {"action": "owner_grant_one", "note": note, "by": owner_id},
             allow_negative=False,
@@ -290,14 +301,21 @@ async def grant_one(
     except Exception as exc:  # noqa: BLE001
         op = "выдать" if amount > 0 else "снять"
         return ToolResult(ok=False, error=f"не вышло {op} у {nm}: {exc}")
+    new_balance = int(getattr(user, "balance", 0) or 0)
     await _audit(
         session, owner_id, "owner_grant_one", target_id, note or "выдача",
-        {"amount": amount},
+        {"amount": amount, "balance_after": new_balance},
     )
     verb = "выдал" if amount > 0 else "снял"
     return ToolResult(
-        ok=True, summary=f"{verb} {nm} {money(abs(amount))}", affected=1,
-        meta={"amount": amount, "target": target_id},
+        ok=True,
+        summary=f"{verb} {nm} {money(abs(amount))} (стало {money(new_balance)})",
+        affected=1,
+        meta={
+            "amount": amount,
+            "target": target_id,
+            "targets": [{"id": target_id, "delta": amount, "balance": new_balance}],
+        },
     )
 
 
