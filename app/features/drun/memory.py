@@ -215,33 +215,6 @@ async def remember(
     return mem
 
 
-async def relevant_memories(
-    session: AsyncSession,
-    *,
-    subject_id: int | None = None,
-    limit: int = 8,
-) -> list[AiMemory]:
-    """Факты для контекста: про мир + (опционально) про конкретного игрока.
-
-    Отсекает протухшие (``expires_at`` в прошлом), сортирует по весу.
-    """
-    now = now_utc()
-    not_expired = or_(AiMemory.expires_at.is_(None), AiMemory.expires_at > now)
-    if subject_id is not None:
-        scope = or_(AiMemory.subject_id.is_(None), AiMemory.subject_id == subject_id)
-    else:
-        scope = AiMemory.subject_id.is_(None)
-    rows = (
-        await session.execute(
-            select(AiMemory)
-            .where(and_(not_expired, scope))
-            .order_by(AiMemory.weight.desc(), AiMemory.created_at.desc())
-            .limit(limit)
-        )
-    ).scalars().all()
-    return list(rows)
-
-
 # --- Умный отбор памяти (Phase 3): вес × свежесть × релевантность теме --------
 
 # Длина «хвоста значимости»: за столько дней вклад свежести падает вдвое.
@@ -293,11 +266,14 @@ def _score_memory(
       поднимает «по теме» воспоминания именно к текущей реплике собеседника.
     """
     score = float(mem.weight or 0)
-    # Свежесть: 0..~3 за недавность.
+    # Свежесть: 0..~3 за недавность. Возраст считаем в дробных днях в обеих
+    # ветках (naive — оборонительная: created_at у нас tz-aware).
     created = mem.created_at
     if created is not None:
         if created.tzinfo is None:
-            age_days = max(0.0, (now.replace(tzinfo=None) - created).days)
+            age_days = max(
+                0.0, (now.replace(tzinfo=None) - created).total_seconds() / 86400.0
+            )
         else:
             age_days = max(0.0, (now - created).total_seconds() / 86400.0)
         score += 3.0 * (0.5 ** (age_days / _RECENCY_HALFLIFE_DAYS))
@@ -319,10 +295,10 @@ async def scored_memories(
 ) -> list[AiMemory]:
     """Отбирает факты с учётом веса, свежести и релевантности теме ``query``.
 
-    Поведение для пустого ``query`` совпадает с ``relevant_memories`` по смыслу
-    (вес + свежесть), но без жёсткого «только по весу»: свежие важные факты не
-    тонут под старыми тяжёлыми. Если ``query`` задан (реплика собеседника) —
-    воспоминания по теме всплывают наверх.
+    Единая точка отбора долгосрочной памяти для контекста. При пустом ``query``
+    ранжирует по весу + свежести (свежие важные факты не тонут под старыми
+    тяжёлыми). Если ``query`` задан (реплика собеседника) — воспоминания по теме
+    всплывают наверх. Отсекает протухшие (``expires_at`` в прошлом).
     """
     now = now_utc()
     not_expired = or_(AiMemory.expires_at.is_(None), AiMemory.expires_at > now)
