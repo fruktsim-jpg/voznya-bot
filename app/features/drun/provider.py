@@ -295,10 +295,21 @@ async def generate_image(cfg: AiConfig, *, prompt: str) -> bytes:
                 async with http.get(str(img_url), allow_redirects=False) as r2:
                     if r2.status >= 400 or r2.status in (301, 302, 303, 307, 308):
                         raise LlmError(f"image fetch HTTP {r2.status}")
-                    body = await r2.content.read(_MAX_IMAGE_BYTES + 1)
-                    if len(body) > _MAX_IMAGE_BYTES:
-                        raise LlmError("image too large")
-                    return body
+                    # Читаем потоково до EOF с ограничением размера. ВАЖНО:
+                    # StreamReader.read(n) отдаёт только первый доступный чанк,
+                    # а не n байт — поэтому копим в цикле, иначе картинка
+                    # обрезается до первого чанка.
+                    chunks: list[bytes] = []
+                    total = 0
+                    while True:
+                        chunk = await r2.content.read(64 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > _MAX_IMAGE_BYTES:
+                            raise LlmError("image too large")
+                        chunks.append(chunk)
+                    return b"".join(chunks)
         except aiohttp.ClientError as exc:
             raise LlmError(f"image fetch error: {exc}") from exc
     raise LlmError("no image payload (b64_json/url) in response")
