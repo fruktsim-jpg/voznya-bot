@@ -82,6 +82,18 @@ async def claim_treasure(
         reason=str(treasure.id),
     )
 
+    # Событие мира: найден клад. Та же транзакция.
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_TREASURE_FOUND,
+        actor_id=user_id,
+        amount=treasure.reward,
+        ref_table="treasures",
+        ref_id=treasure.id,
+        meta={"fast": fast},
+    )
 
     return ClaimResult(
         status="claimed", reward=treasure.reward, balance=user.balance, fast=fast

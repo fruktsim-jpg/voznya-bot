@@ -152,6 +152,20 @@ async def _grant(session: AsyncSession, user_id: int, ach: Achievement) -> bool:
         source=mmr_settings.SOURCE_ACHIEVEMENT,
         reason=ach.code,
     )
+
+    # Событие мира: открыто достижение. Та же транзакция.
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_ACHIEVEMENT_UNLOCKED,
+        actor_id=user_id,
+        meta={
+            "code": ach.code,
+            "name": getattr(ach, "title", None) or getattr(ach, "name", None),
+            "reward": ach.reward,
+        },
+    )
     return True
 
 

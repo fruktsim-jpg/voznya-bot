@@ -434,6 +434,24 @@ async def deliver_gift(
                 balance_after=result.star_balance_after,
                 meta={"gift": gift_code},
             )
+
+        # Событие мира: подарок доставлен. Если есть получатель-друг —
+        # это «подарок игроку» (заметнее), иначе обычная выдача. Та же транзакция.
+        from app.services import world_events
+
+        await world_events.emit_safe(
+            session,
+            type=(
+                world_events.EVENT_GIFT_TO_PLAYER
+                if recipient_override
+                else world_events.EVENT_GIFT_DELIVERED
+            ),
+            actor_id=delivery.recipient_user_id,
+            target_id=recipient_override,
+            ref_table="gift_transactions",
+            ref_id=delivery.id,
+            meta={"gift": gift_code, "star_cost": star_cost},
+        )
         return DeliverOutcome(status="completed")
 
 

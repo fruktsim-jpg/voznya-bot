@@ -246,6 +246,22 @@ async def accept_challenge(
 
     pending.status = STATUS_ACCEPTED
 
+    # Событие мира: дуэль состоялась (для ленты/нарратора). Та же транзакция —
+    # рассинхрона с исходом быть не может.
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_DUEL_WON,
+        actor_id=winner_id,
+        target_id=loser_id,
+        amount=bank,
+        ref_table="pending_actions",
+        ref_id=pending.id,
+        severity=2 if bank >= 10000 else 1,
+        meta={"bank": bank, "stake": amount},
+    )
+
     # Кулдаун дуэли ставится здесь — только теперь бой реально состоялся.
     # Обоим участникам, чтобы спам-замесами не заваливали чат. Длительность
     # редактируется из админки (app_settings: duel.cooldown).

@@ -257,20 +257,21 @@ async def open_case(
 
     # 4e. Леджер открытия (честность + воспроизводимость).
     snapshot = [{"reward_id": r.id, "weight": r.weight} for r in rewards]
-    session.add(
-        CaseOpening(
-            user_id=user_id,
-            case_item_code=case.item_code,
-            reward_id=reward.id,
-            reward_kind=reward.reward_kind,
-            reward_item_code=result.reward_item_code,
-            amount=result.amount,
-            qty=result.qty,
-            roll=roll,
-            weight_snapshot={"total": total_weight, "rewards": snapshot},
-            transaction_id=open_transaction_id,
-        )
+    opening = CaseOpening(
+        user_id=user_id,
+        case_item_code=case.item_code,
+        reward_id=reward.id,
+        reward_kind=reward.reward_kind,
+        reward_item_code=result.reward_item_code,
+        amount=result.amount,
+        qty=result.qty,
+        roll=roll,
+        weight_snapshot={"total": total_weight, "rewards": snapshot},
+        transaction_id=open_transaction_id,
     )
+    session.add(opening)
+    await session.flush()
+
 
 
     # Имя/редкость награды для красивого ответа (best-effort).
@@ -308,6 +309,34 @@ async def open_case(
     # Шанс выпавшей награды (для глобальных уведомлений о редких дропах).
     reward_chance_pct = (
         reward.weight / total_weight * 100 if total_weight > 0 else None
+    )
+
+    # Событие мира: открытие кейса. Тип уточняем по исходу (джекпот / реальный
+    # Telegram Gift / обычный дроп). Та же транзакция, что и леджер открытия.
+    from app.services import world_events
+
+    if reward.is_jackpot:
+        we_type = world_events.EVENT_CASE_JACKPOT
+    elif result.reward_kind == "tg_gift":
+        we_type = world_events.EVENT_CASE_GIFT_DROP
+    else:
+        we_type = world_events.EVENT_CASE_OPEN
+    await world_events.emit_safe(
+        session,
+        type=we_type,
+        actor_id=user_id,
+        amount=result.amount or reward_value,
+        ref_table="case_openings",
+        ref_id=opening.id,
+        meta={
+            "case": case.item_code,
+            "case_name": case.name,
+            "reward_kind": result.reward_kind,
+            "reward_item_code": result.reward_item_code,
+            "reward_item_name": reward_item_name,
+            "rarity": reward_rarity,
+            "chance_pct": reward_chance_pct,
+        },
     )
 
     return OpenResult(

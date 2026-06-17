@@ -82,6 +82,25 @@ async def play_casino(session: AsyncSession, user_id: int, bet: int) -> CasinoRe
     )
     await cooldowns.set_cooldown(session, user_id, "casino", casino_cd)
 
+    # Событие мира: только крупный выигрыш (порог как в ленте сайта), чтобы не
+    # засорять поток рядовыми ставками. Та же транзакция.
+    if payout >= 1000 and net > 0:
+        from app.services import world_events
+
+        await world_events.emit_safe(
+            session,
+            type=world_events.EVENT_CASINO_BIG_WIN,
+            actor_id=user_id,
+            amount=payout,
+            meta={
+                "bet": bet,
+                "payout": payout,
+                "net": net,
+                "multiplier": multiplier,
+                "outcome": outcome["name"],
+            },
+        )
+
     return CasinoResult(
         status="done",
         bet=bet,

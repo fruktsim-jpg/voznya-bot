@@ -112,6 +112,24 @@ async def finalize_active_season(
             )
 
     await season_repo.finalize_season(session, season.id)
+
+    # Событие мира: сезон завершён (легендарное, без конкретного actor).
+    from app.services import world_events
+
+    champion = winners[0] if winners else None
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_SEASON_ENDED,
+        actor_id=champion.user_id if champion else None,
+        ref_table="seasons",
+        ref_id=season.id,
+        meta={
+            "season_id": season.id,
+            "season_name": getattr(season, "name", None),
+            "winners": len(winners),
+            "champion_division": champion.division if champion else None,
+        },
+    )
     return winners
 
 

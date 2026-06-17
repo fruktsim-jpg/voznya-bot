@@ -106,10 +106,24 @@ async def accept_proposal(
         pending.status = STATUS_EXPIRED
         return AcceptResult(status="target_busy")
 
-    session.add(
-        Marriage(user_id_1=initiator_id, user_id_2=confirmer_id, married_at=now_utc())
+    marriage = Marriage(
+        user_id_1=initiator_id, user_id_2=confirmer_id, married_at=now_utc()
     )
+    session.add(marriage)
+    await session.flush()
     pending.status = STATUS_ACCEPTED
+
+    # Событие мира: заключён брак. Та же транзакция.
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_MARRIAGE_CREATED,
+        actor_id=initiator_id,
+        target_id=confirmer_id,
+        ref_table="marriages",
+        ref_id=marriage.id,
+    )
     return AcceptResult(status="done", initiator_id=initiator_id, target_id=confirmer_id)
 
 

@@ -6,6 +6,7 @@
 
 from app.models.account_link import AccountLink
 from app.models.admin_role import AdminRole
+from app.models.ai import AiMemory, AiMessage, AiPrompt, AiSetting
 from app.models.app_setting import AppSetting
 from app.models.audit_log import AuditLog
 
@@ -60,6 +61,7 @@ from app.models.transaction import Transaction
 from app.models.treasure import Treasure
 from app.models.user import User
 from app.models.user_achievement import UserAchievement
+from app.models.world_event import WorldEvent
 
 __all__ = [
     "Base",
@@ -80,7 +82,6 @@ __all__ = [
     "AdminRole",
     "AppSetting",
     "AuditLog",
-
     "InventoryItem",
     "Inventory",
     "InventoryHistory",
@@ -113,6 +114,11 @@ __all__ = [
     "CombotDailyStats",
     "CombotActivityHeatmap",
     "CombotImportRun",
+    "WorldEvent",
+    "AiSetting",
+    "AiPrompt",
+    "AiMessage",
+    "AiMemory",
 ]
 
 

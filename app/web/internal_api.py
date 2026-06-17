@@ -339,6 +339,57 @@ async def _handle_health(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def _handle_ai_test(request: web.Request) -> web.Response:
+    """POST /internal/ai/test — тестовый запрос к друну из админки.
+
+    Тело JSON: ``{"task": "<str>", "subject_id": <int|null>}``. Друн генерирует
+    реплику текущей конфигурацией (``ai_settings``/``ai_prompts``) с подмешанным
+    контекстом, НО не пишет её как пост в чат (canal=admin_test). Возвращает
+    текст или причину отказа. Только по секрету.
+    """
+    if not _require_secret(request):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return web.json_response({"error": "invalid_json"}, status=400)
+
+    task = (body.get("task") or "").strip()
+    subject_id = body.get("subject_id")
+    if not task:
+        return web.json_response({"error": "missing_task"}, status=400)
+
+    from app.features.drun import config as drun_config
+    from app.features.drun import service as drun_service
+
+    sessionmaker: async_sessionmaker[AsyncSession] = request.app["sessionmaker"]
+    session: AsyncSession = sessionmaker()
+    try:
+        # Правки в админке могли только что измениться — читаем свежее.
+        drun_config.invalidate_cache()
+        result = await drun_service.generate(
+            session,
+            task=task,
+            subject_id=int(subject_id) if subject_id else None,
+            channel="admin_test",
+            remember_message=False,
+        )
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        await session.rollback()
+        logger.exception("web ai_test failed")
+        return web.json_response({"status": "error"}, status=500)
+    finally:
+        await session.close()
+
+    if not result.ok:
+        return web.json_response(
+            {"ok": False, "error": result.error}, status=200
+        )
+    return web.json_response({"ok": True, "text": result.text})
+
+
 
 
 async def start_internal_api(
@@ -363,6 +414,7 @@ async def start_internal_api(
     app.router.add_post("/internal/cases/open", _handle_open_case)
     app.router.add_post("/internal/gifts/deliver", _handle_deliver_gift)
     app.router.add_get("/internal/cases/stats", _handle_case_stats)
+    app.router.add_post("/internal/ai/test", _handle_ai_test)
     app.router.add_get("/internal/health", _handle_health)
 
 
