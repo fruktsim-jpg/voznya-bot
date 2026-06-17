@@ -29,6 +29,59 @@ from app.features.drun import memory as drun_memory
 
 logger = get_logger(__name__)
 
+# Командные слова бота (без слэша их тоже распознаёт RuCommand). Реплики,
+# начинающиеся с них, — это игровые команды, а не живой разговор. Их НЕ пишем
+# в память друна, иначе «чат» превращается в спам «бой/казино/профиль/ферма».
+_COMMAND_WORDS = frozenset(
+    {
+        "ачивки", "achievements", "ачивы", "достижения",
+        "баланс", "balance", "бал", "деньги", "кошелёк", "кошелек", "бабки",
+        "бан", "ban", "бой", "duel", "дуэль", "дуэлька",
+        "бонус", "daily", "дейли", "брак", "marriage", "жена", "муж",
+        "варн", "warn", "пред", "выдать", "give", "го", "accept", "go",
+        "да", "yes", "друн", "drun", "жениться", "marry", "свадьба",
+        "предложение", "забрать", "take", "инвентарь", "инв", "рюкзак",
+        "inventory", "inv", "инфо", "info", "казино", "casino",
+        "кейс", "case", "кейсы", "cases", "кик", "kick", "клад",
+        "spawntreasure", "кто", "магазин", "shop", "подарки", "gifts",
+        "миссии", "missions", "ммр", "mmr", "рейтинг", "моиподарки",
+        "mygifts", "мут", "mute", "открыть", "open", "пара", "couple",
+        "para", "пидор", "pidor", "помощь", "help", "старт", "start",
+        "команды", "меню", "профиль", "profile", "проф", "разбан", "unban",
+        "развод", "divorce", "развестись", "разрыв", "расстаться",
+        "размут", "unmute", "реп", "репутация", "rep", "reputation",
+        "сезон", "season", "семьи", "families", "браки", "свадьбы",
+        "снять", "claim", "снятьварн", "unwarn", "стартсезон", "startseason",
+        "топ", "top", "лидеры", "богачи", "богатые", "топммр", "topmmr",
+        "топнеделя", "weekly", "топреп", "toprep", "топсезон", "topseason",
+        "ферма", "farm", "фарм", "финалсезон", "finalizeseason",
+        "осеменить", "изнасиловать", "выебать", "наплюхать",
+        "modinfo", "модинфо", "topup",
+    }
+)
+
+# Короткие реплики-«поддакивания», не несущие смысла для диалога.
+_NOISE = frozenset({"+", "-", "го", "да", "нет", "ок", "ok", "топ", "лол", "ха"})
+
+
+def _is_command_or_noise(text: str) -> bool:
+    """True, если реплика — игровая команда, число или бессмысленный мусор."""
+    low = text.lower().strip()
+    first = low.split(maxsplit=1)[0].strip(".,!?:;")
+    if first in _COMMAND_WORDS:
+        return True
+    if low in _NOISE:
+        return True
+    # Чисто число/ставка («1300», «на 1300», «бой 100» уже отсеян выше).
+    compact = low.replace(" ", "")
+    if compact.isdigit():
+        return True
+    # Слишком короткий огрызок (< 4 символов) — не диалог.
+    if len(low) < 4:
+        return True
+    return False
+
+
 
 def _display_name(message: Message) -> str:
     u = message.from_user
@@ -67,6 +120,10 @@ class DrunEarsMiddleware(BaseMiddleware):
             return
         text = (message.text or message.caption or "").strip()
         if not text or text.startswith("/"):
+            return
+        # Отсеиваем игровые команды (бой/казино/профиль/...) и мусор, чтобы
+        # память друна состояла из живых реплик, а не спама командами.
+        if _is_command_or_noise(text):
             return
         session: AsyncSession | None = data.get("session")
         if session is None:

@@ -128,6 +128,68 @@ async def _events_block(session: AsyncSession, limit: int = 6) -> str:
         return ""
 
 
+async def _overview_block(session: AsyncSession) -> str:
+    """Общая картина чата: топы, богачи, бойцы, семьи, активные болтуны.
+
+    Это «что вообще происходит у нас» — широкий срез базы, чтобы друн владел
+    обстановкой и мог переключаться с темы на тему, а не упирался в дуэли.
+    """
+    try:
+        from sqlalchemy import func
+
+        lines: list[str] = ["# ОБЩАЯ КАРТИНА ЧАТА (для эрудиции, не пересказывай списком):"]
+
+        # Сколько народу всего и сколько активных болтунов.
+        total_users = await session.scalar(select(func.count()).select_from(User))
+        if total_users:
+            lines.append(f"- Всего жителей: {total_users}")
+
+        # Топ-3 богача по балансу.
+        rich = (
+            await session.execute(
+                select(User.user_id, User.balance)
+                .order_by(User.balance.desc())
+                .limit(3)
+            )
+        ).all()
+        if rich:
+            rnames = await resolve_names(session, [r[0] for r in rich])
+            top = ", ".join(
+                f"{name_for(rnames, uid)} ({money(bal)})" for uid, bal in rich
+            )
+            lines.append(f"- Богачи по ешкам: {top}")
+
+        # Топ-3 болтуна (самые активные в чате).
+        chatty = (
+            await session.execute(
+                select(User.user_id, User.messages_count)
+                .order_by(User.messages_count.desc())
+                .limit(3)
+            )
+        ).all()
+        if chatty:
+            cnames = await resolve_names(session, [r[0] for r in chatty])
+            top = ", ".join(
+                f"{name_for(cnames, uid)} ({cnt} сообщ.)" for uid, cnt in chatty
+            )
+            lines.append(f"- Самые болтливые: {top}")
+
+        # Сколько семей в чате.
+        try:
+            from app.repositories import marriages as marr_repo
+
+            married = await marr_repo.get_married_user_ids(session)
+            if married:
+                lines.append(f"- В браках состоит: {len(married)} чел.")
+        except Exception:  # noqa: BLE001
+            logger.debug("overview marriages failed", exc_info=True)
+
+        return "\n".join(lines) if len(lines) > 1 else ""
+    except Exception:  # noqa: BLE001
+        logger.debug("overview_block failed", exc_info=True)
+        return ""
+
+
 async def _memory_block(session: AsyncSession, subject_id: int | None) -> str:
     try:
         mems = await drun_memory.relevant_memories(
@@ -184,6 +246,7 @@ async def build_context(
     if include_chat:
         blocks.append(await _chat_block(session, channel))
     blocks.append(await _memory_block(session, subject_id))
+    blocks.append(await _overview_block(session))
     blocks.append(await _season_block(session))
     if include_events:
         blocks.append(await _events_block(session))
