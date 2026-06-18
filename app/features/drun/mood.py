@@ -53,11 +53,13 @@ _CELEBRATORY_TYPES = frozenset({
     _we.EVENT_CASE_JACKPOT, _we.EVENT_TREASURE_FOUND, _we.EVENT_SEASON_ENDED,
     _we.EVENT_CASINO_BIG_WIN, _we.EVENT_MARRIAGE_CREATED,
     _we.EVENT_MMR_RANK_UP, _we.EVENT_CASE_GIFT_DROP, _we.EVENT_GIFT_TO_PLAYER,
+    _we.EVENT_ACHIEVEMENT_UNLOCKED, _we.EVENT_GIFT_DELIVERED,
 })
-# Конфликты/напряжение → хаос/злость. Дуэль — единственный реально эмитируемый
-# «боевой» тип; налог друна тоже добавляет напряжения в чат.
+# Конфликты/напряжение → хаос/злость. Дуэль — боевой тип; налог друна и
+# репрессии модерации (бан/мьют/кик) тоже добавляют напряжения в чат.
 _CONFLICT_TYPES = frozenset({
     _we.EVENT_DUEL_WON, _we.EVENT_DRUN_TAX,
+    _we.EVENT_MOD_BAN, _we.EVENT_MOD_MUTE, _we.EVENT_MOD_KICK,
 })
 
 

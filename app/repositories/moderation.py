@@ -166,6 +166,11 @@ async def write_audit(
     """Пишет строку в audit_log (общая лента «кто что сделал» для панели).
 
     Источник на стороне бота — ip=NULL, target_type='user' для игроков.
+
+    Карательные действия (бан/мьют/варн/кик) дополнительно проецируются в
+    ``world_events`` — единый чокпоинт и для команд модераторов (``player.*``),
+    и для собственных инструментов друна (``owner_*``). Так друн «видит»
+    репрессии в чате (кого нагнули, за что), не падая, если проекция сбойнёт.
     """
     session.add(
         AuditLog(
@@ -179,6 +184,51 @@ async def write_audit(
             meta=meta,
             ip=None,
         )
+    )
+    await _emit_mod_event(
+        session,
+        action=action,
+        actor_user_id=actor_user_id,
+        target_user_id=target_user_id,
+        reason=reason,
+    )
+
+
+# Карательные действия → тип события мира. Снятия (unban/unmute/unwarn) и
+# неотносящиеся к репрессиям owner_*-действия (выдачи/настройки) намеренно НЕ
+# мапятся: событие фиксирует только сам факт «нагнули».
+_MOD_ACTION_EVENT: dict[str, str] = {
+    "player.ban": "mod_ban",
+    "owner_ban": "mod_ban",
+    "player.mute": "mod_mute",
+    "owner_mute": "mod_mute",
+    "player.warn": "mod_warn",
+    "owner_warn": "mod_warn",
+    "player.kick": "mod_kick",
+    "owner_kick": "mod_kick",
+}
+
+
+async def _emit_mod_event(
+    session: AsyncSession,
+    *,
+    action: str,
+    actor_user_id: int,
+    target_user_id: int | None,
+    reason: str | None,
+) -> None:
+    """Проецирует карательное действие в world_events (мягко, без падений)."""
+    event_type = _MOD_ACTION_EVENT.get(action)
+    if event_type is None or target_user_id is None:
+        return
+    from app.services import world_events as _we
+
+    await _we.emit_safe(
+        session,
+        type=event_type,
+        actor_id=actor_user_id,
+        target_id=target_user_id,
+        meta={"reason": (reason or "")[:200]},
     )
 
 

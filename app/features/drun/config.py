@@ -37,6 +37,7 @@ KEY_MAX_TOKENS = "max_tokens"
 KEY_POSTS_PER_DAY = "posts_per_day_max"
 KEY_MIN_SEVERITY = "min_severity"
 KEY_AUTONOMOUS_ENABLED = "autonomous_enabled"  # сам по себе постит в чат (off по умолч.)
+KEY_AUTONOMOUS_MIN_GAP = "autonomous_min_gap_min"  # анти-спам: мин. пауза между автопостами
 # Реактивный режим (ответы в чате).
 KEY_REPLY_ENABLED = "reply_enabled"          # отвечать ли на обращения в чате
 KEY_REPLY_COOLDOWN = "reply_cooldown_sec"    # анти-спам: пауза между ответами
@@ -72,6 +73,7 @@ DEFAULTS: dict[str, Any] = {
     KEY_POSTS_PER_DAY: 6,
     KEY_MIN_SEVERITY: 2,
     KEY_AUTONOMOUS_ENABLED: False,
+    KEY_AUTONOMOUS_MIN_GAP: 45,
     KEY_REPLY_ENABLED: True,
     KEY_REPLY_COOLDOWN: 20,
     KEY_NAME_TRIGGERS: ["друн", "drun"],
@@ -172,6 +174,10 @@ class AiConfig:
     image_api_key: str = ""
     image_model: str = ""
     image_daily_cap: int = 20
+    # Анти-спам автономного постинга: мин. пауза между автопостами (минуты).
+    # Дефолт у поля (а не в позиционных) — чтобы не ломать прямые конструкторы
+    # AiConfig в тестах; реальное значение всегда приходит из get_config().
+    autonomous_min_gap_min: int = 45
 
     @property
     def usable(self) -> bool:
@@ -304,6 +310,9 @@ async def get_config(session: AsyncSession) -> AiConfig:
         posts_per_day_max=_as_int(_g(KEY_POSTS_PER_DAY), DEFAULTS[KEY_POSTS_PER_DAY]),
         min_severity=_as_int(_g(KEY_MIN_SEVERITY), DEFAULTS[KEY_MIN_SEVERITY]),
         autonomous_enabled=_as_bool(_g(KEY_AUTONOMOUS_ENABLED)),
+        autonomous_min_gap_min=_as_int(
+            _g(KEY_AUTONOMOUS_MIN_GAP), DEFAULTS[KEY_AUTONOMOUS_MIN_GAP]
+        ),
         reply_enabled=_as_bool(_g(KEY_REPLY_ENABLED)),
         reply_cooldown_sec=_as_int(_g(KEY_REPLY_COOLDOWN), DEFAULTS[KEY_REPLY_COOLDOWN]),
         name_triggers=_as_str_list(_g(KEY_NAME_TRIGGERS), DEFAULTS[KEY_NAME_TRIGGERS]),

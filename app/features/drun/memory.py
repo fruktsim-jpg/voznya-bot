@@ -270,6 +270,31 @@ async def count_replies_today(
     return int(total or 0)
 
 
+async def seconds_since_last_autopost(
+    session: AsyncSession, *, channel: str = "chat"
+) -> float | None:
+    """Сколько секунд прошло с последнего АВТОНОМНОГО поста друна (монолога).
+
+    Автопосты помечены ``meta.kind == 'monologue'`` (реактивные ответы — 'reply').
+    Возвращает None, если автопостов ещё не было — значит гейт мин-паузы не
+    должен блокировать самый первый пост. Это анти-спам поверх дневного капа:
+    даже при свободном капе друн не строчит автопосты подряд.
+    """
+    row = (
+        await session.execute(
+            select(AiMessage.created_at)
+            .where(AiMessage.channel == channel)
+            .where(AiMessage.role == "assistant")
+            .where(AiMessage.meta["kind"].astext == "monologue")
+            .order_by(AiMessage.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    return (now_utc() - row).total_seconds()
+
+
 async def pulse_stats(
     session: AsyncSession, *, channel: str = "chat", minutes: int = 15
 ) -> tuple[int, int]:

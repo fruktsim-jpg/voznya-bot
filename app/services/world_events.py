@@ -45,6 +45,12 @@ EVENT_SEASON_ENDED = "season_ended"
 # Экономические выходки друна (налоговая/подачка из жалости).
 EVENT_DRUN_TAX = "drun_tax"
 EVENT_DRUN_GRANT = "drun_grant"
+# Модерация (бан/мьют/варн/кик). Пишутся с бот-стороны рядом с audit_log, чтобы
+# друн «видел» репрессии в чате — кого нагнули, за что, кто модератор/он сам.
+EVENT_MOD_BAN = "mod_ban"
+EVENT_MOD_MUTE = "mod_mute"
+EVENT_MOD_WARN = "mod_warn"
+EVENT_MOD_KICK = "mod_kick"
 
 DEFAULT_SEVERITY: dict[str, int] = {
     EVENT_CASE_OPEN: 0,
@@ -62,6 +68,10 @@ DEFAULT_SEVERITY: dict[str, int] = {
     EVENT_SEASON_ENDED: 3,
     EVENT_DRUN_TAX: 2,
     EVENT_DRUN_GRANT: 2,
+    EVENT_MOD_BAN: 2,
+    EVENT_MOD_MUTE: 1,
+    EVENT_MOD_WARN: 1,
+    EVENT_MOD_KICK: 2,
 }
 
 _INSERT = text(

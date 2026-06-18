@@ -117,7 +117,7 @@ async def observe(session: AsyncSession, *, hours: int = 24) -> WorldSnapshot:
                 .limit(15)
             )
         ).scalars().all()
-        snames = await resolve_names(session, [u.id for u in srows]) if srows else {}
+        snames = await resolve_names(session, [u.user_id for u in srows]) if srows else {}
         for u in srows:
             bits = []
             if u.casino_loss_streak >= 4:
@@ -127,7 +127,7 @@ async def observe(session: AsyncSession, *, hours: int = 24) -> WorldSnapshot:
             if u.farm_streak >= 7:
                 bits.append(f"ферма×{u.farm_streak}")
             if bits:
-                streaks.append(f"{name_for(snames, u.id)}: {', '.join(bits)}")
+                streaks.append(f"{name_for(snames, u.user_id)}: {', '.join(bits)}")
     except Exception:  # noqa: BLE001
         logger.debug("observe streaks failed", exc_info=True)
 

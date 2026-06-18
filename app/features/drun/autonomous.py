@@ -108,6 +108,20 @@ async def comment_on_fresh_events(
         logger.debug("autonomous: daily cap reached (%d)", posts_today)
         return None
 
+    # Анти-спам поверх дневного капа: минимальная пауза между АВТОНОМНЫМИ
+    # постами. Дневной кап считает все реплики (включая ответы на обращения),
+    # поэтому отдельно держим минимальный интервал именно между монологами —
+    # иначе друн при тишине и свежем потоке событий мог бы выдать пачку
+    # автопостов на одном тике-за-тиком. Первый автопост (история пуста) не
+    # блокируется.
+    gap = await drun_memory.seconds_since_last_autopost(session, channel=channel)
+    min_gap_sec = max(0, cfg.autonomous_min_gap_min) * 60
+    if gap is not None and gap < min_gap_sec:
+        logger.debug(
+            "autonomous: min-gap not elapsed (%.0fs < %ds)", gap, min_gap_sec
+        )
+        return None
+
     # «Чувство комнаты»: governor решает, можно ли вообще сейчас вкидываться и
     # не пора ли наоборот РАСШЕВЕЛИТЬ мёртвый чат. Перебивать живую/кипящую
     # беседу или лезть в абуз-режиме — нельзя.
@@ -255,7 +269,7 @@ async def _notice_pattern(
 
     async def _emit(subject, task: str, key: str) -> str | None:
         result = await drun_service.generate(
-            session, task=task, subject_id=subject.id, channel=channel,
+            session, task=task, subject_id=subject.user_id, channel=channel,
             include_events=False, memory_kind="monologue",
             role=drun_config.ROLE_NARRATOR,
         )
@@ -312,8 +326,8 @@ async def _notice_pattern(
             )
         ).scalar_one_or_none()
         if u is not None:
-            names = await resolve_names(session, [u.id])
-            who = name_for(names, u.id)
+            names = await resolve_names(session, [u.user_id])
+            who = name_for(names, u.user_id)
             task = (
                 "Ты — живой дух чата Возни и любишь подъёбывать. Ты ЗАМЕТИЛ сам "
                 "(никто тебя не звал), что игрок сливается в казино серией. Кинь "
@@ -337,8 +351,8 @@ async def _notice_pattern(
             )
         ).scalar_one_or_none()
         if u is not None:
-            names = await resolve_names(session, [u.id])
-            who = name_for(names, u.id)
+            names = await resolve_names(session, [u.user_id])
+            who = name_for(names, u.user_id)
             task = (
                 "Ты — живой дух чата Возни. Ты сам подметил, что игрок задрот "
                 "фермит без пропусков длинной серией. Кинь ОДНУ живую реплику: "
@@ -373,10 +387,15 @@ def setup_autonomous_poster(
         try:
             async with sessionmaker() as session:
                 text = await comment_on_fresh_events(session)
+                # Метрика видимости: сколько автопостов сделано за сутки уже
+                # ПОСЛЕ этого (для наблюдаемости — видно в логах, не растёт молча).
+                posts_today = await drun_memory.count_replies_today(session)
                 await session.commit()
             if text:
                 await bot.send_message(chat_id, text)
-                logger.info("drun autonomous: posted event comment")
+                logger.info(
+                    "drun autonomous: posted (replies_today=%d)", posts_today
+                )
         except Exception:  # noqa: BLE001
             logger.warning("drun autonomous poster failed", exc_info=True)
 

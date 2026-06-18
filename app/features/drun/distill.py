@@ -3,7 +3,9 @@
 Дёшево (без LLM) превращаем ``world_events`` в устойчивые факты об игроках и их
 взаимодействиях, которые потом подмешиваются в контекст:
 
-* по игроку: «X выиграл N дуэлей», «X сорвал большой куш в казино»;
+* по игроку: «X выиграл N дуэлей», «X сорвал большой куш в казино», «X выбивал
+  джекпот», «X — кладоискатель / достигатор / любимчик подарков», «X — клиент
+  модерации»;
 * взаимодействия/соперничества: «X и Y часто рубятся в дуэлях» (по повторам);
 * браки: «X в браке с Y».
 
@@ -68,6 +70,14 @@ async def distill(session: AsyncSession) -> int:
     duel_losses: Counter[int] = Counter()
     pair_duels: Counter[tuple[int, int]] = Counter()
     big_casino: set[int] = set()
+    # Расширенное покрытие мира: раньше distill «видел» только дуэли и казино —
+    # подарки/кейсы/ачивки/клады/ранги/модерация в долгую память не попадали.
+    jackpots: Counter[int] = Counter()        # сорвал джекпот в кейсе
+    treasures: Counter[int] = Counter()       # кладоискатель
+    achievements: Counter[int] = Counter()    # коллекционер ачивок
+    rank_ups: Counter[int] = Counter()        # растущий боец (mmr rank up)
+    gifts_received: Counter[int] = Counter()  # кому дарят подарки
+    mod_hits: Counter[int] = Counter()        # кого регулярно нагибает модерация
     for e in events:
         if e.type == "duel_won" and e.actor_id:
             duel_wins[e.actor_id] += 1
@@ -77,6 +87,22 @@ async def distill(session: AsyncSession) -> int:
                 pair_duels[pair] += 1
         elif e.type == "casino_big_win" and e.actor_id:
             big_casino.add(e.actor_id)
+        elif e.type == "case_jackpot" and e.actor_id:
+            jackpots[e.actor_id] += 1
+        elif e.type == "treasure_found" and e.actor_id:
+            treasures[e.actor_id] += 1
+        elif e.type == "achievement_unlocked" and e.actor_id:
+            achievements[e.actor_id] += 1
+        elif e.type == "mmr_rank_up" and e.actor_id:
+            rank_ups[e.actor_id] += 1
+        elif e.type in ("gift_to_player", "gift_delivered"):
+            # actor_id — получатель подарка (см. gifts/service.py).
+            if e.actor_id:
+                gifts_received[e.actor_id] += 1
+        elif e.type in ("mod_ban", "mod_mute", "mod_warn", "mod_kick"):
+            # target_id — кого нагнули; именно его и запоминаем как «штрафника».
+            if e.target_id:
+                mod_hits[e.target_id] += 1
 
     existing = await _existing_facts(session)
     added = 0
@@ -110,6 +136,36 @@ async def distill(session: AsyncSession) -> int:
     # Казино-везунчики.
     for uid in big_casino:
         _add(uid, "milestone", f"{name_for(names, uid)} срывал большой куш в казино", 2)
+
+    # Джекпоты в кейсах — заметная удача, повод для зависти/подъёба.
+    for uid, cnt in jackpots.items():
+        if cnt >= 1:
+            _add(uid, "milestone", f"{name_for(names, uid)} выбивал джекпот из кейса", 2)
+
+    # Кладоискатели: кто регулярно находит клады.
+    for uid, cnt in treasures.items():
+        if cnt >= 2:
+            _add(uid, "trait", f"{name_for(names, uid)} — удачливый кладоискатель", 1)
+
+    # Коллекционеры ачивок.
+    for uid, cnt in achievements.items():
+        if cnt >= 3:
+            _add(uid, "trait", f"{name_for(names, uid)} — задрот-достигатор, собирает ачивки", 1)
+
+    # Растущие бойцы (серия повышений ранга).
+    for uid, cnt in rank_ups.items():
+        if cnt >= 2:
+            _add(uid, "milestone", f"{name_for(names, uid)} быстро растёт в рейтинге дуэлей", 2)
+
+    # Любимчики подарков — кому щедро дарят.
+    for uid, cnt in gifts_received.items():
+        if cnt >= 3:
+            _add(uid, "trait", f"{name_for(names, uid)} — щедро осыпан подарками, чей-то любимчик", 1)
+
+    # Штрафники: кого регулярно нагибает модерация (бан/мьют/варн/кик).
+    for uid, cnt in mod_hits.items():
+        if cnt >= 2:
+            _add(uid, "trait", f"{name_for(names, uid)} — постоянный клиент модерации, ходит по краю", 2)
 
     # Соперничества (пара часто рубится).
     for (a, b), cnt in pair_duels.items():
