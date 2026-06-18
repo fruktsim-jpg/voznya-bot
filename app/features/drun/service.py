@@ -336,12 +336,27 @@ async def respond(
     # Личное отношение (аффинити): обновляем по тону реплики игрока В АДРЕС
     # друна. Тёплое общение копит дружбу, хамство — вражду; со временем
     # затухает. Дёшево, без LLM. Коммит — в общем потоке generate ниже.
+    #
+    # ИЗОЛЯЦИЯ ТРАНЗАКЦИИ (INCIDENT 2026-06-18): три best-effort блока
+    # ниже (affinity / websearch / governor) делают SQL в общей сессии и
+    # ловят все Exception. Если их SQL уронит сессию (DBAPIError любой
+    # природы — schema drift, FK, deadlock, прерванная коннекция), то без
+    # rollback СЛЕДУЮЩИЙ SELECT в generate() падает с
+    # InFailedSQLTransactionError, и весь хэндлер дохнет. Чтобы изолировать
+    # такие сбои на уровне одного помощника, оборачиваем каждый в
+    # SAVEPOINT через session.begin_nested(): провал внутри роллбэчит
+    # ТОЛЬКО savepoint, внешняя транзакция остаётся чистой, generate
+    # продолжает работать (просто без вклада от упавшего блока).
+    #
+    # Уровень лога подняли до WARNING: тихие debug-сообщения скрыли
+    # реальную причину аварии 18.06.2026. Теперь любой сбой виден сразу.
     try:
         from app.features.drun import affinity as drun_affinity
 
-        await drun_affinity.record_interaction(session, asker_id, safe_text)
+        async with session.begin_nested():
+            await drun_affinity.record_interaction(session, asker_id, safe_text)
     except Exception:  # noqa: BLE001
-        logger.debug("respond affinity update failed", exc_info=True)
+        logger.warning("respond affinity update failed", exc_info=True)
     # Фактический вопрос (погода/новости/курс/«что такое») → подтягиваем свежие
     # данные из интернета, чтобы друн не выдумывал. Для внутренних тем Возни и
     # обычной болтовни веб не дёргается (см. websearch.looks_factual).
@@ -349,9 +364,10 @@ async def respond(
     try:
         from app.features.drun import websearch as drun_web
 
-        web_block = await drun_web.auto_context(session, safe_text)
+        async with session.begin_nested():
+            web_block = await drun_web.auto_context(session, safe_text)
     except Exception:  # noqa: BLE001
-        logger.debug("respond web auto_context failed", exc_info=True)
+        logger.warning("respond web auto_context failed", exc_info=True)
     # «Чувство комнаты»: если чат сейчас абузит бота (каждый второй на нём
     # висит) — подмешиваем установку отвечать короче/суше и переводить движ на
     # общение людей. В обычном режиме подсказка пустая и ничего не меняет.
@@ -359,11 +375,12 @@ async def respond(
     try:
         from app.features.drun import governor as drun_governor
 
-        verdict = await drun_governor.assess(session, channel=channel)
+        async with session.begin_nested():
+            verdict = await drun_governor.assess(session, channel=channel)
         if verdict.throttle and verdict.note:
             room_block = f"# РЕЖИМ КОМНАТЫ: {verdict.note}"
     except Exception:  # noqa: BLE001
-        logger.debug("respond governor assess failed", exc_info=True)
+        logger.warning("respond governor assess failed", exc_info=True)
     # Реплай на конкретное сообщение: даём друну то, НА ЧТО именно отвечают.
     reply_line = ""
     if safe_reply_ctx:

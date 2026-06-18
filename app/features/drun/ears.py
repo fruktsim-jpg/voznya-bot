@@ -165,9 +165,23 @@ class DrunEarsMiddleware(BaseMiddleware):
     ) -> Any:
         try:
             if isinstance(event, Message):
-                await self._maybe_capture(event, data)
+                session: AsyncSession | None = data.get("session")
+                # SAVEPOINT-изоляция (INCIDENT 2026-06-18): _maybe_capture
+                # делает INSERT+flush в общую сессию апдейта. Любой сбой
+                # (FK, constraint, deadlock, обрыв коннекта) без rollback
+                # отравляет транзакцию — и следующий хэндлер (drun.respond,
+                # модерация, antiflood-проверка) падает на ровном месте с
+                # InFailedSQLTransactionError. Оборачиваем в begin_nested:
+                # сбой роллбэчит ТОЛЬКО savepoint, внешняя транзакция жива.
+                # Лог поднят с debug до warning — тихие debug-сообщения
+                # скрыли первопричину каскадного отказа.
+                if session is not None:
+                    async with session.begin_nested():
+                        await self._maybe_capture(event, data)
+                else:
+                    await self._maybe_capture(event, data)
         except Exception:  # noqa: BLE001
-            logger.debug("drun ears capture failed", exc_info=True)
+            logger.warning("drun ears capture failed", exc_info=True)
         return await handler(event, data)
 
     async def _maybe_capture(self, message: Message, data: dict[str, Any]) -> None:
