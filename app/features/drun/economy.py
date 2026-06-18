@@ -107,7 +107,7 @@ async def chat_economy_digest(
 
         lines = [
             f"# ЭКОНОМИКА ЧАТА (за {hours}ч) — ты дух этой казны, понимай потоки:",
-            f"- В обороте сейчас: {money(total_balance)} ешек на руках у игроков",
+            f"- В обороте сейчас: {money(total_balance)} на руках у игроков",
             f"- Влилось: +{money(minted)} | сгорело: −{money(burned)} | "
             f"итог: {money(minted - burned)}",
         ]
