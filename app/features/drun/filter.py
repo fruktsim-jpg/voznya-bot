@@ -36,6 +36,13 @@ def clean(text: str, *, max_chars: int = 600) -> str:
     out = text.strip()
     # Снять обрамляющие markdown-код-блоки/кавычки, если модель обернула ответ.
     out = re.sub(r"^```[a-zA-Z]*\n?|```$", "", out).strip()
+    # Защита от протечки служебных пометок в начале реплики. Раньше история
+    # диалога несла префикс «(ты ответил X):», и модель иногда копировала его
+    # (или похожие «(имя):», «Меллстрой:») в видимый ответ — срезаем.
+    out = re.sub(
+        r"^\(?\s*ты\s+ответил[^)\n:]*\)?\s*:\s*", "", out, flags=re.IGNORECASE
+    ).strip()
+    out = re.sub(r"^(меллстрой|друн|drun)\s*:\s*", "", out, flags=re.IGNORECASE).strip()
     if len(out) >= 2 and out[0] in {'"', "«", "'"} and out[-1] in {'"', "»", "'"}:
         out = out[1:-1].strip()
     if len(out) > max_chars:

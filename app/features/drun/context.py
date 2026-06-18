@@ -226,14 +226,18 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                     lines.append(f"- МАНЕРА РЕЧИ: {prof.speech_style}")
                 self_facts = pdata.get("self_facts") or []
                 if self_facts:
-                    lines.append("- САМ О СЕБЕ РАССКАЗЫВАЛ (помни это): "
-                                 + "; ".join(self_facts[:8]))
+                    lines.append("- ФОНОВО ЗНАЕШЬ О НЁМ (НЕ зачитывай, НЕ "
+                                 "припоминай без повода — только если САМ "
+                                 "поднял тему): " + "; ".join(self_facts[:8]))
                 traits = pdata.get("traits") or []
                 if traits:
-                    lines.append("- ЧЕРТЫ: " + "; ".join(traits[:5]))
+                    lines.append("- ЧЕРТЫ (фон, не перечисляй): "
+                                 + "; ".join(traits[:5]))
                 topics = pdata.get("topics") or []
                 if topics:
-                    lines.append("- ЧАСТО ПРО: " + ", ".join(topics[:5]))
+                    lines.append("- ОБЫЧНО ГОВОРИТ ПРО (НЕ навязывай эти темы "
+                                 "сам — следуй за тем, что он пишет СЕЙЧАС): "
+                                 + ", ".join(topics[:5]))
                 rels = pdata.get("relationships") or []
                 if rels:
                     label = {

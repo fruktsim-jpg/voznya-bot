@@ -31,6 +31,16 @@ def test_filter_clean_truncates_to_max_chars():
     assert out.endswith("…")
 
 
+def test_filter_strips_leaked_reply_prefix():
+    # Раньше «(ты ответил X):» протекал из истории в видимый ответ — режем.
+    assert drun_filter.clean("(ты ответил Вася): здарова") == "здарова"
+    assert drun_filter.clean("ты ответил Коту: ну чё как") == "ну чё как"
+    # И самоназвание в начале, если модель его прилепила.
+    assert drun_filter.clean("Меллстрой: пошёл нахер") == "пошёл нахер"
+    # Обычный текст с двоеточием внутри не трогаем.
+    assert drun_filter.clean("слушай: это база") == "слушай: это база"
+
+
 def test_world_events_severity_catalog_is_consistent():
     # Каждый известный тип имеет severity, и она в диапазоне 0..3.
     for name, value in vars(we).items():

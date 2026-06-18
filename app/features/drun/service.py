@@ -121,13 +121,11 @@ async def generate(
             # memory_user_content). Оставляем как есть — модель видит автора.
             messages.append({"role": "user", "content": m.content})
         elif m.role == "assistant":
-            # Помечаем, КОМУ именно друн отвечал в тот ход, чтобы он не путал
-            # адресата при смене собеседника в общем чате.
-            to_name = (m.meta or {}).get("to_name")
-            content = (
-                f"(ты ответил {to_name}): {m.content}" if to_name else m.content
-            )
-            messages.append({"role": "assistant", "content": content})
+            # Кладём ЧИСТУЮ реплику друна без служебных пометок. Раньше тут был
+            # префикс «(ты ответил X):» — но модель копировала его в новые
+            # ответы, и он протекал в чат. Адресат и так виден из префиксов
+            # «Имя: текст» у предыдущих user-ходов, отдельная пометка не нужна.
+            messages.append({"role": "assistant", "content": m.content})
     user_content = (f"{ctx}\n\n# ЗАДАНИЕ\n{task}" if ctx else task).strip()
     messages.append({"role": "user", "content": user_content})
 
@@ -234,6 +232,16 @@ async def respond(
     # бы написать [[econ:grant:1000:...]] и через эхо модели спровоцировать
     # самоначисление. Чистим до отправки в LLM и до сохранения в память.
     safe_text = drun_actions.sanitize_user_text(text.strip())
+    # Фактический вопрос (погода/новости/курс/«что такое») → подтягиваем свежие
+    # данные из интернета, чтобы друн не выдумывал. Для внутренних тем Возни и
+    # обычной болтовни веб не дёргается (см. websearch.looks_factual).
+    web_block = ""
+    try:
+        from app.features.drun import websearch as drun_web
+
+        web_block = await drun_web.auto_context(session, safe_text)
+    except Exception:  # noqa: BLE001
+        logger.debug("respond web auto_context failed", exc_info=True)
     task = (
         f"{template}\n\n"
         f"========================\n"
@@ -241,6 +249,8 @@ async def respond(
         f"«{safe_text}»\n"
         f"========================"
     )
+    if web_block:
+        task = f"{web_block}\n\n{task}"
     return await generate(
         session,
         task=task,
