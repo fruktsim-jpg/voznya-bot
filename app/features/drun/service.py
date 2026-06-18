@@ -192,11 +192,22 @@ async def observe(
     *,
     subject_id: int | None = None,
     channel: str = "chat",
+    intent_note: str | None = None,
 ) -> GenerateResult:
-    """Одиночное наблюдение про мир/игрока (ручной триггер, MVP)."""
+    """Спонтанное встревание друна в живой чат (не ответ на обращение).
+
+    ``intent_note`` — направляющая от слоя восприятия (perceive): ЗАЧЕМ друн
+    влезает (подколоть/поддержать/подлить движа/...). Без неё это просто живой
+    вкид по настроению чата. С ней — целенаправленное социальное действие,
+    что и делает друна агентом, а не генератором случайных реплик.
+    """
     task = await drun_config.get_prompt(
         session, drun_config.PROMPT_OBSERVATION, _DEFAULT_OBSERVATION
     )
+    if intent_note:
+        task = (
+            f"{task}\n\n# ТВОЁ НАМЕРЕНИЕ СЕЙЧАС (действуй по нему): {intent_note}"
+        )
     return await generate(
         session, task=task, subject_id=subject_id, channel=channel
     )
@@ -229,8 +240,15 @@ async def respond(
     asker_name: str,
     text: str,
     channel: str = "chat",
+    reply_context: str | None = None,
 ) -> GenerateResult:
-    """Ответ друна на обращение игрока в чате (по контексту беседы)."""
+    """Ответ друна на обращение игрока в чате (по контексту беседы).
+
+    ``reply_context`` — если игрок отвечает реплаем на КОНКРЕТНОЕ сообщение
+    (его собственную реплику друна или чужую), сюда кладётся её текст. Без
+    этого друн «отвечает в пустоту» и теряет нить: человек реагирует на
+    конкретную фразу, а друн видел только новый текст.
+    """
     template = await drun_config.get_prompt(
         session, drun_config.PROMPT_REPLY, _DEFAULT_REPLY
     )
@@ -238,6 +256,10 @@ async def respond(
     # бы написать [[econ:grant:1000:...]] и через эхо модели спровоцировать
     # самоначисление. Чистим до отправки в LLM и до сохранения в память.
     safe_text = drun_actions.sanitize_user_text(text.strip())
+    safe_reply_ctx = (
+        drun_actions.sanitize_user_text(reply_context.strip())[:400]
+        if reply_context else ""
+    )
     # Личное отношение (аффинити): обновляем по тону реплики игрока В АДРЕС
     # друна. Тёплое общение копит дружбу, хамство — вражду; со временем
     # затухает. Дёшево, без LLM. Коммит — в общем потоке generate ниже.
@@ -269,9 +291,17 @@ async def respond(
             room_block = f"# РЕЖИМ КОМНАТЫ: {verdict.note}"
     except Exception:  # noqa: BLE001
         logger.debug("respond governor assess failed", exc_info=True)
+    # Реплай на конкретное сообщение: даём друну то, НА ЧТО именно отвечают.
+    reply_line = ""
+    if safe_reply_ctx:
+        reply_line = (
+            f"# ЭТО РЕПЛАЙ НА СООБЩЕНИЕ: «{safe_reply_ctx}»\n"
+            f"# (человек отвечает ИМЕННО на эту фразу — учитывай её как нить)\n"
+        )
     task = (
         f"{template}\n\n"
         f"========================\n"
+        f"{reply_line}"
         f"# СООБЩЕНИЕ ДЛЯ ТЕБЯ от {asker_name} (ответь именно на него):\n"
         f"«{safe_text}»\n"
         f"========================"

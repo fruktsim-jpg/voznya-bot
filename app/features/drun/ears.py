@@ -94,6 +94,66 @@ def _display_name(message: Message) -> str:
     return f"игрок#{u.id}"
 
 
+def _detect_media(message: Message) -> str | None:
+    """Тип вложения сообщения (для восприятия друном), либо None для чистого текста.
+
+    Друн должен ЧУВСТВОВАТЬ форму активности: стикер/голосовуха/кружок/фото —
+    это разный социальный сигнал, а не «пустое сообщение». Возвращаем короткую
+    метку, которую видно и в памяти, и в контексте.
+    """
+    if message.photo:
+        return "photo"
+    if message.sticker:
+        return "sticker"
+    if message.animation:
+        return "gif"
+    if message.voice:
+        return "voice"
+    if message.video_note:
+        return "video_note"
+    if message.video:
+        return "video"
+    if message.audio:
+        return "audio"
+    if message.document:
+        return "document"
+    if message.poll:
+        return "poll"
+    if message.dice:
+        return "dice"
+    if message.contact:
+        return "contact"
+    if message.location:
+        return "location"
+    return None
+
+
+def _reply_perception(message: Message, bot_id: int) -> dict[str, Any]:
+    """Структура ответа: кому отвечает автор и на какой текст (нить беседы).
+
+    Без этого друн видит плоский список реплик и не понимает, что условный
+    «Вася» отвечает «Пете», а не в пустоту — или что это ответ на его же реплику.
+    """
+    r = message.reply_to_message
+    if r is None:
+        return {}
+    out: dict[str, Any] = {}
+    ru = r.from_user
+    if ru is not None and bot_id and ru.id == bot_id:
+        out["reply_to_bot"] = True
+        out["reply_to_name"] = "тебе (друну)"
+    elif ru is not None:
+        out["reply_to_name"] = ru.full_name or (
+            f"@{ru.username}" if ru.username else f"игрок#{ru.id}"
+        )
+    excerpt = (r.text or r.caption or "").strip()
+    if excerpt:
+        out["reply_excerpt"] = excerpt
+    elif r.sticker or r.photo or r.voice or r.video_note or r.animation:
+        out["reply_excerpt"] = "[медиа]"
+    return out
+
+
 class DrunEarsMiddleware(BaseMiddleware):
     """Сохраняет реплики игроков целевого чата в память друна."""
 
@@ -119,18 +179,28 @@ class DrunEarsMiddleware(BaseMiddleware):
         if user is None or user.is_bot:
             return
         text = (message.text or message.caption or "").strip()
-        if not text or text.startswith("/"):
+        media = _detect_media(message)
+        # Чистый текст-команда («/...») не интересен. Но медиа-команд не бывает,
+        # поэтому фильтр команд применяем только к тексту без вложения.
+        if text.startswith("/") and media is None:
             return
-        # Отсеиваем игровые команды (бой/казино/профиль/...) и мусор, чтобы
-        # память друна состояла из живых реплик, а не спама командами.
-        if _is_command_or_noise(text):
+        if text and media is None and _is_command_or_noise(text):
+            # Игровые команды (бой/казино/...) и мусор не пишем в память друна.
+            return
+        if not text and media is None:
             return
         session: AsyncSession | None = data.get("session")
         if session is None:
             return
+        bot_id = message.bot.id if message.bot else 0
+        reply = _reply_perception(message, bot_id)
         await drun_memory.capture_chat(
             session,
             user_id=user.id,
             name=_display_name(message),
             content=text,
+            media=media,
+            reply_to_name=reply.get("reply_to_name"),
+            reply_to_bot=bool(reply.get("reply_to_bot")),
+            reply_excerpt=reply.get("reply_excerpt"),
         )

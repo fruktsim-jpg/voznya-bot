@@ -86,6 +86,14 @@ def _is_reply_to_bot(message: Message, bot_id: int) -> bool:
     return bool(r and r.from_user and r.from_user.id == bot_id)
 
 
+def _reply_excerpt(message: Message) -> str:
+    """Текст сообщения, на которое отвечают реплаем (нить беседы для друна)."""
+    r = message.reply_to_message
+    if r is None:
+        return ""
+    return (r.text or r.caption or "").strip()
+
+
 def _has_mention(message: Message, bot_username: str) -> bool:
     if not bot_username:
         return False
@@ -175,15 +183,32 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
         or _has_name_trigger(message, cfg.name_triggers)
     )
 
-    # Адресные сообщения отвечаем всегда (в рамках капа); иначе — редкий рандом,
-    # и то лишь когда в чате есть «движ» (несколько свежих реплик подряд), а не
-    # на одинокое сообщение в тишине — так вкиды реже и всегда в тему. Дешёвую
-    # проверку рандома делаем ПЕРВОЙ, чтобы не бить в БД на каждое сообщение.
+    # АГЕНТНОСТЬ вместо слепой монетки: для НЕадресных реплик друн «решает», а
+    # не бросает кубик. Слой восприятия (perceive) по тексту и накалу чата
+    # выбирает намерение (подколоть/поддержать/подлить движа/смолчать) и силу
+    # позыва. Молчание — это тоже решение, и обычно правильное.
+    engagement = None
     if not addressed:
-        if random.random() >= max(0.0, cfg.random_butt_in_chance):
+        from app.features.drun import perceive as drun_perceive
+
+        chat_hot = await drun_memory.recent_chat_count(
+            session, channel="chat", seconds=180
+        )
+        addressed_other = message.reply_to_message is not None
+        engagement = drun_perceive.decide_engagement(
+            text,
+            chat_hot=chat_hot,
+            mentions_drun_topic=drun_perceive.mentions_drun_topic(text),
+            addressed_other=addressed_other,
+        )
+        if not engagement.wants_in:
             return
-        chat_hot = await drun_memory.recent_chat_count(session, channel="chat", seconds=180)
-        if chat_hot < 4:
+        # Сила позыва × настройка частоты = вероятность реально вставить слово.
+        # Так сильные сигналы (наезд/скука) проходят почти всегда, а слабые
+        # (просто оживлённый чат) — редко, и общий темп регулируется одной
+        # ручкой random_butt_in_chance, но уже осмысленно, а не вслепую.
+        gate = engagement.urge * (1.0 + max(0.0, cfg.random_butt_in_chance) * 4.0)
+        if random.random() >= min(0.95, gate):
             return
 
     # Дневной кап — предел расходов/спама на АВТОНОМНЫЕ вкиды. Адресные
@@ -277,19 +302,24 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
                         logger.debug("mentions line failed", exc_info=True)
                 return
 
-        # Прямое обращение — отвечаем НА КОНКРЕТНУЮ реплику человека.
+        # Прямое обращение — отвечаем НА КОНКРЕТНУЮ реплику человека. Если это
+        # реплай на сообщение друна — даём ему текст той реплики как нить.
+        reply_ctx = _reply_excerpt(message) if _is_reply_to_bot(message, bot_id) else None
         result = await drun_service.respond(
             session,
             asker_id=user.id,
             asker_name=_display_name(message),
             text=text,
+            reply_context=reply_ctx,
         )
     else:
-        # Случайный вкид — это НЕ ответ на вопрос, а живое встревание по
-        # настроению чата. Берём observe-режим (читает живой чат и вкидывает
-        # реплику в тему), иначе друн отвечал бы на случайную фразу как на
-        # адресованный ему вопрос и выдавал бы несвязную дичь.
-        result = await drun_service.observe(session, subject_id=user.id)
+        # Спонтанное встревание по решению восприятия. Передаём НАМЕРЕНИЕ
+        # (зачем влезаем) — генерация целенаправленна, а не «ляпни случайное».
+        result = await drun_service.observe(
+            session,
+            subject_id=user.id,
+            intent_note=engagement.reason if engagement else None,
+        )
     if not result.ok:
         return
 
@@ -362,6 +392,90 @@ async def on_photo_message(message: Message, session: AsyncSession) -> None:
         image_b64=image_b64,
         media_type="image/jpeg",
         caption=message.caption or "",
+    )
+    if not result.ok:
+        return
+    await _set_cooldown(session, cfg.reply_cooldown_sec)
+    await message.reply(result.text, parse_mode=None)
+
+
+_MEDIA_KIND_RU = {
+    "sticker": "стикер", "voice": "голосовуху", "video_note": "кружок",
+    "video": "видео", "animation": "гифку", "audio": "аудио",
+    "document": "файл", "poll": "опрос",
+}
+
+
+def _nonphoto_media_kind(message: Message) -> str | None:
+    """Тип не-фото вложения (фото обрабатывает отдельный vision-хендлер)."""
+    if message.sticker:
+        return "sticker"
+    if message.voice:
+        return "voice"
+    if message.video_note:
+        return "video_note"
+    if message.animation:
+        return "animation"
+    if message.video:
+        return "video"
+    if message.audio:
+        return "audio"
+    if message.document:
+        return "document"
+    if message.poll:
+        return "poll"
+    return None
+
+
+@router.message(F.sticker | F.voice | F.video_note | F.video | F.animation | F.audio | F.document)
+async def on_media_message(message: Message, session: AsyncSession) -> None:
+    """Друн реагирует, когда к нему обращаются НЕ-фото медиа (реплай/упоминание).
+
+    Раньше друн был глух к стикерам/голосовухам/кружкам в свой адрес — они не
+    попадали ни в текстовый, ни в фото-хендлер. Это часть агентности: ответ
+    другу стикером — это социальный жест, и друн должен на него реагировать,
+    а не молчать. Vision сюда не зовём (контента модели не даём), реагируем по
+    самому ФАКТУ и подписи.
+    """
+    settings = get_settings()
+    if message.chat.id != settings.chat_id:
+        return
+    user = message.from_user
+    if user is None or user.is_bot:
+        return
+
+    cfg = await drun_config.get_config(session)
+    if not cfg.usable or not cfg.reply_enabled:
+        return
+
+    bot_id = message.bot.id if message.bot else 0
+    addressed = (
+        _is_reply_to_bot(message, bot_id)
+        or _has_mention(message, settings.bot_username)
+        or _has_name_trigger(message, cfg.name_triggers)
+    )
+    # На не-фото медиа реагируем ТОЛЬКО при явном обращении — иначе друн бы
+    # комментировал каждый стикер в чате (спам). Ambient-восприятие таких медиа
+    # уже идёт через ears → живой чат, этого достаточно для фона.
+    if not addressed:
+        return
+    if await _cooldown_active(session):
+        return
+
+    kind = _nonphoto_media_kind(message)
+    kind_ru = _MEDIA_KIND_RU.get(kind or "", "что-то")
+    caption = (message.caption or "").strip()
+    reply_ctx = _reply_excerpt(message) if _is_reply_to_bot(message, bot_id) else None
+    parts = [f"{_display_name(message)} кинул(а) тебе {kind_ru}"]
+    if caption:
+        parts.append(f"с подписью «{caption}»")
+    note = " ".join(parts) + ". Среагируй живо и коротко в образе (1 фраза)."
+    result = await drun_service.respond(
+        session,
+        asker_id=user.id,
+        asker_name=_display_name(message),
+        text=note,
+        reply_context=reply_ctx,
     )
     if not result.ok:
         return

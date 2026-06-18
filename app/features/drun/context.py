@@ -507,6 +507,15 @@ async def _memory_block(
         return ""
 
 
+# Человекочитаемые метки вложений для контекста (друн «видит» форму активности).
+_MEDIA_RU: dict[str, str] = {
+    "photo": "фото", "sticker": "стикер", "gif": "гифка", "voice": "голосовуха",
+    "video_note": "кружок", "video": "видео", "audio": "аудио",
+    "document": "файл", "poll": "опрос", "dice": "кубик/слот",
+    "contact": "контакт", "location": "геолокация",
+}
+
+
 async def _chat_block(session: AsyncSession, channel: str, limit: int = 24) -> str:
     """Свежая болтовня игроков в чате (кто что сказал) — по никам.
 
@@ -528,8 +537,23 @@ async def _chat_block(session: AsyncSession, channel: str, limit: int = 24) -> s
             "# Прочитай и пойми НАСТРОЕНИЕ и О ЧЁМ базар, прежде чем встревать:",
         ]
         for m in msgs:
-            who = (m.meta or {}).get("name") or name_for(names, m.user_id)
-            lines.append(f"{who}: {m.content}")
+            meta = m.meta or {}
+            who = meta.get("name") or name_for(names, m.user_id)
+            # Восприятие формы реплики: кому отвечал автор и было ли вложение —
+            # чтобы друн видел НИТЬ беседы, а не плоскую ленту.
+            prefix = ""
+            if meta.get("reply_to_bot"):
+                prefix = "[в ответ ТЕБЕ] "
+            elif meta.get("reply_to"):
+                ex = meta.get("reply_excerpt")
+                prefix = (
+                    f"[в ответ {meta['reply_to']}"
+                    + (f" на «{ex}»" if ex else "")
+                    + "] "
+                )
+            media = meta.get("media")
+            media_tag = f"[{_MEDIA_RU.get(media, media)}] " if media else ""
+            lines.append(f"{who}: {prefix}{media_tag}{m.content}")
         # Кто есть кто (пол/имя) — компактным списком, без засорения каждой строки.
         who_is_who = [
             f"{name_for(names, uid)} ({hints[uid]})"

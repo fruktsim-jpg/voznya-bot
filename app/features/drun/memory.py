@@ -36,32 +36,51 @@ async def capture_chat(
     name: str,
     content: str,
     channel: str = "chat",
+    media: str | None = None,
+    reply_to_name: str | None = None,
+    reply_to_bot: bool = False,
+    reply_excerpt: str | None = None,
 ) -> AiMessage | None:
     """Сохраняет реплику живого игрока (role='chat') с ником в meta.
 
     Возвращает запись или ``None``, если сообщение пустое после обрезки. Имя
     кладём в ``meta.name`` — это снимок на момент сообщения (ник мог смениться).
     Commit — на вызывающем (middleware фиксирует сессию после хендлера).
+
+    Друн — наблюдатель, а не Q&A-бот: он должен ВИДЕТЬ форму сообщения, а не
+    только текст. Поэтому в ``meta`` кладём восприятие:
+    * ``media`` — тип вложения (photo/sticker/voice/video/...), если это не
+      просто текст; благодаря этому пустые по тексту медиа тоже фиксируются;
+    * ``reply_to_name`` / ``reply_to_bot`` / ``reply_excerpt`` — структура
+      ответа: кому отвечал автор (или это ответ самому друну) и на какой текст,
+      чтобы друн понимал нить беседы, а не плоский список реплик.
     """
-    text = (content or "").strip()
-    if not text:
-        return None
-    # Defense-in-depth: обезвреживаем econ-директивы в НЕДОВЕРЕННОМ вводе игрока
-    # прямо на границе памяти. Иначе [[econ:...]] из чужого сообщения может
-    # дожить до контекста и через эхо модели дойти до парсера действий. Раньше
-    # это чистилось только для текущего собеседника в respond(), а реплики
-    # других игроков попадали в _chat_block сырыми.
     from app.features.drun.actions import sanitize_user_text
 
-    text = sanitize_user_text(text)
+    # Defense-in-depth: обезвреживаем econ-директивы в НЕДОВЕРЕННОМ вводе игрока
+    # прямо на границе памяти (см. ниже). Чистим до любых проверок длины.
+    text = sanitize_user_text((content or "").strip())
+    # Медиа без подписи — это всё равно событие в чате: фиксируем плейсхолдером,
+    # чтобы друн видел «кинул стикер/голосовуху», а не пустоту.
+    if not text and not media:
+        return None
     if len(text) > _CHAT_MAX_CHARS:
         text = text[: _CHAT_MAX_CHARS - 1].rstrip() + "…"
+    meta: dict[str, Any] = {"name": name}
+    if media:
+        meta["media"] = media
+    if reply_to_bot:
+        meta["reply_to_bot"] = True
+    if reply_to_name:
+        meta["reply_to"] = reply_to_name[:64]
+    if reply_excerpt:
+        meta["reply_excerpt"] = reply_excerpt.strip()[:120]
     msg = AiMessage(
         role="chat",
-        content=text,
+        content=text or f"[{media}]",
         channel=channel,
         user_id=user_id,
-        meta={"name": name},
+        meta=meta,
     )
     session.add(msg)
     await session.flush()

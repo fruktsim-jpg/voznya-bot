@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -42,6 +42,10 @@ _KEY_LAST_EVENT = "autonomous_last_event_id"
 _EVENT_FRESH_MIN = 30
 # Собственные действия друна — он на них не «реагирует» как на чужую новость.
 _SELF_EVENT_TYPES = (_we.EVENT_DRUN_TAX, _we.EVENT_DRUN_GRANT)
+# Анти-нытьё: один и тот же подмеченный паттерн друн не комментирует чаще, чем
+# раз в N часов (ключ ai_settings = последний слепок «паттерн→время»).
+_KEY_LAST_PATTERN = "autonomous_last_pattern"
+_PATTERN_COOLDOWN_H = 6
 
 
 async def _get_last_event_id(session: AsyncSession) -> int:
@@ -139,7 +143,10 @@ async def comment_on_fresh_events(
         )
     ).scalar_one_or_none()
     if ev is None:
-        return None
+        # Нет свежих событий — но друн всё равно НАБЛЮДАТЕЛЬ. Пытаемся заметить
+        # поведенческий паттерн (тильт/серия) и прокомментировать по своему
+        # почину. Это инициатива без триггера-события — суть агентности.
+        return await _notice_pattern(session, channel=channel)
 
     # Двигаем high-water-mark СРАЗУ (даже если генерация упадёт) — чтобы не
     # зациклиться на одном событии при повторных сбоях LLM.
@@ -198,6 +205,116 @@ async def _stir_dead_chat(
     if not result.ok or not result.text:
         return None
     return result.text
+
+
+async def _get_pattern_mark(session: AsyncSession) -> dict:
+    """Читает слепок «паттерн→ISO-время последнего коммента» из ai_settings."""
+    raw = await session.scalar(
+        select(AiSetting.value).where(AiSetting.key == _KEY_LAST_PATTERN)
+    )
+    return raw if isinstance(raw, dict) else {}
+
+
+async def _set_pattern_mark(session: AsyncSession, mark: dict) -> None:
+    stmt = (
+        pg_insert(AiSetting)
+        .values(key=_KEY_LAST_PATTERN, value=mark)
+        .on_conflict_do_update(
+            index_elements=[AiSetting.key], set_={"value": mark}
+        )
+    )
+    await session.execute(stmt)
+
+
+async def _notice_pattern(
+    session: AsyncSession, *, channel: str
+) -> str | None:
+    """Инициатива без события: друн замечает поведенческий паттерн и влезает.
+
+    Живой смотритель чата не ждёт «события из шины» — он сам видит, что кто-то
+    проигрался в хлам, а кто-то фермит десятый день. Берём САМЫЙ выраженный
+    свежий паттерн и комментируем (анти-нытьё: один паттерн не чаще, чем раз в
+    ``_PATTERN_COOLDOWN_H`` часов). Дёшево: отбор по индексируемым полям, LLM —
+    только когда уже решили говорить.
+    """
+    from app.models import User
+
+    mark = await _get_pattern_mark(session)
+    now = now_utc()
+
+    def _recent(key: str) -> bool:
+        ts = mark.get(key)
+        if not ts:
+            return False
+        try:
+            return (now - datetime.fromisoformat(ts)).total_seconds() < (
+                _PATTERN_COOLDOWN_H * 3600
+            )
+        except (TypeError, ValueError):
+            return False
+
+    async def _emit(subject, task: str, key: str) -> str | None:
+        result = await drun_service.generate(
+            session, task=task, subject_id=subject.id, channel=channel,
+            include_events=False, memory_kind="monologue",
+            role=drun_config.ROLE_NARRATOR,
+        )
+        if result.ok and result.text:
+            mark[key] = now.isoformat()
+            await _set_pattern_mark(session, mark)
+            return result.text
+        return None
+
+    # Кандидат 1: глубокий тильт в казино (серия проигрышей) — сочнейший роаст.
+    if not _recent("casino_tilt"):
+        u = (
+            await session.execute(
+                select(User)
+                .where(User.casino_loss_streak >= 5)
+                .order_by(User.casino_loss_streak.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if u is not None:
+            names = await resolve_names(session, [u.id])
+            who = name_for(names, u.id)
+            task = (
+                "Ты — живой дух чата Возни и любишь подъёбывать. Ты ЗАМЕТИЛ сам "
+                "(никто тебя не звал), что игрок сливается в казино серией. Кинь "
+                "ОДНУ дерзкую реплику-подъёб, по имени, коротко и метко. Без "
+                "статистики и перечисления цифр.\n\n"
+                f"# КОГО ПОДКОЛОТЬ: {who} — {u.casino_loss_streak} проигрышей "
+                "подряд в казино"
+            )
+            out = await _emit(u, task, "casino_tilt")
+            if out:
+                return out
+
+    # Кандидат 2: упорный фермер (большая серия) — повод поддеть «трудягу».
+    if not _recent("farm_grinder"):
+        u = (
+            await session.execute(
+                select(User)
+                .where(User.farm_streak >= 10)
+                .order_by(User.farm_streak.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if u is not None:
+            names = await resolve_names(session, [u.id])
+            who = name_for(names, u.id)
+            task = (
+                "Ты — живой дух чата Возни. Ты сам подметил, что игрок задрот "
+                "фермит без пропусков длинной серией. Кинь ОДНУ живую реплику: "
+                "подколи трудягу или признай упорство, по имени, коротко, в "
+                "образе.\n\n"
+                f"# О КОМ: {who} — фермит {u.farm_streak} дней подряд"
+            )
+            out = await _emit(u, task, "farm_grinder")
+            if out:
+                return out
+
+    return None
 
 
 def setup_autonomous_poster(
