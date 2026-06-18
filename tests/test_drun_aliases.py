@@ -43,3 +43,22 @@ def test_add_aliases_caps_count():
     many = [f"клич{i}ка" for i in range(30)]
     out = al.add_aliases(None, many)
     assert len(out) <= al._MAX_ALIASES
+
+
+def test_pick_resolved_requires_min_weight():
+    # Свежий вброс (вес 1-2) НЕ должен резолвиться в owner-команду.
+    assert al._pick_resolved({100: 1}) is None
+    assert al._pick_resolved({100: 2}) is None
+    # Устоявшееся прозвище — резолвится.
+    assert al._pick_resolved({100: 3}) == 100
+
+
+def test_pick_resolved_ambiguous_collision_returns_none():
+    # Двое знают ник с близким весом → неоднозначно, не угадываем.
+    assert al._pick_resolved({100: 4, 200: 3}) is None
+    # Явный перевес лидера → резолвится в него.
+    assert al._pick_resolved({100: 6, 200: 3}) == 100
+
+
+def test_pick_resolved_empty():
+    assert al._pick_resolved({}) is None

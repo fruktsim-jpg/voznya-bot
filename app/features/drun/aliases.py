@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
-from app.models import AiProfile, User
+from app.models import AiProfile
 
 logger = get_logger(__name__)
 
@@ -28,6 +28,13 @@ logger = get_logger(__name__)
 _MAX_ALIASES = 12
 # Минимальная длина значимого алиаса (отсекаем «он», «ты», шум).
 _MIN_ALIAS_LEN = 3
+# Мин. накопленный вес прозвища, чтобы по нему РЕЗОЛВИТЬ owner-команду. Один-два
+# вброса в чат (вес 1-2) не должны уводить бан/мут не на того — нужна
+# устойчивость (ник реально прижился в чате).
+_MIN_RESOLVE_WEIGHT = 3
+# При коллизии (ник знают несколько игроков) лидер должен опережать второго
+# хотя бы на столько, иначе считаем неоднозначным и не угадываем.
+_RESOLVE_MARGIN = 2
 # Стоп-набор: служебные слова, которые НЕ должны стать прозвищем.
 _ALIAS_STOP = frozenset({
     "это", "вот", "тот", "там", "как", "что", "кто", "его", "him",
@@ -93,11 +100,19 @@ def add_aliases(prev: list[dict] | None, new_aliases: list[str]) -> list[dict]:
 
 
 async def resolve_alias(session: AsyncSession, who: str) -> int | None:
-    """Ищет игрока по выученному прозвищу. None — если совпадений нет.
+    """Ищет игрока по выученному прозвищу. None — если совпадений нет/неоднозначно.
 
-    При коллизии (несколько профилей знают это прозвище) выбираем игрока с
-    наибольшим суммарным весом алиаса (самое «устойчивое» прозвище). Поиск по
-    профилям дешёвый: aliases лежат в JSONB и таблица невелика.
+    Безопасность (alias-poisoning): прозвища вытаскивает LLM из ОБЫЧНОГО чата, и
+    этот резолв питает owner-команды (бан/мут/выдача). Чтобы случайный/злонамеренно
+    вброшенный ник не увёл команду не на того:
+
+    * требуем УСТОЙЧИВОСТИ — алиас должен накопить вес ≥ ``_MIN_RESOLVE_WEIGHT``
+      (одного-двух упоминаний мало);
+    * при коллизии (ник знают несколько профилей) требуем явного ПЕРЕВЕСА
+      лидера над вторым местом, иначе считаем неоднозначным и возвращаем None.
+
+    Так owner-команда по сомнительной кличке честно не находит игрока, а не
+    бьёт по «самому накрученному» кандидату.
     """
     q = _norm(who)
     if len(q) < _MIN_ALIAS_LEN:
@@ -113,13 +128,34 @@ async def resolve_alias(session: AsyncSession, who: str) -> int | None:
     except Exception:  # noqa: BLE001
         logger.debug("resolve_alias query failed", exc_info=True)
         return None
-    best_id: int | None = None
-    best_w = 0
+    # Лучший вес матча на каждого игрока (несколько алиасов одного профиля могут
+    # совпасть — берём сильнейший).
+    weight_by_uid: dict[int, int] = {}
     for uid, data in rows:
         for item in (data or {}).get("aliases", []):
             alias = str(item.get("alias", ""))
             if _alias_matches(q, alias):
                 w = int(item.get("w", 1) or 1)
-                if w > best_w:
-                    best_w, best_id = w, uid
+                if w > weight_by_uid.get(uid, 0):
+                    weight_by_uid[uid] = w
+    if not weight_by_uid:
+        return None
+    return _pick_resolved(weight_by_uid)
+
+
+def _pick_resolved(weight_by_uid: dict[int, int]) -> int | None:
+    """Выбирает игрока из карты {uid: вес} с предохранителями anti-poisoning.
+
+    Возвращает uid только если прозвище устоявшееся (вес ≥ _MIN_RESOLVE_WEIGHT)
+    и лидер однозначно опережает второго (margin ≥ _RESOLVE_MARGIN). Иначе None.
+    """
+    if not weight_by_uid:
+        return None
+    ranked = sorted(weight_by_uid.items(), key=lambda kv: kv[1], reverse=True)
+    best_id, best_w = ranked[0]
+    if best_w < _MIN_RESOLVE_WEIGHT:
+        return None  # прозвище ещё не устоявшееся — не рискуем
+    # Коллизия: ник знают двое и веса близки → неоднозначно, не угадываем.
+    if len(ranked) > 1 and best_w - ranked[1][1] < _RESOLVE_MARGIN:
+        return None
     return best_id
