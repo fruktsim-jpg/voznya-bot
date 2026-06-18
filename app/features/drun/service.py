@@ -115,6 +115,7 @@ async def generate(
     role: str | None = None,
     query: str | None = None,
     intent_kind: str | None = None,
+    asker_id: int | None = None,
 ) -> GenerateResult:
     """Генерирует одну реплику друна под конкретное задание ``task``.
 
@@ -181,12 +182,21 @@ async def generate(
         return GenerateResult(ok=False, error="empty")
 
     # Экономическая выходка (налог/подачка), если друн вставил директиву и
-    # власть включена. Применяем к собеседнику; директиву вырезаем из текста.
+    # власть включена. Применяем к субъекту реплики.
+    #
+    # ``asker_id`` отделён от ``subject_id`` намеренно: для адресного ответа
+    # (respond) автор обращения = субъект, и self-grant-блок ловит абуз через
+    # эхо директивы. Для спонтанного вкида (observe) человек НЕ обращался к
+    # друну — это инициатива друна, и блокировать grant как «самоначисление»
+    # неправильно (игрок не мог ничего «попросить»). По умолчанию asker_id=
+    # subject_id, чтобы старое поведение respond не сломалось; observe явно
+    # передаёт asker_id=None.
     econ_result = None
     if allow_actions and cfg.econ_enabled:
+        effective_asker = asker_id if asker_id is not None else subject_id
         econ_result = await drun_actions.apply_if_any(
-            session, cfg=cfg, target_id=subject_id, text=text, asker_id=subject_id,
-            intent_kind=intent_kind,
+            session, cfg=cfg, target_id=subject_id, text=text,
+            asker_id=effective_asker, intent_kind=intent_kind,
         )
     if drun_actions.parse(text) is not None:
         text = drun_actions.strip_directives(text)
@@ -237,17 +247,33 @@ async def observe(
 
     ``intent_kind`` — машинный код интента (roast/hype/...); пробрасывается
     дальше в эконом-выходку как audit trail (см. econ.apply meta).
+
+    Эконом-власть в этом пути ВКЛЮЧЕНА (LEAP-2): спонтанный ROAST на хвастуна
+    или HYPE на победителя — самый естественный момент для ``drun_tax``/
+    ``drun_grant``. Подсказка модели появляется только при включённой власти и
+    подходящем интенте; все предохранители econ.apply (cap/clamp/cooldown/
+    daily_cap) работают. ``asker_id=None`` явно: игрок ничего не «просил» —
+    это инициатива друна, поэтому self-grant-блок здесь не применим.
     """
     task = await drun_config.get_prompt(
         session, drun_config.PROMPT_OBSERVATION, _DEFAULT_OBSERVATION
     )
+    cfg = await drun_config.get_config(session)
+    if intent_kind and cfg.econ_enabled and subject_id is not None:
+        hint = _econ_hint_for_intent(intent_kind)
+        if hint:
+            task = f"{task}\n\n# ВОЗМОЖНОЕ ДЕЙСТВИЕ: {hint}"
     if intent_note:
         task = (
             f"{task}\n\n# ТВОЁ НАМЕРЕНИЕ СЕЙЧАС (действуй по нему): {intent_note}"
         )
+    # ``allow_actions=True`` ТОЛЬКО когда есть конкретный субъект — иначе
+    # некого облагать/одаривать. ``asker_id=None`` (см. docstring).
     return await generate(
         session, task=task, subject_id=subject_id, channel=channel,
         intent_kind=intent_kind,
+        allow_actions=(subject_id is not None),
+        asker_id=None,
     )
 
 
