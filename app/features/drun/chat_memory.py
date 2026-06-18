@@ -23,7 +23,7 @@ from app.core.utils import now_utc
 from app.features.drun import config as drun_config
 from app.features.drun import memory as drun_memory
 from app.features.drun import provider as drun_provider
-from app.models import AiMemory
+from app.models import AiMemory, AiProfile
 
 logger = get_logger(__name__)
 
@@ -44,11 +44,16 @@ _SYSTEM = (
 _INSTRUCTION = (
     "Верни СТРОГО JSON-массив (без пояснений) до {max} объектов вида "
     '{{"name":"ник","category":"тип","fact":"короткий факт на русском",'
-    '"weight":1-3}}. '
+    '"weight":1-3,"alias_of":"ник кого этим прозвищем зовут (только для '
+    'category=nickname, иначе пусто)","alias":"само прозвище/кличка (только '
+    'для category=nickname)"}}. '
     "category — одно из: trait (черта характера), topic (постоянная тема), "
     "nickname (кличка/прозвище кого-то), joke (повторяющаяся шутка), meme "
     "(локальный мем чата), relationship (связь/конфликт/союз), habit (игровая "
     "привычка). "
+    "Для nickname ОБЯЗАТЕЛЬНО заполни alias_of (кого так зовут, его обычный "
+    "ник из лога) и alias (как именно зовут). Пример: если Vasya777 в чате "
+    "зовут «Артёмом» — name='Vasya777', alias_of='Vasya777', alias='Артём'. "
     "weight: 1 — мелочь, 2 — заметная черта, 3 — яркая определяющая черта. "
     "Если ничего стоящего нет — верни []. Факт — это про человека/чат, не про "
     "конкретное сообщение. Пиши живым языком, как заметка для себя."
@@ -126,9 +131,55 @@ async def distill_chat(session: AsyncSession) -> int:
         )
         added += 1
 
+    # Прозвища (#alias): привязываем выученные клички к ИГРОКУ, чтобы потом
+    # резолвить обращения вроде «забань артёма». Копим в профиле, не дублируя.
+    try:
+        await _persist_aliases(session, facts, name_to_ids)
+    except Exception:  # noqa: BLE001
+        logger.debug("persist aliases failed", exc_info=True)
+
     if added:
         await session.flush()
     return added
+
+
+async def _persist_aliases(
+    session: AsyncSession,
+    facts: list[dict],
+    name_to_ids: dict[str, set[int]],
+) -> None:
+    """Сохраняет выученные прозвища в профили соответствующих игроков.
+
+    Для каждого факта-клички берём ``alias_of`` (кого так зовут) → находим его
+    user_id по логу окна → дописываем алиас в ``AiProfile.data["aliases"]`` с
+    накоплением веса. Привязываем только при ОДНОЗНАЧНОМ совпадении ника, чтобы
+    не приклеить кличку не тому при коллизии имён.
+    """
+    from app.features.drun import aliases as drun_aliases
+
+    # alias_of (ник) → набор предложенных кличек.
+    target_to_aliases: dict[str, list[str]] = {}
+    for item in facts:
+        if item.get("category") != "nickname":
+            continue
+        alias = item.get("alias") or ""
+        target = (item.get("alias_of") or item.get("name") or "").strip()
+        if alias and target:
+            target_to_aliases.setdefault(target.lower(), []).append(alias)
+
+    for target_name, new_aliases in target_to_aliases.items():
+        ids = name_to_ids.get(target_name, set())
+        if len(ids) != 1:
+            continue  # неоднозначно или неизвестно — не рискуем
+        uid = next(iter(ids))
+        prof = await session.get(AiProfile, uid)
+        if prof is None:
+            continue
+        data = dict(prof.data or {})
+        data["aliases"] = drun_aliases.add_aliases(
+            data.get("aliases"), new_aliases
+        )
+        prof.data = data
 
 
 def _parse_facts(raw: str) -> list[dict]:
@@ -161,6 +212,8 @@ def _parse_facts(raw: str) -> list[dict]:
         category = str(el.get("category", "")).strip().lower()
         out.append({
             "name": name, "fact": fact, "weight": weight, "category": category,
+            "alias_of": str(el.get("alias_of", "")).strip(),
+            "alias": str(el.get("alias", "")).strip(),
         })
     return out
 

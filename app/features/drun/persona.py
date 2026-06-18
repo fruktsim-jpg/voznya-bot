@@ -142,6 +142,20 @@ async def build_system_prompt(
         "- Не пересказывай ленту событий и не зачитывай списки — ты живой чел, "
         "а не отчёт."
     )
+    # Самообучение (#self-learn): выученные уроки про культуру ЭТОГО чата.
+    # Это «дообучение» промпта на практике, в рамках персоны.
+    try:
+        from app.features.drun import reflect as drun_reflect
+
+        lessons = await drun_reflect.top_lessons(session)
+        if lessons:
+            parts.append(
+                "# ЧТО ТЫ УЖЕ ПОНЯЛ ПРО ЭТОТ ЧАТ (твой опыт, накопленный со "
+                "временем — учитывай, но не зачитывай вслух):\n"
+                + "\n".join(f"- {ls}" for ls in lessons)
+            )
+    except Exception:  # noqa: BLE001
+        logger.debug("lessons injection failed", exc_info=True)
     if econ_enabled:
         parts.append(
             "# ТВОЯ ВЛАСТЬ НАД ЕШКАМИ (используй РЕДКО и в тему)\n"

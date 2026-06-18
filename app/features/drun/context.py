@@ -196,6 +196,19 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                 f"- ТВОЁ ОТНОШЕНИЕ [{stance.label}]: {stance.directive}"
             )
 
+        # Накопленное ЛИЧНОЕ отношение (как он вёл себя С ТОБОЙ во времени) —
+        # поверх статической стойки. Делает дружбу/вражду историчными.
+        try:
+            from app.features.drun import affinity as drun_affinity
+
+            aff = await drun_affinity.get_affinity(session, user_id)
+            if aff.label != "НЕЙТРАЛ":
+                lines.append(
+                    f"- ВАША ИСТОРИЯ [{aff.label}]: {aff.directive}"
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug("affinity block failed", exc_info=True)
+
         # Расширенная видимость: инвентарь/ачивки/сезон/модерация/кейсы.
         try:
             lines.extend(await _player_assets_block(session, user_id))
@@ -214,6 +227,14 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                 pref = (pdata.get("preferred_name") or "").strip()
                 if pref:
                     lines.append(f"- ПРОСИЛ ЗВАТЬ ЕГО: {pref} (используй это имя)")
+                aliases = pdata.get("aliases") or []
+                if aliases:
+                    alias_str = ", ".join(
+                        str(a.get("alias", "")).strip()
+                        for a in aliases[:6] if a.get("alias")
+                    )
+                    if alias_str:
+                        lines.append(f"- В ЧАТЕ ЕГО ТАКЖЕ ЗОВУТ: {alias_str}")
                 gender = (pdata.get("gender") or "unknown").strip()
                 if gender == "male":
                     lines.append("- ПОЛ: мужской (говори о нём в мужском роде)")

@@ -306,7 +306,17 @@ async def find_user_id(session: AsyncSession, who: str) -> int | None:
             .limit(1)
         )
     ).scalar_one_or_none()
-    return row.user_id if row else None
+    if row is not None:
+        return row.user_id
+    # Последний шанс: выученное в чате ПРОЗВИЩЕ («забань артёма», где Артём —
+    # кличка, а не имя в Telegram). Терпимо к падежам.
+    try:
+        from app.features.drun import aliases as drun_aliases
+
+        return await drun_aliases.resolve_alias(session, who)
+    except Exception:  # noqa: BLE001
+        logger.debug("find_user_id alias fallback failed", exc_info=True)
+        return None
 
 
 async def grant_one(

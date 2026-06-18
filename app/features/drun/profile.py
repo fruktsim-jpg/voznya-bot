@@ -268,11 +268,13 @@ async def refresh_profile(
         else prev.get("gender", "unknown")
     )
     preferred_name = portrait.get("preferred_name") or prev.get("preferred_name", "")
-    merged_facts = list(
-        dict.fromkeys(
-            (prev.get("self_facts") or []) + (portrait.get("self_facts") or [])
-        )
-    )[-12:]
+    # Консолидация: свежие факты о себе ВЫТЕСНЯЮТ устаревшие по той же теме
+    # (переехал/сменил работу), а не копятся противоречиями. См. consolidate.
+    from app.features.drun import consolidate as drun_consolidate
+
+    merged_facts = drun_consolidate.merge_self_facts(
+        prev.get("self_facts") or [], portrait.get("self_facts") or [], cap=12
+    )
 
     data = {
         "traits": portrait.get("traits", []),
@@ -282,6 +284,9 @@ async def refresh_profile(
         "gender": gender,
         "preferred_name": preferred_name,
         "self_facts": merged_facts,
+        # Прозвища выучиваются отдельным проходом (chat_memory) и живут в
+        # профиле — НЕ затираем их при пересборке портрета.
+        "aliases": prev.get("aliases", []),
     }
     if prof is None:
         prof = AiProfile(user_id=user_id)

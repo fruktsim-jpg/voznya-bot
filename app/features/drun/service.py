@@ -232,6 +232,15 @@ async def respond(
     # бы написать [[econ:grant:1000:...]] и через эхо модели спровоцировать
     # самоначисление. Чистим до отправки в LLM и до сохранения в память.
     safe_text = drun_actions.sanitize_user_text(text.strip())
+    # Личное отношение (аффинити): обновляем по тону реплики игрока В АДРЕС
+    # друна. Тёплое общение копит дружбу, хамство — вражду; со временем
+    # затухает. Дёшево, без LLM. Коммит — в общем потоке generate ниже.
+    try:
+        from app.features.drun import affinity as drun_affinity
+
+        await drun_affinity.record_interaction(session, asker_id, safe_text)
+    except Exception:  # noqa: BLE001
+        logger.debug("respond affinity update failed", exc_info=True)
     # Фактический вопрос (погода/новости/курс/«что такое») → подтягиваем свежие
     # данные из интернета, чтобы друн не выдумывал. Для внутренних тем Возни и
     # обычной болтовни веб не дёргается (см. websearch.looks_factual).
