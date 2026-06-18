@@ -31,15 +31,17 @@ from app.features.drun import memory as drun_memory
 from app.features.drun import service as drun_service
 from app.features.drun.names import name_for, resolve_names
 from app.models import AiSetting, WorldEvent
+from app.services import world_events as _we
 
 logger = get_logger(__name__)
 
 # Ключ high-water-mark: id последнего прокомментированного события.
 _KEY_LAST_EVENT = "autonomous_last_event_id"
-# Комментируем только ДЕЙСТВИТЕЛЬНО свежие события: без нижней границы по времени
 # на первом запуске (high-water-mark пуст) друн мог бы выдать событие недельной
 # давности за «только что произошло».
 _EVENT_FRESH_MIN = 30
+# Собственные действия друна — он на них не «реагирует» как на чужую новость.
+_SELF_EVENT_TYPES = (_we.EVENT_DRUN_TAX, _we.EVENT_DRUN_GRANT)
 
 
 async def _get_last_event_id(session: AsyncSession) -> int:
@@ -118,8 +120,12 @@ async def comment_on_fresh_events(
             return stir
 
     last_id = await _get_last_event_id(session)
-    # Самое свежее значимое событие новее high-water-mark И не старше окна — чтобы
-    # на первом запуске (last_id=0) не выдать древнее событие за «только что».
+    # Берём САМОЕ СТАРОЕ ещё не прокомментированное, но всё ещё свежее событие
+    # (id ASC). Раньше брали новейшее (created_at DESC) и сразу двигали
+    # watermark на него — при нескольких событиях за один тик все, кроме
+    # последнего, терялись навсегда. Теперь очередь дренится по одному за тик.
+    # Исключаем СОБСТВЕННЫЕ econ-события друна (drun_tax/drun_grant): он не
+    # должен «реагировать» на свои же действия как на новость со стороны.
     fresh_since = now_utc() - timedelta(minutes=_EVENT_FRESH_MIN)
     ev = (
         await session.execute(
@@ -127,7 +133,8 @@ async def comment_on_fresh_events(
             .where(WorldEvent.id > last_id)
             .where(WorldEvent.severity >= cfg.min_severity)
             .where(WorldEvent.created_at >= fresh_since)
-            .order_by(WorldEvent.created_at.desc())
+            .where(WorldEvent.type.notin_(_SELF_EVENT_TYPES))
+            .order_by(WorldEvent.id.asc())
             .limit(1)
         )
     ).scalar_one_or_none()

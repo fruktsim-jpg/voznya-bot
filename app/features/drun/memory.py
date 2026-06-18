@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils import now_utc
@@ -21,6 +21,10 @@ from app.models import AiMemory, AiMessage
 
 # Сколько символов реплики игрока храним (анти-раздувание контекста/токенов).
 _CHAT_MAX_CHARS = 320
+# Сколько дней держим краткосрочную историю (ai_messages). Все чтения этой
+# таблицы — оконные (последние реплики/счётчики за минуты), поэтому старше
+# нескольких дней данные не нужны, а таблица иначе растёт безгранично.
+_MESSAGES_RETENTION_DAYS = 14
 
 # --- Краткосрочная память (история) -----------------------------------------
 
@@ -42,6 +46,14 @@ async def capture_chat(
     text = (content or "").strip()
     if not text:
         return None
+    # Defense-in-depth: обезвреживаем econ-директивы в НЕДОВЕРЕННОМ вводе игрока
+    # прямо на границе памяти. Иначе [[econ:...]] из чужого сообщения может
+    # дожить до контекста и через эхо модели дойти до парсера действий. Раньше
+    # это чистилось только для текущего собеседника в respond(), а реплики
+    # других игроков попадали в _chat_block сырыми.
+    from app.features.drun.actions import sanitize_user_text
+
+    text = sanitize_user_text(text)
     if len(text) > _CHAT_MAX_CHARS:
         text = text[: _CHAT_MAX_CHARS - 1].rstrip() + "…"
     msg = AiMessage(
@@ -80,6 +92,22 @@ async def add_message(
     session.add(msg)
     await session.flush()
     return msg
+
+
+async def prune_old_messages(
+    session: AsyncSession, *, days: int = _MESSAGES_RETENTION_DAYS
+) -> int:
+    """Удаляет краткосрочную историю старше ``days`` дней. Commit — на вызывающем.
+
+    ``ai_messages`` — самая высоконагруженная таблица (каждое сообщение чата), а
+    все её чтения оконные (минуты/последние N строк). Без ретенции она растёт
+    без предела и замедляет каждый оконный COUNT/scan. Возвращает число удалённых.
+    """
+    cutoff = now_utc() - timedelta(days=max(1, days))
+    result = await session.execute(
+        delete(AiMessage).where(AiMessage.created_at < cutoff)
+    )
+    return int(result.rowcount or 0)
 
 
 async def recent_messages(

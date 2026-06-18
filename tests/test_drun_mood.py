@@ -50,3 +50,19 @@ def test_directive_mentions_label():
     d = m.directive()
     assert "AMUSED" in d
     assert "движ" in d
+
+
+def test_mood_event_types_exist_in_catalog():
+    # Регресс на F3: раньше mood ссылался на выдуманные типы ("casino_jackpot",
+    # "duel_lost", "ban"...), которых эмиттеры не шлют — классификация была
+    # наполовину мёртвой. Все типы должны быть в каноническом каталоге.
+    from app.services import world_events as we
+
+    valid = set(we.DEFAULT_SEVERITY)
+    assert mood._CELEBRATORY_TYPES <= valid, (
+        mood._CELEBRATORY_TYPES - valid
+    )
+    assert mood._CONFLICT_TYPES <= valid, (mood._CONFLICT_TYPES - valid)
+    # И наборы не пустые (иначе ветки настроения недостижимы).
+    assert mood._CELEBRATORY_TYPES
+    assert mood._CONFLICT_TYPES

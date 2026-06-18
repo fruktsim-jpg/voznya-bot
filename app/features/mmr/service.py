@@ -157,6 +157,18 @@ async def announce_rankup_if_any(
     rank = await detect_rankup(session, user_id, mmr_before)
     if rank is not None:
         await answerable.answer(format_rankup(user_mention, rank))
+        # Эмитим событие мира, чтобы друн «видел» рост ранга (для настроения и
+        # автономной реакции). EVENT_MMR_RANK_UP в каталоге был severity=2, но
+        # его никто не слал — друн был слеп к повышениям. emit_safe сам глушит
+        # сбои, игровой хендлер не падает.
+        from app.services import world_events
+
+        await world_events.emit_safe(
+            session,
+            type=world_events.EVENT_MMR_RANK_UP,
+            actor_id=user_id,
+            meta={"rank": rank.name},
+        )
 
 
 def mmr_for_achievement(ach: Achievement) -> int:

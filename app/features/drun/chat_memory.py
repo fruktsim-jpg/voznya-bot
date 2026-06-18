@@ -262,11 +262,15 @@ def setup_chat_distill(
         try:
             async with sessionmaker() as session:
                 removed = await purge_expired(session)
+                from app.features.drun import memory as drun_memory
+
+                pruned = await drun_memory.prune_old_messages(session)
                 n = await distill_chat(session)
                 await session.commit()
-                if n or removed:
+                if n or removed or pruned:
                     logger.info(
-                        "drun chat memory: +%d facts, -%d expired", n, removed
+                        "drun chat memory: +%d facts, -%d expired, -%d old msgs",
+                        n, removed, pruned,
                     )
         except Exception:  # noqa: BLE001
             logger.warning("drun chat distill failed", exc_info=True)

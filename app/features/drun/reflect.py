@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.logger import get_logger
+from app.core.utils import now_utc
 from app.features.drun import config as drun_config
 from app.features.drun import memory as drun_memory
 from app.features.drun import provider as drun_provider
@@ -151,12 +152,15 @@ async def reflect(session: AsyncSession) -> int:
     for item in lessons:
         key = item["lesson"].strip().lower()
         if key in existing:
-            # Урок подтверждён повторно — усиливаем вес (макс 3) и обновляем ts.
+            # Урок подтверждён повторно — усиливаем вес (макс 3) и ОБНОВЛЯЕМ ts,
+            # даже если вес уже на потолке: иначе часто подтверждаемый, но
+            # «насыщенный» урок выглядит старым для пруунинга/ранжирования.
             mem = existing[key]
             new_w = min(3, int(mem.weight or 1) + 1)
+            mem.updated_at = now_utc()
             if new_w != mem.weight:
                 mem.weight = new_w
-                changed += 1
+            changed += 1
         else:
             mem = AiMemory(
                 subject_id=None, kind=LESSON_KIND, fact=item["lesson"],

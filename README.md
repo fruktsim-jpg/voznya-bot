@@ -128,6 +128,7 @@ PostgreSQL, прописать `DATABASE_URL`, затем `alembic upgrade head`
 - `../docs/PROJECT_STATUS.md` — текущее состояние и журнал изменений обеих баз.
 - `../docs/PRIORITIES.md` — приоритеты.
 - `../docs/AI_HANDOFF.md` — контекст для агентов.
+- `docs/DRUN_AUDIT.md` — архитектура и аудит подсистемы Тёмного друна (AI-персона).
 
 > Источник истины — код (`app/settings/*.py` для экономики/рангов, миграции
 > Alembic для схемы). Отдельных справочных доков в `docs/` сейчас нет —

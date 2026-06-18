@@ -22,7 +22,7 @@ from app.core.money import money
 from app.core.utils import now_utc
 from app.features.drun import attitude as drun_attitude
 from app.features.drun import memory as drun_memory
-from app.features.drun.names import name_for, resolve_names
+from app.features.drun.names import name_for, resolve_names, resolve_person_hints
 from app.models import User, WorldEvent
 
 logger = get_logger(__name__)
@@ -146,6 +146,41 @@ async def _player_assets_block(session: AsyncSession, user_id: int) -> list[str]
     return out
 
 
+def _behavior_hooks(user) -> list[str]:
+    """Поведенческие «зацепки» для подколов из уже загруженного User.
+
+    Без новых запросов: тильт в казино, серии проигрышей, активность фермы —
+    самый сочный материал для роастов, который раньше друн вообще не видел.
+    """
+    from app.core.utils import now_utc
+
+    out: list[str] = []
+    loss_streak = int(getattr(user, "casino_loss_streak", 0) or 0)
+    max_loss = int(getattr(user, "max_casino_loss", 0) or 0)
+    if loss_streak >= 3:
+        out.append(f"- В КАЗИНО ТИЛЬТ: {loss_streak} проигрышей подряд (есть чем подколоть)")
+    if max_loss >= 5000:
+        out.append(f"- Рекордный слив в казино: {max_loss} (за раз)")
+    duel_ls = int(getattr(user, "duel_loss_streak", 0) or 0)
+    if duel_ls >= 3:
+        out.append(f"- В дуэлях сыпется: {duel_ls} поражений подряд")
+    fstreak = int(getattr(user, "farm_streak", 0) or 0)
+    if fstreak >= 5:
+        out.append(f"- Фермит исправно: серия {fstreak} дней подряд")
+    last_farm = getattr(user, "last_farm_at", None)
+    if last_farm is not None:
+        try:
+            days = (now_utc() - last_farm).days
+            if days >= 3:
+                out.append(f"- НЕ ФЕРМИЛ уже {days} дн. (забил на ферму)")
+        except Exception:  # noqa: BLE001
+            pass
+    pidor = int(getattr(user, "pidor_count", 0) or 0)
+    if pidor >= 3:
+        out.append(f"- Был «пидором дня» {pidor} раз")
+    return out
+
+
 async def _player_block(session: AsyncSession, user_id: int) -> str:
     """Досье игрока: статистика + брак + ОТНОШЕНИЕ Друна к нему.
 
@@ -215,6 +250,13 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
         except Exception:  # noqa: BLE001
             logger.debug("assets block failed", exc_info=True)
 
+        # Поведенческие зацепки (тильт/серии/ферма) из уже загруженного user —
+        # без новых запросов.
+        try:
+            lines.extend(_behavior_hooks(user))
+        except Exception:  # noqa: BLE001
+            logger.debug("behavior hooks failed", exc_info=True)
+
         # Собранный портрет (личность + манера речи + темы): делает друна
         # «знающим» собеседника как человека, а не по сухим цифрам.
         try:
@@ -242,9 +284,9 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                     lines.append("- ПОЛ: женский (говори о ней в женском роде, "
                                  "это девушка — не лажай с родом)")
                 if prof.summary:
-                    lines.append(f"- ЛИЧНОСТЬ: {prof.summary}")
+                    lines.append(f"- ЛИЧНОСТЬ: {prof.summary[:400]}")
                 if prof.speech_style:
-                    lines.append(f"- МАНЕРА РЕЧИ: {prof.speech_style}")
+                    lines.append(f"- МАНЕРА РЕЧИ: {prof.speech_style[:300]}")
                 self_facts = pdata.get("self_facts") or []
                 if self_facts:
                     lines.append("- ФОНОВО ЗНАЕШЬ О НЁМ (НЕ зачитывай, НЕ "
@@ -330,6 +372,28 @@ async def _events_block(session: AsyncSession, limit: int = 6) -> str:
 
 
 async def _overview_block(session: AsyncSession) -> str:
+    """Общая картина чата с коротким TTL-кэшем.
+
+    Это глобальный, медленно меняющийся срез (топы/суммы) — но раньше он гонял
+    ~9 агрегатов по всей базе на КАЖДЫЙ ответ. Кэшируем на ``_OVERVIEW_TTL`` сек,
+    как governor/config: всплеск реплик переиспользует один снимок.
+    """
+    import time as _t
+
+    global _overview_cache
+    now = _t.monotonic()
+    if _overview_cache is not None and now - _overview_cache[0] < _OVERVIEW_TTL:
+        return _overview_cache[1]
+    block = await _overview_block_uncached(session)
+    _overview_cache = (now, block)
+    return block
+
+
+_OVERVIEW_TTL = 60.0
+_overview_cache: tuple[float, str] | None = None
+
+
+async def _overview_block_uncached(session: AsyncSession) -> str:
     """Общая картина чата: топы, богачи, бойцы, семьи, активные болтуны.
 
     Это «что вообще происходит у нас» — широкий срез базы, чтобы друн владел
@@ -453,7 +517,12 @@ async def _chat_block(session: AsyncSession, channel: str, limit: int = 24) -> s
         msgs = await drun_memory.recent_chat(session, channel=channel, limit=limit)
         if not msgs:
             return ""
-        names = await resolve_names(session, [m.user_id for m in msgs])
+        ids = [m.user_id for m in msgs]
+        names = await resolve_names(session, ids)
+        # Подсказки про пол/как-звать для ВСЕХ участников беседы (не только для
+        # текущего собеседника) — чтобы друн не путал род и имена людей,
+        # упомянутых в чате.
+        hints = await resolve_person_hints(session, ids)
         lines = [
             "# ЖИВОЙ ЧАТ ПРЯМО СЕЙЧАС (снизу — самые свежие реплики).",
             "# Прочитай и пойми НАСТРОЕНИЕ и О ЧЁМ базар, прежде чем встревать:",
@@ -461,6 +530,17 @@ async def _chat_block(session: AsyncSession, channel: str, limit: int = 24) -> s
         for m in msgs:
             who = (m.meta or {}).get("name") or name_for(names, m.user_id)
             lines.append(f"{who}: {m.content}")
+        # Кто есть кто (пол/имя) — компактным списком, без засорения каждой строки.
+        who_is_who = [
+            f"{name_for(names, uid)} ({hints[uid]})"
+            for uid in dict.fromkeys(ids)
+            if uid in hints
+        ]
+        if who_is_who:
+            lines.append(
+                "# КТО ЕСТЬ КТО (пол/как звать, не перепутай): "
+                + "; ".join(who_is_who[:12])
+            )
         lines.append("# (последняя строка выше — самое свежее в чате)")
         return "\n".join(lines)
     except Exception:  # noqa: BLE001

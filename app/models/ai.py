@@ -126,8 +126,15 @@ class AiMemory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # onupdate: при ЛЮБОМ ORM-апдейте строки (например, переподтверждение
+    # урока в reflect.py поднимает weight) колонка обновляется. Без этого
+    # ранжирование/пруунинг уроков по updated_at работали по константе
+    # (created_at), и свежеподтверждённые уроки выглядели «старыми».
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
 
     __table_args__ = (

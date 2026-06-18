@@ -27,6 +27,7 @@ from app.core.logger import get_logger
 from app.core.utils import now_utc
 from app.features.drun import memory as drun_memory
 from app.models import WorldEvent
+from app.services import world_events as _we
 
 logger = get_logger(__name__)
 
@@ -42,14 +43,21 @@ MOOD_NEUTRAL = "neutral"          # ровный фон
 
 # Окно «свежих» событий для оценки настроения.
 _EVENT_WINDOW_MIN = 90
-# Типы событий, которые тянут в «праздник» (крупный позитив).
+# Типы событий из КАНОНИЧЕСКОГО каталога (app.services.world_events). Раньше
+# тут были выдуманные имена ("casino_jackpot", "duel_lost", "ban"...), которых
+# эмиттеры не шлют — классификация настроения была наполовину мёртвой. Берём
+# реальные константы, чтобы праздник/конфликт действительно срабатывали.
+
+# Крупный позитив → «праздник».
 _CELEBRATORY_TYPES = frozenset({
-    "case_jackpot", "casino_jackpot", "treasure_found", "season_finalized",
-    "achievement_legendary", "big_win",
+    _we.EVENT_CASE_JACKPOT, _we.EVENT_TREASURE_FOUND, _we.EVENT_SEASON_ENDED,
+    _we.EVENT_CASINO_BIG_WIN, _we.EVENT_MARRIAGE_CREATED,
+    _we.EVENT_MMR_RANK_UP, _we.EVENT_CASE_GIFT_DROP, _we.EVENT_GIFT_TO_PLAYER,
 })
-# Типы-конфликты (тянут в хаос/злость).
+# Конфликты/напряжение → хаос/злость. Дуэль — единственный реально эмитируемый
+# «боевой» тип; налог друна тоже добавляет напряжения в чат.
 _CONFLICT_TYPES = frozenset({
-    "duel_won", "duel_lost", "rep_minus", "mute", "ban", "warn",
+    _we.EVENT_DUEL_WON, _we.EVENT_DRUN_TAX,
 })
 
 
@@ -94,9 +102,29 @@ _MOOD_TONE: dict[str, str] = {
 async def compute_mood(session: AsyncSession, *, channel: str = "chat") -> Mood:
     """Считает текущее настроение друна из реальной обстановки.
 
-    Полностью детерминированно и дёшево (пара агрегатных запросов). Любой сбой
-    блока деградирует к нейтральному фону, не валя ответ.
+    Полностью детерминированно и дёшево, НО раньше било 2 запроса (chat-count +
+    скан 120 событий) на КАЖДЫЙ ответ. Кэшируем на ``_MOOD_TTL`` сек по каналу —
+    настроение между соседними репликами почти не меняется (как governor).
+    Любой сбой блока деградирует к нейтральному фону, не валя ответ.
     """
+    import time as _t
+
+    cached = _mood_cache.get(channel)
+    if cached is not None and _t.monotonic() - cached[0] < _MOOD_TTL:
+        return cached[1]
+    mood = await _compute_mood_uncached(session, channel=channel)
+    _mood_cache[channel] = (_t.monotonic(), mood)
+    return mood
+
+
+_MOOD_TTL = 45.0
+_mood_cache: dict[str, tuple[float, "Mood"]] = {}
+
+
+async def _compute_mood_uncached(
+    session: AsyncSession, *, channel: str = "chat"
+) -> Mood:
+    """Собственно расчёт настроения (без кэша)."""
     try:
         hot = await drun_memory.recent_chat_count(
             session, channel=channel, seconds=300
