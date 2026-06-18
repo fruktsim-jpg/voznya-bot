@@ -117,7 +117,9 @@ async def _openai_chat(
     payload: dict[str, Any] = {
         "model": model,
         "temperature": cfg.temperature,
-        "max_tokens": cfg.max_tokens,
+        # Шлюзы (wellflow и др.) ограничивают max_tokens сверху (док: 2048).
+        # Клампим, чтобы не упереться в лимит и не получить 400 на больших значениях.
+        "max_tokens": min(int(cfg.max_tokens), 2048),
         "messages": [{"role": "system", "content": system}, *messages],
     }
     headers = {
