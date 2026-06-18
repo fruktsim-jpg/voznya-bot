@@ -15,11 +15,8 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.logger import get_logger
 from app.models import AppSetting
 from app.settings import dynamic as dyn
-
-logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,11 +62,6 @@ _WRITABLE: dict[str, SettingSpec] = {
 def is_writable(key: str) -> bool:
     """Разрешён ли ключ к записи друном."""
     return key in _WRITABLE
-
-
-def known_keys() -> list[str]:
-    """Список управляемых ключей (для каталога в промпте/диагностики)."""
-    return list(_WRITABLE)
 
 
 def _coerce(spec: SettingSpec, raw) -> object | None:

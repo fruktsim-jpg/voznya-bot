@@ -203,11 +203,33 @@ async def pulse_stats(
         .where(AiMessage.role == "chat")
         .where(AiMessage.created_at >= since)
     ).subquery()
-    total = await session.scalar(select(func.count()).select_from(base))
-    speakers = await session.scalar(
-        select(func.count(func.distinct(base.c.user_id))).select_from(base)
+    # Оба агрегата за один проход/round-trip по тому же окну.
+    row = (
+        await session.execute(
+            select(func.count(), func.count(func.distinct(base.c.user_id)))
+            .select_from(base)
+        )
+    ).one()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+async def bot_replies_in_window(
+    session: AsyncSession, *, channel: str = "chat", minutes: int = 15
+) -> int:
+    """Сколько раз друн (role='assistant') отвечал за окно ``minutes`` минут.
+
+    Единый источник семантики «реплика бота» (role='assistant') — чтобы
+    governor не держал свою копию COUNT-запроса и не разошёлся при смене схемы.
+    """
+    since = now_utc() - timedelta(minutes=max(1, minutes))
+    total = await session.scalar(
+        select(func.count())
+        .select_from(AiMessage)
+        .where(AiMessage.channel == channel)
+        .where(AiMessage.role == "assistant")
+        .where(AiMessage.created_at >= since)
     )
-    return int(total or 0), int(speakers or 0)
+    return int(total or 0)
 
 
 # --- Долгосрочная память (факты) --------------------------------------------

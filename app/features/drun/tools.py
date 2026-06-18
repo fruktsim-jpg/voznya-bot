@@ -465,29 +465,14 @@ async def set_app_setting(
 async def set_eshki_multiplier(
     session: AsyncSession, *, owner_id: int, value: float,
 ) -> ToolResult:
-    """Ставит глобальный множитель заработка ешек (предохранитель: 0.1..5x)."""
-    from app.models import AppSetting
-    from app.settings import dynamic as dyn
+    """Ставит глобальный множитель заработка ешек (эконом-ивент).
 
-    value = max(0.1, min(5.0, float(value)))
-    row = await session.get(AppSetting, "modifier.eshki")
-    if row is None:
-        session.add(
-            AppSetting(key="modifier.eshki", value=value, category="economy")
-        )
-    else:
-        row.value = value
-    try:
-        dyn.invalidate_cache()
-    except Exception:  # noqa: BLE001
-        pass
-    await _audit(
-        session, owner_id, "owner_eshki_multiplier", None,
-        f"множитель ешек ×{value}", {"value": value},
-    )
-    return ToolResult(
-        ok=True, summary=f"множитель заработка ешек теперь ×{value:g}",
-        meta={"value": value},
+    Тонкая обёртка над :func:`set_app_setting`: единый источник правды для
+    ключа ``modifier.eshki`` (кламп/категория/запись) — в admin_controls, чтобы
+    тулы ``multiplier`` и ``set_param`` не расходились в лимитах.
+    """
+    return await set_app_setting(
+        session, owner_id=owner_id, key="modifier.eshki", value=value
     )
 
 

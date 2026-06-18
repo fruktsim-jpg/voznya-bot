@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from enum import Enum
 
@@ -111,15 +112,21 @@ async def assess(
 ) -> Verdict:
     """Снимает метрики окна и возвращает вердикт. Сбой — безопасный NORMAL.
 
-    ``bot_directed`` приближаем числом ответов друна за окно: каждый ответ —
-    это реакция на обращение к нему, так что отношение «ответы / реплики чата»
-    хорошо ловит ситуацию «один висит на боте». Дёшево, без новых полей в БД.
+    Результат кэшируется на ``_CACHE_TTL`` секунд на канал: ``respond`` зовёт
+    assess на КАЖДУЮ реплику, а пульс чата между соседними сообщениями почти не
+    меняется — нет смысла гонять COUNT-запросы на каждое сообщение. Автопостер
+    (раз в 7 мин) кэш просто не успевает переиспользовать — и не должен.
     """
+    cached = _cache_get(channel)
+    if cached is not None:
+        return cached
     try:
         total, speakers = await drun_memory.pulse_stats(
             session, channel=channel, minutes=minutes
         )
-        bot_directed = await _bot_replies_in_window(
+        # Прокси «обращений к боту»: число его ответов за окно (единый helper в
+        # memory — семантика role='assistant' живёт там, без дубля запроса тут).
+        bot_directed = await drun_memory.bot_replies_in_window(
             session, channel=channel, minutes=minutes
         )
         verdict = classify(total, speakers, bot_directed)
@@ -127,6 +134,7 @@ async def assess(
             "governor pulse=%s msgs=%d speakers=%d bot=%d",
             verdict.pulse.value, total, speakers, bot_directed,
         )
+        _cache_put(channel, verdict)
         return verdict
     except Exception:  # noqa: BLE001
         logger.debug("governor assess failed; defaulting NORMAL", exc_info=True)
@@ -136,23 +144,21 @@ async def assess(
         )
 
 
-async def _bot_replies_in_window(
-    session: AsyncSession, *, channel: str, minutes: int
-) -> int:
-    """Сколько раз друн отвечал за окно (прокси для «обращений к боту»)."""
-    from datetime import timedelta
+# Короткий процессный кэш вердикта на канал, чтобы не бить COUNT-ами на каждую
+# реплику в хот-пути. TTL мал: всплеск сообщений переиспользует один снимок.
+_CACHE_TTL = 30.0
+_verdict_cache: dict[str, tuple[float, Verdict]] = {}
 
-    from sqlalchemy import func, select
 
-    from app.core.utils import now_utc
-    from app.models import AiMessage
+def _cache_get(channel: str) -> Verdict | None:
+    hit = _verdict_cache.get(channel)
+    if hit is None:
+        return None
+    ts, verdict = hit
+    if time.monotonic() - ts >= _CACHE_TTL:
+        return None
+    return verdict
 
-    since = now_utc() - timedelta(minutes=max(1, minutes))
-    total = await session.scalar(
-        select(func.count())
-        .select_from(AiMessage)
-        .where(AiMessage.channel == channel)
-        .where(AiMessage.role == "assistant")
-        .where(AiMessage.created_at >= since)
-    )
-    return int(total or 0)
+
+def _cache_put(channel: str, verdict: Verdict) -> None:
+    _verdict_cache[channel] = (time.monotonic(), verdict)
