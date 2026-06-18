@@ -62,14 +62,16 @@ class LlmError(RuntimeError):
 
 
 def _is_anthropic(base_url: str, model: str) -> bool:
-    """Anthropic-формат (``/v1/messages``) определяем по URL ИЛИ по модели.
+    """Anthropic-формат (``/v1/messages``) — ТОЛЬКО для настоящего Anthropic API.
 
-    Многие прокси/шлюзы отдают Claude по адресу без слова «anthropic», но сам
-    запрос всё равно обязан идти в Anthropic-формате — модель ``claude-*``
-    доступна только через ``/v1/messages``. Поэтому ориентируемся ещё и на имя
-    модели.
+    Шлюзы вроде wellflow отдают ВСЁ (включая ``claude-*``) через
+    OpenAI-совместимый ``/v1/chat/completions``. Раньше мы роутили по имени
+    модели (``claude-*`` → ``/v1/messages``), и запросы к таким шлюзам зависали:
+    у них нет Anthropic-эндпоинта. Поэтому Anthropic-формат включаем строго по
+    URL настоящего api.anthropic.com; всё остальное — OpenAI-совместимо.
     """
-    return "anthropic" in base_url.lower() or "claude" in model.lower()
+    host = base_url.lower()
+    return "api.anthropic.com" in host or "anthropic" in host
 
 
 async def chat(
