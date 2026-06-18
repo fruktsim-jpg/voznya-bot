@@ -65,7 +65,7 @@ DEFAULTS: dict[str, Any] = {
     KEY_BASE_URL: "https://api.openai.com/v1",
     KEY_API_KEY: "",
     KEY_MODEL: "gpt-4o-mini",
-    KEY_FAST_MODEL: "",
+    KEY_FAST_MODEL: "gemini-3.5-flash",
     KEY_MODELS_BY_ROLE: {},
     KEY_TEMPERATURE: 0.9,
     KEY_MAX_TOKENS: 600,
@@ -125,12 +125,12 @@ ALL_ROLES = (
 # (RECOMMENDED_ROLE_MODELS) — при правке моделей синхронизируй оба места.
 DEFAULT_ROLE_MODELS: dict[str, str] = {
     ROLE_NARRATOR: "claude-opus-4-8",        # живой голос — самая сильная
-    ROLE_MEMORY_EXTRACT: "gpt-5.4-mini",     # дёшево и быстро, много вызовов
+    ROLE_MEMORY_EXTRACT: "gemini-3.5-flash", # дёшево и быстро, много вызовов
     ROLE_MEMORY_SUMMARY: "claude-haiku-4-5", # компактные портреты
-    ROLE_EVENT_ANALYSIS: "gpt-5.4-mini",     # анализ событий
-    ROLE_PLANNING: "gpt-5.4",                # точный разбор команд в JSON
-    ROLE_VISION: "gpt-5.5",                  # мультимодальность (надёжно, RU)
-    ROLE_MODERATION: "claude-sonnet-4-6",    # взвешенные модерац-решения
+    ROLE_EVENT_ANALYSIS: "gpt-5.5",          # анализ событий/экономики (умнее)
+    ROLE_PLANNING: "gpt-5.5",                # точный разбор команд в JSON
+    ROLE_VISION: "gemini-3.1-pro-preview",   # мультимодальность (сильная, RU)
+    ROLE_MODERATION: "claude-opus-4-8",      # взвешенные модерац-решения
 }
 
 

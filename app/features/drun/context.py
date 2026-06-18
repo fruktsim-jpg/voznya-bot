@@ -257,6 +257,40 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
         except Exception:  # noqa: BLE001
             logger.debug("behavior hooks failed", exc_info=True)
 
+        # Денежные движения игрока за неделю (нафармил/просадил/поднял) — друн
+        # видит, ЧЕМ человек живёт, и бьёт точечно вместо общих фраз.
+        try:
+            from app.features.drun import economy as drun_economy
+
+            money_line = await drun_economy.player_money_digest(
+                session, user_id, days=7
+            )
+            if money_line:
+                lines.append(money_line)
+            # Соц-граф: с кем игрок чаще всего пересекается (дуэли/подарки).
+            rel_raw = await drun_economy.player_relations_digest(
+                session, user_id, days=14
+            )
+            if rel_raw.startswith("RELATIONS:"):
+                pairs = []
+                for chunk in rel_raw[len("RELATIONS:"):].split(","):
+                    uid_s, _, n_s = chunk.partition(":")
+                    try:
+                        pairs.append((int(uid_s), int(n_s)))
+                    except ValueError:
+                        continue
+                if pairs:
+                    rnames = await resolve_names(session, [u for u, _ in pairs])
+                    rel_bits = [
+                        f"{name_for(rnames, u)} ({n})" for u, n in pairs
+                    ]
+                    lines.append(
+                        "- Чаще всего пересекается (дуэли/подарки): "
+                        + ", ".join(rel_bits)
+                    )
+        except Exception:  # noqa: BLE001
+            logger.debug("player money digest failed", exc_info=True)
+
         # Собранный портрет (личность + манера речи + темы): делает друна
         # «знающим» собеседника как человека, а не по сухим цифрам.
         try:
@@ -391,6 +425,30 @@ async def _overview_block(session: AsyncSession) -> str:
 
 _OVERVIEW_TTL = 60.0
 _overview_cache: tuple[float, str] | None = None
+
+
+_ECONOMY_TTL = 120.0
+_economy_cache: tuple[float, str] | None = None
+
+
+async def _economy_block(session: AsyncSession) -> str:
+    """Экономическое чутьё: потоки ешек в чате (эмиссия/сток/инфляция).
+
+    Дорогой агрегат по transactions — кэшируем на ``_ECONOMY_TTL`` сек (как
+    overview). Друн видит ДВИЖЕНИЕ денег, а не статичные балансы, и может вести
+    себя как хозяин казны: комментировать жадность казино, активность фарма, etc.
+    """
+    import time as _t
+
+    global _economy_cache
+    now = _t.monotonic()
+    if _economy_cache is not None and now - _economy_cache[0] < _ECONOMY_TTL:
+        return _economy_cache[1]
+    from app.features.drun import economy as drun_economy
+
+    block = await drun_economy.chat_economy_digest(session, hours=24)
+    _economy_cache = (now, block)
+    return block
 
 
 async def _overview_block_uncached(session: AsyncSession) -> str:
@@ -702,6 +760,7 @@ async def build_context(
         blocks.append(await _chat_block(session, channel, limit=chat_limit))
     blocks.append(await _memory_block(session, subject_id, query))
     blocks.append(await _overview_block(session))
+    blocks.append(await _economy_block(session))
     blocks.append(await _season_block(session))
     if include_events:
         blocks.append(await _events_block(session))
