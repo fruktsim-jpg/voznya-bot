@@ -191,6 +191,7 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
     if not addressed:
         from app.features.drun import perceive as drun_perceive
 
+        text = (message.text or message.caption or "").strip()
         addressed_other = message.reply_to_message is not None
         # Лексическое решение БЕЗ обращения к БД (chat_hot=0): сигнальные ветки
         # (наезд/хвастовство/скука/вопрос/его тема) не зависят от накала чата.
