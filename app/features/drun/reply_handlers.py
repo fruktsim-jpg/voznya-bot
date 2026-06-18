@@ -184,32 +184,48 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
     )
 
     # АГЕНТНОСТЬ вместо слепой монетки: для НЕадресных реплик друн «решает», а
-    # не бросает кубик. Слой восприятия (perceive) по тексту и накалу чата
-    # выбирает намерение (подколоть/поддержать/подлить движа/смолчать) и силу
-    # позыва. Молчание — это тоже решение, и обычно правильное.
+    # не бросает кубик. Слой восприятия (perceive) по тексту выбирает намерение
+    # (подколоть/поддержать/подлить движа/смолчать) и силу позыва. Молчание —
+    # это тоже решение, и обычно правильное.
     engagement = None
     if not addressed:
         from app.features.drun import perceive as drun_perceive
 
-        chat_hot = await drun_memory.recent_chat_count(
-            session, channel="chat", seconds=180
-        )
         addressed_other = message.reply_to_message is not None
+        # Лексическое решение БЕЗ обращения к БД (chat_hot=0): сигнальные ветки
+        # (наезд/хвастовство/скука/вопрос/его тема) не зависят от накала чата.
         engagement = drun_perceive.decide_engagement(
             text,
-            chat_hot=chat_hot,
+            chat_hot=0,
             mentions_drun_topic=drun_perceive.mentions_drun_topic(text),
             addressed_other=addressed_other,
         )
         if not engagement.wants_in:
-            return
-        # Сила позыва × настройка частоты = вероятность реально вставить слово.
-        # Так сильные сигналы (наезд/скука) проходят почти всегда, а слабые
-        # (просто оживлённый чат) — редко, и общий темп регулируется одной
-        # ручкой random_butt_in_chance, но уже осмысленно, а не вслепую.
-        gate = engagement.urge * (1.0 + max(0.0, cfg.random_butt_in_chance) * 4.0)
-        if random.random() >= min(0.95, gate):
-            return
+            # Нет явного сигнала — остаётся лишь «тонкий вкид в оживлённый чат».
+            # Этот путь даёт слабый позыв (urge≈0.15), поэтому СНАЧАЛА дешёвый
+            # бросок монетки (как раньше — чтобы не бить COUNT-ом в БД на каждое
+            # сообщение), и только если он прошёл — подтверждаем накал чата.
+            if random.random() >= max(0.0, cfg.random_butt_in_chance):
+                return
+            chat_hot = await drun_memory.recent_chat_count(
+                session, channel="chat", seconds=180
+            )
+            if chat_hot < 6:
+                return
+            engagement = drun_perceive.decide_engagement(
+                text, chat_hot=chat_hot,
+                mentions_drun_topic=drun_perceive.mentions_drun_topic(text),
+                addressed_other=addressed_other,
+            )
+            if not engagement.wants_in:
+                return
+        else:
+            # Явный сигнал есть. Сила позыва × частота = вероятность вставить
+            # слово: сильные сигналы (наезд/скука) проходят почти всегда, слабые
+            # реже; общий темп регулируется одной ручкой random_butt_in_chance.
+            gate = engagement.urge * (1.0 + max(0.0, cfg.random_butt_in_chance) * 4.0)
+            if random.random() >= min(0.95, gate):
+                return
 
     # Дневной кап — предел расходов/спама на АВТОНОМНЫЕ вкиды. Адресные
     # обращения (reply/упоминание/имя) кап НЕ глушит: если человек прямо

@@ -72,9 +72,14 @@ async def capture_chat(
     if reply_to_bot:
         meta["reply_to_bot"] = True
     if reply_to_name:
-        meta["reply_to"] = reply_to_name[:64]
+        # reply_to_name — ник чужого сообщения (недоверенный источник), reply_excerpt
+        # — текст процитированной реплики. Оба рендерятся в _chat_block и уходят в
+        # LLM, поэтому калечим econ-директивы так же, как основной content (иначе
+        # дыра в defense-in-depth: [[econ:...]] могло бы доехать в контекст через
+        # цитату/ник в обход санитайзинга).
+        meta["reply_to"] = sanitize_user_text(reply_to_name)[:64]
     if reply_excerpt:
-        meta["reply_excerpt"] = reply_excerpt.strip()[:120]
+        meta["reply_excerpt"] = sanitize_user_text(reply_excerpt.strip())[:120]
     msg = AiMessage(
         role="chat",
         content=text or f"[{media}]",

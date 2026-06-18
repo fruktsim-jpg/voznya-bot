@@ -27,6 +27,12 @@ def test_bragging_triggers_roast():
     assert e.intent is Intent.ROAST
 
 
+def test_jackpot_triggers_hype():
+    e = perceive.decide_engagement("занёс джекпот, иксы пошли", chat_hot=2)
+    assert e.intent is Intent.HYPE
+    assert e.wants_in
+
+
 def test_distress_triggers_support():
     e = perceive.decide_engagement("всё хреново, заебало это казино", chat_hot=2)
     assert e.intent is Intent.SUPPORT
