@@ -287,7 +287,12 @@ async def generate(
             facts = await drun_ask.resolve(session, text)
         except Exception:  # noqa: BLE001
             logger.warning("drun ask.resolve failed", exc_info=True)
-            await _heal_if_poisoned(session)
+        # Безусловно лечим транзакцию после сверки. Хелперы tools_read глотают
+        # свои SQL-ошибки внутри, поэтому savepoint в ask.resolve может не
+        # откатиться, а RELEASE на отравленной транзакции тихо её не починит
+        # (INCIDENT 2026-06-18 part 4). Без этого heal отравленная транзакция
+        # доехала бы до econ.apply/add_message ниже и уронила хэндлер.
+        await _heal_if_poisoned(session)
         if facts:
             # Чистим черновик от директив, отдаём модели факты и просим
             # финальную реплику. messages уже содержит контекст+задание; добавляем

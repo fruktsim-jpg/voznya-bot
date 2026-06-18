@@ -80,8 +80,11 @@ def parse_all(text: str) -> list[AskDirective]:
     return out
 
 
-# Метрики, которые умеет ранжировать tools_read (для валидации arg).
-_VALID_METRICS = {"balance", "mmr", "season_mmr", "messages", "duels_won", "pidor"}
+# Метрики, которые умеет ранжировать tools_read И которые проиндексированы в
+# users (balance/mmr/season_mmr — index=True в models/user.py). Намеренно НЕ
+# пускаем сюда messages/duels_won/pidor: их колонки без индекса, а get_rank/
+# get_top делают COUNT/ORDER по таблице — на горячем пути ответа это seq-scan.
+_VALID_METRICS = {"balance", "mmr", "season_mmr"}
 
 
 async def _resolve_one(session: AsyncSession, d: AskDirective) -> str:
