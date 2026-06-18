@@ -95,19 +95,42 @@ async def add_message(
 
 
 async def prune_old_messages(
-    session: AsyncSession, *, days: int = _MESSAGES_RETENTION_DAYS
+    session: AsyncSession,
+    *,
+    days: int = _MESSAGES_RETENTION_DAYS,
+    batch_size: int = 5000,
+    max_batches: int = 20,
 ) -> int:
     """Удаляет краткосрочную историю старше ``days`` дней. Commit — на вызывающем.
 
     ``ai_messages`` — самая высоконагруженная таблица (каждое сообщение чата), а
     все её чтения оконные (минуты/последние N строк). Без ретенции она растёт
-    без предела и замедляет каждый оконный COUNT/scan. Возвращает число удалённых.
+    без предела и замедляет каждый оконный COUNT/scan.
+
+    Удаляем ПАЧКАМИ (по ``batch_size`` строк, не более ``max_batches`` за вызов):
+    на первом запуске таблица может быть огромной и без ретенции копилась долго —
+    единый ``DELETE`` залочил бы таблицу надолго и раздул транзакцию/WAL. За один
+    тик чистим ограниченный объём, остаток догоняется на следующих прогонах джобы.
+    Возвращает число удалённых строк.
     """
     cutoff = now_utc() - timedelta(days=max(1, days))
-    result = await session.execute(
-        delete(AiMessage).where(AiMessage.created_at < cutoff)
-    )
-    return int(result.rowcount or 0)
+    total = 0
+    for _ in range(max(1, max_batches)):
+        # Подзапрос с LIMIT: удаляем порцию по первичному ключу, чтобы не держать
+        # длинный лок на весь матч предиката за один statement.
+        ids_subq = (
+            select(AiMessage.id)
+            .where(AiMessage.created_at < cutoff)
+            .limit(batch_size)
+        )
+        result = await session.execute(
+            delete(AiMessage).where(AiMessage.id.in_(ids_subq))
+        )
+        deleted = int(result.rowcount or 0)
+        total += deleted
+        if deleted < batch_size:
+            break
+    return total
 
 
 async def recent_messages(
