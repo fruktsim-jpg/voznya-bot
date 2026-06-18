@@ -41,6 +41,14 @@ def test_filter_strips_leaked_reply_prefix():
     assert drun_filter.clean("слушай: это база") == "слушай: это база"
 
 
+def test_filter_strips_leaked_addressee_tag():
+    # Тег адресата из истории диалога «[ты отвечал Имя]:» не должен протечь.
+    assert drun_filter.clean("[ты отвечал Петя]: здарова") == "здарова"
+    assert drun_filter.clean("[ты отвечал Коту] ну чё") == "ну чё"
+    # Квадратные скобки в обычном тексте не трогаем.
+    assert drun_filter.clean("[важно] читай это") == "[важно] читай это"
+
+
 def test_world_events_severity_catalog_is_consistent():
     # Каждый известный тип имеет severity, и она в диапазоне 0..3.
     for name, value in vars(we).items():

@@ -42,6 +42,11 @@ def clean(text: str, *, max_chars: int = 600) -> str:
     out = re.sub(
         r"^\(?\s*ты\s+ответил[^)\n:]*\)?\s*:\s*", "", out, flags=re.IGNORECASE
     ).strip()
+    # Тег адресата из истории диалога («[ты отвечал Имя]: …») — служебный, в
+    # видимом ответе ему не место, если модель его скопировала.
+    out = re.sub(
+        r"^\[\s*ты\s+отвечал[^\]\n]*\]\s*:?\s*", "", out, flags=re.IGNORECASE
+    ).strip()
     out = re.sub(r"^(меллстрой|друн|drun)\s*:\s*", "", out, flags=re.IGNORECASE).strip()
     if len(out) >= 2 and out[0] in {'"', "«", "'"} and out[-1] in {'"', "»", "'"}:
         out = out[1:-1].strip()

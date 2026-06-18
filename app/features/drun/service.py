@@ -121,11 +121,17 @@ async def generate(
             # memory_user_content). Оставляем как есть — модель видит автора.
             messages.append({"role": "user", "content": m.content})
         elif m.role == "assistant":
-            # Кладём ЧИСТУЮ реплику друна без служебных пометок. Раньше тут был
-            # префикс «(ты ответил X):» — но модель копировала его в новые
-            # ответы, и он протекал в чат. Адресат и так виден из префиксов
-            # «Имя: текст» у предыдущих user-ходов, отдельная пометка не нужна.
-            messages.append({"role": "assistant", "content": m.content})
+            # Помечаем, КОМУ друн отвечал в этом ходе: в диалоге участвуют
+            # РАЗНЫЕ люди, и без адресата модель путает контексты («сказал
+            # Васе „иди спать“» → новому собеседнику «ты же спать ушёл»).
+            # Тег служебный, в квадратных скобках; если модель его скопирует в
+            # видимый ответ — срежет пост-фильтр (см. filter.clean).
+            to_name = (m.meta or {}).get("to_name")
+            content = (
+                f"[ты отвечал {to_name}]: {m.content}"
+                if to_name else m.content
+            )
+            messages.append({"role": "assistant", "content": content})
     user_content = (f"{ctx}\n\n# ЗАДАНИЕ\n{task}" if ctx else task).strip()
     messages.append({"role": "user", "content": user_content})
 
