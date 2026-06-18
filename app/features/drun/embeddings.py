@@ -339,13 +339,20 @@ async def save_embeddings_bulk(
 
     Использует ``UPDATE ... FROM (VALUES ...)`` с явным CAST в vector;
     параметры именованные, инъекции невозможны.
+
+    INCIDENT 2026-06-18: без CAST(:id AS bigint) asyncpg/драйвер биндил
+    параметр как text (внутри VALUES контекста нет колонки-цели для
+    инференса типа), и `WHERE m.id = v.id` падал с
+    ``operator does not exist: bigint = text``. Явный CAST обоих
+    параметров фиксирует типы строк VALUES однозначно — id как bigint,
+    emb как vector — и пайплайн backfill снова доезжает до commit.
     """
     if not pairs:
         return
     parts: list[str] = []
     params: dict[str, Any] = {}
     for i, (mid, vec) in enumerate(pairs):
-        parts.append(f"(:id{i}, CAST(:v{i} AS vector))")
+        parts.append(f"(CAST(:id{i} AS bigint), CAST(:v{i} AS vector))")
         params[f"id{i}"] = int(mid)
         params[f"v{i}"] = _vector_literal(vec)
     sql = (
