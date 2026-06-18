@@ -88,12 +88,17 @@ async def apply_if_any(
     target_id: int | None,
     text: str,
     asker_id: int | None = None,
+    intent_kind: str | None = None,
 ) -> econ.EconResult | None:
     """Если в тексте есть директива и власть включена — применяет её.
 
     Возвращает результат применения (или None, если директивы нет/нет цели).
     Вырезание директивы из видимого текста — отдельным вызовом ``strip_directives``
     на стороне сервиса.
+
+    ``intent_kind`` пробрасывается в meta транзакции (audit trail): чтобы
+    по логам можно было понять, директива пришла от ROAST/HYPE-сигнала или
+    модель сама решила вкатить налог без явного повода.
     """
     if not cfg.econ_enabled or target_id is None:
         return None
@@ -108,9 +113,10 @@ async def apply_if_any(
         requested_amount=action.amount,
         note=action.note,
         asker_id=asker_id,
+        intent_kind=intent_kind,
     )
     logger.info(
-        "drun action parsed kind=%s amount=%s applied_ok=%s reason=%s",
-        action.kind, action.amount, result.ok, result.reason,
+        "drun action parsed kind=%s amount=%s intent=%s applied_ok=%s reason=%s",
+        action.kind, action.amount, intent_kind or "-", result.ok, result.reason,
     )
     return result

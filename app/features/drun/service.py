@@ -56,6 +56,37 @@ _DEFAULT_REPLY = (
 )
 
 
+# --- Связь восприятия с экономической властью --------------------------------
+# Карта intent → подсказка модели «можешь применить ешко-выходку». Это НЕ
+# приказ: модель сама решает, вставлять директиву ``[[econ:...]]`` или нет.
+# Подсказка появляется в задании только при включённом ``econ_enabled``; вся
+# фактическая защита (cap, clamp, cooldown, daily_cap, self-grant block) сидит
+# в econ.apply и сработает даже если модель попросит что-то безумное.
+_ECON_HINT_BY_INTENT: dict[str, str] = {
+    "roast": (
+        "собеседник нарывается/хвастается/наезжает — если уместно, можешь "
+        "вкатить налог: вставь на отдельной строке "
+        "`[[econ:tax:N:за что]]`, где N — небольшая сумма ешек."
+    ),
+    "hype": (
+        "крупный куш/иксы у собеседника — если в образе уместно, можешь "
+        "накинуть сверху подачку как ведущий движа: вставь на отдельной "
+        "строке `[[econ:grant:N:за что]]`."
+    ),
+    "support": (
+        "человек скис/жалуется — РЕДКО, если в образе, можешь кинуть "
+        "копеечную подачку из жалости: `[[econ:grant:N:по жалости]]`."
+    ),
+}
+
+
+def _econ_hint_for_intent(intent_kind: str | None) -> str:
+    """Возвращает подсказку для модели по эконом-выходке (или пусто)."""
+    if not intent_kind:
+        return ""
+    return _ECON_HINT_BY_INTENT.get(intent_kind.lower(), "")
+
+
 @dataclass
 class GenerateResult:
     """Результат генерации реплики друна."""
@@ -83,6 +114,7 @@ async def generate(
     allow_actions: bool = False,
     role: str | None = None,
     query: str | None = None,
+    intent_kind: str | None = None,
 ) -> GenerateResult:
     """Генерирует одну реплику друна под конкретное задание ``task``.
 
@@ -153,7 +185,8 @@ async def generate(
     econ_result = None
     if allow_actions and cfg.econ_enabled:
         econ_result = await drun_actions.apply_if_any(
-            session, cfg=cfg, target_id=subject_id, text=text, asker_id=subject_id
+            session, cfg=cfg, target_id=subject_id, text=text, asker_id=subject_id,
+            intent_kind=intent_kind,
         )
     if drun_actions.parse(text) is not None:
         text = drun_actions.strip_directives(text)
@@ -193,6 +226,7 @@ async def observe(
     subject_id: int | None = None,
     channel: str = "chat",
     intent_note: str | None = None,
+    intent_kind: str | None = None,
 ) -> GenerateResult:
     """Спонтанное встревание друна в живой чат (не ответ на обращение).
 
@@ -200,6 +234,9 @@ async def observe(
     влезает (подколоть/поддержать/подлить движа/...). Без неё это просто живой
     вкид по настроению чата. С ней — целенаправленное социальное действие,
     что и делает друна агентом, а не генератором случайных реплик.
+
+    ``intent_kind`` — машинный код интента (roast/hype/...); пробрасывается
+    дальше в эконом-выходку как audit trail (см. econ.apply meta).
     """
     task = await drun_config.get_prompt(
         session, drun_config.PROMPT_OBSERVATION, _DEFAULT_OBSERVATION
@@ -209,7 +246,8 @@ async def observe(
             f"{task}\n\n# ТВОЁ НАМЕРЕНИЕ СЕЙЧАС (действуй по нему): {intent_note}"
         )
     return await generate(
-        session, task=task, subject_id=subject_id, channel=channel
+        session, task=task, subject_id=subject_id, channel=channel,
+        intent_kind=intent_kind,
     )
 
 
@@ -241,6 +279,8 @@ async def respond(
     text: str,
     channel: str = "chat",
     reply_context: str | None = None,
+    intent_note: str | None = None,
+    intent_kind: str | None = None,
 ) -> GenerateResult:
     """Ответ друна на обращение игрока в чате (по контексту беседы).
 
@@ -248,6 +288,13 @@ async def respond(
     (его собственную реплику друна или чужую), сюда кладётся её текст. Без
     этого друн «отвечает в пустоту» и теряет нить: человек реагирует на
     конкретную фразу, а друн видел только новый текст.
+
+    ``intent_note`` / ``intent_kind`` — направляющая от слоя восприятия
+    (perceive): зачем встревать (ROAST/HYPE/SUPPORT/...). Это и тон ответа,
+    и СИГНАЛ к эконом-выходке: при ROAST/HYPE/BRAG модель уведомляется, что
+    может (опционально) вставить ``[[econ:tax/grant:N:за что]]``. Сама
+    директива остаётся опциональной; предохранители econ.apply (cap, clamp,
+    cooldown, daily_cap, self-grant block) гарантируют безопасность.
     """
     template = await drun_config.get_prompt(
         session, drun_config.PROMPT_REPLY, _DEFAULT_REPLY
@@ -306,6 +353,17 @@ async def respond(
         f"«{safe_text}»\n"
         f"========================"
     )
+    # Подсказка по эконом-выходке: ROAST/HYPE-сигналы — это повод (но не
+    # обязанность) применить налог/подачку. Директиву ``[[econ:...]]``
+    # модель вставляет сама, если в реплике это уместно; иначе просто
+    # отвечает тоном. Подсказку даём ТОЛЬКО при включённой власти, чтобы
+    # модель не училась выдумывать директивы вхолостую.
+    if intent_kind and cfg.econ_enabled:
+        hint = _econ_hint_for_intent(intent_kind)
+        if hint:
+            task = f"{task}\n\n# ВОЗМОЖНОЕ ДЕЙСТВИЕ: {hint}"
+    if intent_note:
+        task = f"{task}\n\n# ТОН/НАМЕРЕНИЕ: {intent_note}"
     if room_block:
         task = f"{room_block}\n\n{task}"
     if web_block:
@@ -321,6 +379,7 @@ async def respond(
         memory_kind="reply",
         allow_actions=True,
         query=safe_text,
+        intent_kind=intent_kind,
     )
 
 

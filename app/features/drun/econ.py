@@ -76,6 +76,7 @@ async def apply(
     requested_amount: int,
     note: str = "",
     asker_id: int | None = None,
+    intent_kind: str | None = None,
 ) -> EconResult:
     """Применяет налог/подачку с соблюдением всех предохранителей.
 
@@ -84,6 +85,10 @@ async def apply(
     :param note: короткая причина «за что» (для леджера и события).
     :param asker_id: кто обратился; подачку самому себе запрещаем (анти-абуз
         через эхо директивы в чужом вводе).
+    :param intent_kind: какой ``perceive.Intent`` спровоцировал реплику
+        (roast/hype/support/...). Кладём в meta для аудита — чтобы по
+        транзакции можно было понять, откуда пришла эконом-выходка
+        (от ROAST на хвастовство vs от случайной директивы модели).
     """
     if not cfg.econ_enabled:
         return EconResult(ok=False, reason="disabled")
@@ -131,6 +136,8 @@ async def apply(
         event_type = world_events.EVENT_DRUN_GRANT
 
     meta = {"kind": kind, "note": note[:200], "requested": int(requested_amount)}
+    if intent_kind:
+        meta["intent"] = str(intent_kind)[:32]
     try:
         updated = await economy.change_balance(
             session, target_id, signed, reason, meta, allow_negative=False

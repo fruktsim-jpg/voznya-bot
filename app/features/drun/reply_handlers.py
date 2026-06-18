@@ -322,12 +322,26 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
         # Прямое обращение — отвечаем НА КОНКРЕТНУЮ реплику человека. Если это
         # реплай на сообщение друна — даём ему текст той реплики как нить.
         reply_ctx = _reply_excerpt(message) if _is_reply_to_bot(message, bot_id) else None
+        # Восприятие и для АДРЕСНОГО обращения: ROAST/HYPE-сигналы (хвастовство,
+        # джекпот, наезд) — это повод друну подумать про эконом-выходку
+        # (налог/подачку), а не только генерить тон. Сама директива остаётся
+        # ОПЦИОНАЛЬНОЙ — модель решает, вставлять её или нет; econ.apply имеет
+        # все предохранители (cap/cooldown/clamp), поэтому подсказка безопасна.
+        from app.features.drun import perceive as drun_perceive
+
+        addr_engagement = drun_perceive.decide_engagement(
+            text, chat_hot=0,
+            mentions_drun_topic=drun_perceive.mentions_drun_topic(text),
+            addressed_other=False,
+        )
         result = await drun_service.respond(
             session,
             asker_id=user.id,
             asker_name=_display_name(message),
             text=text,
             reply_context=reply_ctx,
+            intent_note=addr_engagement.reason if addr_engagement.wants_in else None,
+            intent_kind=addr_engagement.intent.value if addr_engagement.wants_in else None,
         )
     else:
         # Спонтанное встревание по решению восприятия. Передаём НАМЕРЕНИЕ
@@ -336,6 +350,7 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
             session,
             subject_id=user.id,
             intent_note=engagement.reason if engagement else None,
+            intent_kind=engagement.intent.value if engagement else None,
         )
     if not result.ok:
         return
