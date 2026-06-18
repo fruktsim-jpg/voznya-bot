@@ -133,20 +133,61 @@ async def generate(
     if not cfg.usable:
         return GenerateResult(ok=False, error="disabled")
 
-    system = await drun_persona.build_system_prompt(
-        session, econ_enabled=(allow_actions and cfg.econ_enabled)
-    )
-    ctx = await drun_context.build_context(
-        session,
-        subject_id=subject_id,
-        include_events=include_events,
-        channel=channel,
-        include_chat=include_chat,
-        chat_limit=chat_limit,
-        query=query,
-    )
+    # SAVEPOINT-изоляция фазы сборки промпта (INCIDENT 2026-06-18 part 3).
+    #
+    # build_system_prompt и build_context — десятки SQL-запросов через 28+
+    # «best-effort» try/except в context.py, persona.py и helpers (overview,
+    # memory_block, mmr, economy, events и т.д.). Каждый из них ловит все
+    # Exception и тихо возвращает пустую строку — НО при этом session общая
+    # с хэндлером. Если SQL внутри помощника падает (schema drift, FK,
+    # deadlock, прерванная коннекция, отсутствие fact_tsv/pg_trgm/vector,
+    # любая другая DBAPIError), без rollback транзакция в asyncpg уходит в
+    # InFailedSQLTransactionError — и СЛЕДУЮЩИЙ SELECT (recent_messages на
+    # стр. 149) валит весь хэндлер с «current transaction is aborted».
+    #
+    # Расставлять savepoint в каждом из 28 мест — шумно и легко забыть.
+    # Вместо этого оборачиваем ВСЮ фазу сборки промпта одним savepoint:
+    # любая ошибка внутри (даже в самой глубокой ветке helpers) роллбэчит
+    # ТОЛЬКО savepoint, внешняя транзакция остаётся чистой, generate
+    # продолжает работу — просто без вклада упавшего блока.
+    #
+    # Лог WARNING (а не debug) — чтобы каскадный сбой сразу был виден,
+    # а не «исчезал» в шум, как 18.06.2026.
+    system = ""
+    ctx = ""
+    try:
+        async with session.begin_nested():
+            system = await drun_persona.build_system_prompt(
+                session, econ_enabled=(allow_actions and cfg.econ_enabled)
+            )
+            ctx = await drun_context.build_context(
+                session,
+                subject_id=subject_id,
+                include_events=include_events,
+                channel=channel,
+                include_chat=include_chat,
+                chat_limit=chat_limit,
+                query=query,
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("drun prompt build failed, using minimal context", exc_info=True)
+        # Минимальный system, чтобы провайдер не упал на пустой строке.
+        system = "Ты — Тёмный друн, смотритель чата. Отвечай коротко и в образе."
+        ctx = ""
 
-    history = await drun_memory.recent_messages(session, channel=channel, limit=10)
+    # SAVEPOINT и здесь: recent_messages — критический путь истории, но
+    # сама по себе одна SELECT; если БД временно недоступна или таблица
+    # повреждена, лучше ответить «без памяти», чем уронить весь хэндлер
+    # (см. INCIDENT 2026-06-18 part 3).
+    history: list = []
+    try:
+        async with session.begin_nested():
+            history = list(
+                await drun_memory.recent_messages(session, channel=channel, limit=10)
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("drun recent_messages failed, continuing without history", exc_info=True)
+        history = []
     messages: list[dict[str, str]] = []
     for m in history:
         if m.role == "user":
