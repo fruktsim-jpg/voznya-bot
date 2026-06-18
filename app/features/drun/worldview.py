@@ -389,18 +389,14 @@ async def _prune(session: AsyncSession) -> None:
 
 
 async def resolve_predictions(session: AsyncSession) -> int:
-    """Фаза REFLECT: проверить дозревшие прогнозы (сбылся/провалился).
+    """Фаза REFLECT: проверить дозревшие прогнозы (сбылся/провалился/частично).
 
-    Прогноз с истёкшим ``expires_at`` и source=prediction друн «закрывает».
-    Простая эвристика проверки по фактам недоступна для произвольного текста,
-    поэтому: прогнозы старше дедлайна помечаем как разрешённые и переводим в
-    долгую память со сниженным весом — это даёт друну материал «я же говорил»
-    или «промахнулся», а главное — он ВИДИТ исход своих ставок. Яркие сбывшиеся
-    прогнозы можно вручную/эвристически поднять в легенды.
+    Прогноз с истёкшим ``expires_at`` друн закрывает не наугад, а РЕАЛЬНОЙ
+    оценкой: даёт LLM-флешу прогноз + срез мира за период действия и просит
+    вердикт HIT / MISS / PARTIAL. Результат пишет в ``source`` (PRED_HIT/MISS),
+    яркие HIT с весом 3 промоутит в легенду — друн помнит свои «я же говорил».
 
-    Здесь делаем безопасный детерминированный шаг: открытые прогнозы, чей срок
-    вышел, помечаем PRED_MISS по умолчанию (друн «не угадал, но запомнил»), а
-    те, что подтверждены отдельной логикой — остаются. Возвращает число закрытых.
+    Возвращает число закрытых прогнозов.
     """
     now = now_utc()
     due = (
@@ -414,17 +410,127 @@ async def resolve_predictions(session: AsyncSession) -> int:
     ).scalars().all()
     if not due:
         return 0
+
+    cfg = await drun_config.get_config(session)
+    # Берём срез за окно действия прогноза (по самому раннему дедлайну ≤ 7 дней).
+    snap = await observe(session, hours=24 * 7)
+    snap_text = _snapshot_text(snap) or "(пусто)"
+
     closed = 0
     for pred in due:
-        # Закрываем прогноз: оставляем как след памяти (друн помнит свои ставки),
-        # снимаем TTL, помечаем как разрешённый. Дальнейшая оценка hit/miss может
-        # уточняться отдельной логикой; по умолчанию — нейтральный «закрыт».
-        pred.source = PRED_MISS
+        verdict = "miss"
+        bright = False
+        if cfg.usable:
+            try:
+                raw = await drun_provider.chat(
+                    cfg,
+                    system=_VERDICT_SYSTEM,
+                    messages=[{
+                        "role": "user",
+                        "content": _VERDICT_TEMPLATE.format(
+                            prediction=pred.fact, world=snap_text,
+                        ),
+                    }],
+                    model=cfg.model_for(drun_config.ROLE_EVENT_ANALYSIS),
+                )
+                verdict, bright = _parse_verdict(raw)
+            except drun_provider.LlmError as exc:
+                logger.debug("worldview verdict llm failed: %s", exc)
+
+        if verdict == "hit":
+            pred.source = PRED_HIT
+            pred.weight = min(3, int(pred.weight or 1) + 1)
+            if bright and int(pred.weight or 1) >= 3:
+                # Яркий сбывшийся прогноз → легенда чата («друн предсказал слив»).
+                await promote_legend(
+                    session, fact=f"друн предсказал: {pred.fact}", weight=3,
+                )
+        elif verdict == "partial":
+            pred.source = PRED_HIT  # частично сбылся — в актив, но без буста веса
+        else:
+            pred.source = PRED_MISS
+            pred.weight = max(1, int(pred.weight or 1) - 1)
         pred.expires_at = now + timedelta(days=14)  # ещё поживёт как материал
-        pred.weight = max(1, int(pred.weight or 1) - 1)
         closed += 1
     await session.flush()
     return closed
+
+
+_VERDICT_SYSTEM = (
+    "Ты — холодный судья прогнозов Тёмного друна. Тебе дают ОДИН прогноз и срез "
+    "мира за прошедший период. Реши, сбылся ли прогноз по фактам среза. Отвечай "
+    "СТРОГО одной строкой формата: VERDICT|BRIGHT, где VERDICT ∈ {hit, miss, "
+    "partial}, BRIGHT ∈ {0, 1}. BRIGHT=1 если событие яркое и достойно легенды "
+    "(крупная сумма, драматичная развязка, эпичный слив). Никаких пояснений."
+)
+_VERDICT_TEMPLATE = (
+    "ПРОГНОЗ: {prediction}\n\n"
+    "СРЕЗ МИРА ЗА ПЕРИОД ДЕЙСТВИЯ ПРОГНОЗА:\n{world}\n\n"
+    "Ответ:"
+)
+
+
+def _parse_verdict(raw: str) -> tuple[str, bool]:
+    """Парсит ответ судьи: 'hit|1' → ('hit', True). Безопасно деградирует к miss."""
+    text = (raw or "").strip().lower().split("\n", 1)[0]
+    if "|" in text:
+        verdict, _, bright = text.partition("|")
+        verdict = verdict.strip()
+        bright_flag = bright.strip() in {"1", "true", "yes"}
+    else:
+        verdict, bright_flag = text.strip(), False
+    if verdict not in {"hit", "miss", "partial"}:
+        return "miss", False
+    return verdict, bright_flag
+
+
+async def detect_legends(session: AsyncSession, *, hours: int = 24) -> int:
+    """Сканирует свежие severity=3 события и промоутит их в легенды чата.
+
+    Это рабочая поверхность для ``promote_legend``: цикл worldview раз в N часов
+    сам ищет эпичные события (крупные сливы, выигрыши, заходы) и закрепляет их
+    в долгой памяти. Дедуп — по содержательной строке (внутри ``promote_legend``).
+    """
+    since = now_utc() - timedelta(hours=hours)
+    try:
+        rows = (
+            await session.execute(
+                select(WorldEvent)
+                .where(WorldEvent.created_at >= since)
+                .where(WorldEvent.severity >= 3)
+                .order_by(WorldEvent.created_at.desc())
+                .limit(20)
+            )
+        ).scalars().all()
+    except Exception:  # noqa: BLE001
+        logger.debug("detect_legends fetch failed", exc_info=True)
+        return 0
+    if not rows:
+        return 0
+    from app.core.money import money
+
+    ids = {e.actor_id for e in rows if e.actor_id} | {
+        e.target_id for e in rows if e.target_id
+    }
+    names = await resolve_names(session, list(ids)) if ids else {}
+    added = 0
+    for e in rows:
+        who = name_for(names, e.actor_id) if e.actor_id else "кто-то"
+        tgt = name_for(names, e.target_id) if e.target_id else ""
+        amt = money(int(e.amount)) if e.amount else ""
+        # Шаблон легенды: коротко и со ссылкой на героя.
+        if tgt and amt:
+            fact = f"{who} → {tgt}: {e.type} на {amt}"
+        elif amt:
+            fact = f"{who}: {e.type} на {amt}"
+        elif tgt:
+            fact = f"{who} → {tgt}: {e.type}"
+        else:
+            fact = f"{who}: {e.type}"
+        mem = await promote_legend(session, fact=fact[:200], weight=3)
+        if mem is not None:
+            added += 1
+    return added
 
 
 async def promote_legend(
@@ -523,11 +629,12 @@ def setup_worldview(
             async with sessionmaker() as session:
                 closed = await resolve_predictions(session)
                 added = await think(session, hours=24)
+                legends = await detect_legends(session, hours=hours * 6)
                 await session.commit()
-                if added or closed:
+                if added or closed or legends:
                     logger.info(
-                        "drun worldview: +%d beliefs, %d predictions closed",
-                        added, closed,
+                        "drun worldview: +%d beliefs, %d predictions closed, +%d legends",
+                        added, closed, legends,
                     )
         except Exception:  # noqa: BLE001
             logger.warning("drun worldview loop failed", exc_info=True)

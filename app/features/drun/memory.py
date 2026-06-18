@@ -13,11 +13,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, literal, or_, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logger import get_logger
 from app.core.utils import now_utc
+from app.features.drun import embeddings as drun_embeddings
 from app.models import AiMemory, AiMessage
+
+logger = get_logger(__name__)
 
 # Сколько символов реплики игрока храним (анти-раздувание контекста/токенов).
 _CHAT_MAX_CHARS = 320
@@ -331,6 +336,15 @@ async def remember(
     )
     session.add(mem)
     await session.flush()
+    # Best-effort embed на лету: если провайдер настроен и быстро ответил —
+    # факт сразу попадёт в векторный поиск. Если нет — backfill-джоб подберёт
+    # через несколько минут. Любой сбой embed-а игнорируем; запись уже сделана.
+    try:
+        vec = await drun_embeddings.embed_text(session, fact)
+        if vec is not None:
+            await drun_embeddings.save_embedding(session, mem.id, vec)
+    except Exception:  # noqa: BLE001
+        logger.debug("inline embed failed for memory id=%s", mem.id, exc_info=True)
     return mem
 
 
@@ -414,10 +428,19 @@ async def scored_memories(
 ) -> list[AiMemory]:
     """Отбирает факты с учётом веса, свежести и релевантности теме ``query``.
 
-    Единая точка отбора долгосрочной памяти для контекста. При пустом ``query``
-    ранжирует по весу + свежести (свежие важные факты не тонут под старыми
-    тяжёлыми). Если ``query`` задан (реплика собеседника) — воспоминания по теме
-    всплывают наверх. Отсекает протухшие (``expires_at`` в прошлом).
+    Единая точка отбора долгосрочной памяти для контекста. Ранжирование делается
+    в Postgres гибридом ``ts_rank`` (BM25 по русской морфологии) + ``similarity``
+    (pg_trgm, устойчив к опечаткам и коротким запросам) + вес + экспоненциальная
+    свежесть. SQL-ранкинг сильнее старого Python-overlap'а и тянет ровно ``limit``
+    строк вместо большого пула.
+
+    При пустом ``query`` ранжирует по весу × свежесть (тематика отключается).
+    Отсекает протухшие (``expires_at`` в прошлом).
+
+    Безопасный fallback: если миграция ``0049`` ещё не накатана (нет колонки
+    ``fact_tsv``) или Postgres не знает русский конфиг — переключаемся на
+    старый Python-скоринг через пул кандидатов. Это исключает падение друна на
+    старых окружениях.
     """
     now = now_utc()
     not_expired = or_(AiMemory.expires_at.is_(None), AiMemory.expires_at > now)
@@ -425,7 +448,162 @@ async def scored_memories(
         scope = or_(AiMemory.subject_id.is_(None), AiMemory.subject_id == subject_id)
     else:
         scope = AiMemory.subject_id.is_(None)
-    # Тянем пул кандидатов: самые тяжёлые + свежие, потом ранжируем в Python.
+
+    q = (query or "").strip()
+    try:
+        return await _scored_memories_sql(
+            session, scope=scope, not_expired=not_expired, query=q, limit=limit,
+        )
+    except DBAPIError as exc:
+        # Скорее всего нет колонки fact_tsv (0049 не накачена) или нет
+        # русского конфига. Логируем один раз на отладке и идём по старому пути.
+        logger.debug("scored_memories SQL ranker unavailable, fallback: %s", exc)
+        return await _scored_memories_python(
+            session, scope=scope, not_expired=not_expired, query=q, limit=limit, now=now,
+        )
+
+
+async def _scored_memories_sql(
+    session: AsyncSession,
+    *,
+    scope,
+    not_expired,
+    query: str,
+    limit: int,
+) -> list[AiMemory]:
+    """Гибридный SQL-ранкинг: FTS(ts_rank) + trigram(similarity) + вес + свежесть.
+
+    Score (взвешен, чтобы ни один компонент не доминировал):
+    * ``weight`` × 1.0           — авторский вес факта (1..3)
+    * recency_decay × 3.0        — 0.5^(дней/21), как и было
+    * ts_rank × 6.0              — FTS-релевантность к запросу (русская морфология)
+    * similarity × 3.0           — trigram (опечатки, короткие слова)
+
+    Trigram-блок включается ТОЛЬКО если индекс присутствует (определяем по
+    наличию расширения pg_trgm); иначе остаётся чистый FTS.
+    """
+    # Свежесть: 0.5 ^ (age_days / 21).  Считаем в SQL через extract(epoch from age).
+    age_days = (
+        func.greatest(
+            literal(0.0),
+            func.extract("epoch", func.now() - AiMemory.created_at) / 86400.0,
+        )
+    )
+    recency = func.power(literal(0.5), age_days / literal(21.0))
+
+    # Базовый score без тематики.
+    base_score = AiMemory.weight + literal(3.0) * recency
+
+    if not query:
+        stmt = (
+            select(AiMemory)
+            .where(and_(not_expired, scope))
+            .order_by(base_score.desc(), AiMemory.created_at.desc())
+            .limit(limit)
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+        return list(rows)
+
+    # FTS: tsquery через plainto_tsquery (терпим к произвольному вводу).
+    # Конфиг 'russian' для запроса — миграция создаёт fact_tsv по тому же конфигу.
+    # Если в окружении нет 'russian', DBAPIError всплывёт и сработает fallback.
+    tsq = func.plainto_tsquery(literal("russian"), literal(query))
+    ts_rank = func.ts_rank(text("fact_tsv"), tsq)
+
+    # similarity() требует pg_trgm. Проверяем наличие расширения один раз.
+    has_trgm = bool(
+        await session.scalar(
+            select(literal(1)).where(
+                text("EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')")
+            )
+        )
+    )
+
+    # Vector-блок (LEAP-1): семантическое сходство embedding запроса с
+    # embedding факта. Это ловит синонимы/перифразы/морфологию там, где
+    # BM25 (точные токены) и trigram (символьное сходство) пасуют:
+    # «слил всё в казике» ↔ «казино его обнулило» — для FTS разные слова,
+    # для cosine — соседи. Подключается прозрачно: при отсутствии embedding
+    # у факта или embedder выключен — компонент даёт 0, общий ранкер работает
+    # как и раньше. Cosine distance ∈ [0, 2] → сходство = 1 - dist/2 ∈ [0, 1].
+    query_vec = await drun_embeddings.embed_text(session, query)
+    has_vector = bool(
+        await session.scalar(
+            select(literal(1)).where(
+                text("EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')")
+            )
+        )
+    )
+
+    score = base_score + literal(6.0) * ts_rank
+    if has_trgm:
+        sim = func.similarity(AiMemory.fact, literal(query))
+        score = score + literal(3.0) * sim
+    if query_vec is not None and has_vector:
+        # COALESCE: если у записи embedding пуст — вклад = 0 (не штрафуем).
+        # `<=>` это cosine distance pgvector; чем меньше, тем ближе.
+        qlit = drun_embeddings._vector_literal(query_vec)
+        vec_sim = text(
+            f"COALESCE(1 - (embedding <=> CAST('{qlit}' AS vector)) / 2.0, 0)"
+        )
+        # Вес 8 — самый сильный сигнал среди тематических компонентов:
+        # семантика важнее, чем точное совпадение токенов.
+        score = score + literal(8.0) * vec_sim
+
+    # Жёсткое отсечение «совсем мимо»: либо FTS дал ненулевой ранк, либо
+    # trigram-сходство выше шумового порога, либо vector-сходство значимое —
+    # иначе кандидат не интересен. Векторный порог 0.75 (cosine sim) —
+    # калибровка под text-embedding-3-small: ниже идёт шум по смыслу.
+    relevance_conds = [ts_rank > 0.0]
+    if has_trgm:
+        relevance_conds.append(
+            func.similarity(AiMemory.fact, literal(query)) > 0.15
+        )
+    if query_vec is not None and has_vector:
+        qlit = drun_embeddings._vector_literal(query_vec)
+        relevance_conds.append(
+            text(
+                f"embedding IS NOT NULL AND "
+                f"(1 - (embedding <=> CAST('{qlit}' AS vector)) / 2.0) > 0.75"
+            )
+        )
+    relevance_filter = or_(*relevance_conds)
+
+    # Двухпроходная стратегия: сначала пробуем по теме, и если результатов мало —
+    # добиваем по чистому base_score (вес × свежесть), как при пустом query.
+    topic_stmt = (
+        select(AiMemory)
+        .where(and_(not_expired, scope, relevance_filter))
+        .order_by(score.desc(), AiMemory.created_at.desc())
+        .limit(limit)
+    )
+    topic_rows = (await session.execute(topic_stmt)).scalars().all()
+    if len(topic_rows) >= limit:
+        return list(topic_rows)
+
+    # Добор. Исключаем уже выбранные id, чтобы не дублировать.
+    taken_ids = [m.id for m in topic_rows]
+    filler_stmt = (
+        select(AiMemory)
+        .where(and_(not_expired, scope))
+        .where(~AiMemory.id.in_(taken_ids) if taken_ids else literal(True))
+        .order_by(base_score.desc(), AiMemory.created_at.desc())
+        .limit(limit - len(topic_rows))
+    )
+    filler_rows = (await session.execute(filler_stmt)).scalars().all()
+    return list(topic_rows) + list(filler_rows)
+
+
+async def _scored_memories_python(
+    session: AsyncSession,
+    *,
+    scope,
+    not_expired,
+    query: str,
+    limit: int,
+    now: datetime,
+) -> list[AiMemory]:
+    """Старый Python-скоринг как fallback, если SQL-ранкинг недоступен."""
     rows = (
         await session.execute(
             select(AiMemory)

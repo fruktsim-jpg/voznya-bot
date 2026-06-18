@@ -18,7 +18,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from app.config import get_settings
-from app.core.db import dispose_engine, get_sessionmaker
+from app.core.db import dispose_engine, get_engine, get_sessionmaker
 from app.core.logger import get_logger, setup_logging
 from app.core.scheduler import get_scheduler, shutdown_scheduler, start_scheduler
 from app.features import get_feature_routers
@@ -32,10 +32,15 @@ from app.features.treasure.service import setup_treasure_scheduler
 from app.features.drun.ears import DrunEarsMiddleware
 from app.features.drun.distill import setup_memory_distill
 from app.features.drun.chat_memory import setup_chat_distill
+from app.features.drun.embeddings import setup_embeddings_backfill
 from app.features.drun.profile import setup_profile_sweep
 from app.features.drun.reflect import setup_reflection
 from app.features.drun.worldview import setup_worldview
 from app.features.drun.autonomous import setup_autonomous_poster
+from app.features.drun.events_listener import (
+    setup_events_listener,
+    teardown_events_listener,
+)
 
 from app.middlewares import (
     AntiFloodMiddleware,
@@ -141,6 +146,13 @@ async def on_startup(bot: Bot) -> None:
     # чата (раз в 45 мин) — чтобы друн помнил людей, а не только статистику.
     setup_chat_distill(scheduler, sessionmaker)
 
+    # Семантические embeddings долгой памяти (LEAP-1): фоновый бэкафилл
+    # добивает ai_memories.embedding для записей без вектора (старые/созданные
+    # вне remember()). Сам поиск в memory.scored_memories уже подмешивает
+    # cosine-сходство к BM25/trigram. Если embedding_api_key пуст —
+    # джоб тихо ничего не делает, ретривал остаётся на BM25+trigram.
+    setup_embeddings_backfill(scheduler, sessionmaker, minutes=5)
+
     # Профили игроков: фоновый свип (раз в несколько минут) пересобирает досье
     # активных игроков из всей базы + LLM-портрет — почти реалтайм-память.
     setup_profile_sweep(scheduler, sessionmaker)
@@ -160,6 +172,17 @@ async def on_startup(bot: Bot) -> None:
     # Автономное поведение: друн сам комментирует значимые события мира в чат
     # (с дневным капом и предохранителями). Делает его живым, а не реактивным.
     setup_autonomous_poster(scheduler, bot, sessionmaker, settings.chat_id)
+
+    # Real-time подписка на крупные события через Postgres LISTEN/NOTIFY:
+    # вместо 7-минутного опросного тика друн реагирует на джекпот/свадьбу/
+    # сезон в ту же секунду. Опросный поллер остаётся страховкой при разрыве
+    # listen-коннекта или пропущенном NOTIFY.
+    await setup_events_listener(
+        engine=get_engine(),
+        sessionmaker=sessionmaker,
+        bot=bot,
+        chat_id=settings.chat_id,
+    )
 
 
 
@@ -207,6 +230,9 @@ async def main() -> None:
             bot, allowed_updates=dp.resolve_used_update_types()
         )
     finally:
+        # Слушатель LISTEN/NOTIFY останавливаем ПЕРВЫМ — он держит raw asyncpg
+        # коннект из пула движка, который мы вот-вот dispose().
+        await teardown_events_listener()
         if api_runner is not None:
             await api_runner.cleanup()
         shutdown_scheduler()

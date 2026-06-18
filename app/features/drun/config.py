@@ -65,7 +65,7 @@ DEFAULTS: dict[str, Any] = {
     KEY_BASE_URL: "https://api.openai.com/v1",
     KEY_API_KEY: "",
     KEY_MODEL: "gpt-4o-mini",
-    KEY_FAST_MODEL: "gemini-3.5-flash",
+    KEY_FAST_MODEL: "claude-haiku-4.5",
     KEY_MODELS_BY_ROLE: {},
     KEY_TEMPERATURE: 0.9,
     KEY_MAX_TOKENS: 600,
@@ -87,7 +87,7 @@ DEFAULTS: dict[str, Any] = {
     KEY_IMAGE_ENABLED: False,
     KEY_IMAGE_BASE_URL: "",
     KEY_IMAGE_API_KEY: "",
-    KEY_IMAGE_MODEL: "gpt-image-1",
+    KEY_IMAGE_MODEL: "nano-banana-pro",
     KEY_IMAGE_DAILY_CAP: 20,
 }
 
@@ -115,22 +115,26 @@ ALL_ROLES = (
     ROLE_PLANNING, ROLE_VISION, ROLE_MODERATION,
 )
 
-# Дефолтная раскладка ролей по доступным моделям. ВНИМАНИЕ: это СПРАВОЧНАЯ
-# таблица-рекомендация, которую НЕ читает model_for() (тот специально не
-# подставляет имена моделей, которых может не быть на endpoint). Её показывает
-# админка как «пресет одним кликом»: оператор копирует нужные строки в БД-ключ
-# models_by_role, и только тогда раскладка вступает в силу. Имена моделей здесь
-# — пожелания, а не гарантия доступности у провайдера.
-# ВНИМАНИЕ: дублируется в v0-voznya/app/admin/ai/ai-manager.tsx
-# (RECOMMENDED_ROLE_MODELS) — при правке моделей синхронизируй оба места.
+# Рекомендованная раскладка ролей. ВНИМАНИЕ: это СПРАВОЧНАЯ таблица, которую
+# НЕ читает model_for() (тот специально не подставляет имена, которых может не
+# быть на endpoint). Её показывает админка как «пресет одним кликом»: оператор
+# копирует нужные строки в БД-ключ models_by_role, и только тогда раскладка
+# вступает в силу.
+#
+# Имена — РОВНО как у текущего gateway (wellflow): id с точками, а не дефисами
+# (claude-opus-4.8, claude-haiku-4.5, gpt-5.5). Менять одновременно с
+# v0-voznya/app/admin/ai/ai-manager.tsx (RECOMMENDED_ROLE_MODELS).
+#
+# Если у провайдера какой-то модели нет — model_for() безопасно деградирует к
+# fast_model (для дешёвых ролей) либо к model (для голосовых).
 DEFAULT_ROLE_MODELS: dict[str, str] = {
-    ROLE_NARRATOR: "claude-opus-4-8",        # живой голос — самая сильная
-    ROLE_MEMORY_EXTRACT: "gemini-3.5-flash", # дёшево и быстро, много вызовов
-    ROLE_MEMORY_SUMMARY: "claude-haiku-4-5", # компактные портреты
-    ROLE_EVENT_ANALYSIS: "gpt-5.5",          # анализ событий/экономики (умнее)
+    ROLE_NARRATOR: "claude-opus-4.8",        # живой голос — самая сильная
+    ROLE_MEMORY_EXTRACT: "claude-haiku-4.5", # дёшево и быстро (нет flash на gw)
+    ROLE_MEMORY_SUMMARY: "claude-haiku-4.5", # компактные портреты
+    ROLE_EVENT_ANALYSIS: "gpt-5.5",          # анализ событий/экономики
     ROLE_PLANNING: "gpt-5.5",                # точный разбор команд в JSON
-    ROLE_VISION: "gemini-3.1-pro-preview",   # мультимодальность (сильная, RU)
-    ROLE_MODERATION: "claude-opus-4-8",      # взвешенные модерац-решения
+    ROLE_VISION: "claude-opus-4.8",          # vision у Claude через тот же gw
+    ROLE_MODERATION: "claude-opus-4.8",      # взвешенные модерац-решения
 }
 
 

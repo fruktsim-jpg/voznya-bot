@@ -241,6 +241,15 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                 lines.append(
                     f"- ВАША ИСТОРИЯ [{aff.label}]: {aff.directive}"
                 )
+            # Журнал эпизодов: короткие конкретные «что между вами было»,
+            # подключаем даже на НЕЙТРАЛЕ — позволяет друну ссылаться на
+            # реальные реплики («ты вчера обозвал меня тупым ботом»), вместо
+            # абстрактной «истории отношений». Без него LLM придумывает.
+            episodes_block = aff.render_episodes(limit=4)
+            if episodes_block:
+                lines.append("- ПОСЛЕДНИЕ ЭПИЗОДЫ С НИМ:")
+                for ep_line in episodes_block.split("\n"):
+                    lines.append(f"  {ep_line}")
         except Exception:  # noqa: BLE001
             logger.debug("affinity block failed", exc_info=True)
 

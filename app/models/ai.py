@@ -30,8 +30,30 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import UserDefinedType
 
 from app.models.base import Base
+
+
+class _Vector(UserDefinedType):
+    """Минимальный SQLAlchemy-тип для pgvector ``vector(dim)``.
+
+    Полноценный ``pgvector.sqlalchemy.Vector`` тянет лишний пакет; нам нужно
+    только описание колонки для DDL/рефлексии — все векторные операции
+    (``<=>``, ``vector_cosine_ops``) уже выполняются в сыром SQL из
+    ``drun/memory.py``. Чтение/запись через ORM нам не нужно (embedder пишет
+    параметризованным UPDATE), поэтому bind/result процессоры оставляем
+    стандартные — SQLAlchemy кастует к строке вида ``[0.1,0.2,...]``,
+    которую pgvector принимает напрямую.
+    """
+
+    cache_ok = True
+
+    def __init__(self, dim: int) -> None:
+        self.dim = dim
+
+    def get_col_spec(self, **_: object) -> str:  # noqa: D401
+        return f"vector({self.dim})"
 
 
 class AiSetting(Base):
@@ -135,6 +157,16 @@ class AiMemory(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+    # Семантический эмбеддинг факта (миграция 0049). NULL = ещё не посчитан
+    # (бэкафилл-джоб добьёт), либо embedder выключен. Размерность 1536 под
+    # text-embedding-3-small; смена размерности — отдельная миграция.
+    # Тип хранится как pgvector ``vector(1536)``; в Python с этой колонкой
+    # напрямую не работаем (запись/поиск идут сырым SQL в drun/memory.py и
+    # drun/embeddings.py), поэтому Mapped[None]-аннотация и Optional[Any].
+    embedding: Mapped[object | None] = mapped_column(
+        _Vector(1536), nullable=True
     )
 
     __table_args__ = (

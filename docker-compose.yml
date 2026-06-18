@@ -1,6 +1,9 @@
 services:
   db:
-    image: postgres:16-alpine
+    # pgvector/pgvector:pg16 — тот же PG 16, но с предустановленным extension
+    # `vector` (CREATE EXTENSION в миграции 0049 без этого не сработает).
+    # Volume voznya_pgdata совместим: тот же major, данные не пересоздаются.
+    image: pgvector/pgvector:pg16
     restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -42,8 +45,15 @@ services:
     # этот блок можно удалить.
     ports:
       - "${INTERNAL_API_PORT:-8081}:${INTERNAL_API_PORT:-8081}"
+    volumes:
+      # Кеш fastembed-моделей (~120 МБ ONNX-весов intfloat/multilingual-e5-small).
+      # Без этого volume каждый rebuild = повторное скачивание с HuggingFace.
+      # Путь /root/.cache/fastembed — дефолт fastembed внутри контейнера
+      # (uid=0 в нашем образе). См. app/features/drun/embeddings.py.
+      - voznya_fastembed_cache:/root/.cache/fastembed
 
 
 volumes:
 
   voznya_pgdata:
+  voznya_fastembed_cache:

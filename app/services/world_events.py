@@ -94,6 +94,13 @@ async def emit(
     Использует сырой INSERT с ``ON CONFLICT`` для идемпотентности по
     ``(ref_table, ref_id)``. ``meta`` сериализуется в JSON-строку и кастуется
     в jsonb на стороне БД.
+
+    При ``severity >= 2`` дополнительно публикует ``NOTIFY world_events`` с
+    компактной JSON-нагрузкой. Это позволяет друну (и любым другим
+    подписчикам) реагировать на крупные события в РЕАЛЬНОМ ВРЕМЕНИ, а не
+    ждать следующего опросного тика (раньше задержка была 7мин-6ч). NOTIFY
+    идёт в той же транзакции, поэтому слушатель никогда не увидит «призрак»
+    события, которое в итоге было откатано.
     """
     import json
 
@@ -111,6 +118,36 @@ async def emit(
             "meta": json.dumps(meta or {}),
         },
     )
+
+    # Pub/sub: только для значимых событий, чтобы не захлёбывать слушателя
+    # рутиной (открытие кейса с severity=0 — шум). Полезная нагрузка маленькая:
+    # тип, severity, актор/жертва, сумма — этого хватит подписчику решить,
+    # нужно ли поднимать тяжёлый контекст.
+    if sev >= 2:
+        try:
+            payload = json.dumps(
+                {
+                    "type": type,
+                    "severity": sev,
+                    "actor_id": actor_id,
+                    "target_id": target_id,
+                    "amount": amount,
+                    "ref_table": ref_table,
+                    "ref_id": ref_id,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            # pg_notify(channel, payload) — параметризованный вариант NOTIFY,
+            # безопасный для произвольных строк. Postgres ограничивает payload
+            # ~8000 байт; наш меньше 300 — с большим запасом.
+            await session.execute(
+                text("SELECT pg_notify('world_events', :p)"), {"p": payload},
+            )
+        except Exception:  # noqa: BLE001
+            # NOTIFY не критичен: при сбое подписчики просто отработают по
+            # своему опросному тику. Лог в WARNING, чтобы заметить деградацию.
+            logger.warning("world_events pg_notify failed", exc_info=True)
 
 
 async def emit_safe(session: AsyncSession, **kwargs: Any) -> None:

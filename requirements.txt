@@ -16,3 +16,12 @@ APScheduler==3.10.4
 pydantic==2.9.2
 pydantic-settings==2.5.2
 python-dotenv==1.0.1
+
+# Локальные embeddings для долгой памяти друна (drun/embeddings.py).
+# fastembed запускает ONNX-модели через onnxruntime в CPU-режиме внутри
+# контейнера бота — не требует GPU, не ходит в сеть, бесплатно. Дефолтная
+# модель в коде — intfloat/multilingual-e5-small (384d, ~120 МБ весов,
+# скачивается при первом запуске в /root/.cache/fastembed; для прода полезно
+# смонтировать persistent volume для кеша, иначе rebuild = повторное
+# скачивание ~120 МБ).
+fastembed==0.4.2
