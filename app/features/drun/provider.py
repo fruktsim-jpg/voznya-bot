@@ -1,11 +1,14 @@
 """LLM-провайдер друна. OpenAI-совместимый + ветка Anthropic (Claude).
 
 Один интерфейс :func:`chat` поверх HTTP (aiohttp уже в зависимостях через
-aiogram — новый пакет не нужен). Провайдер определяется по ``base_url``:
+aiogram — новый пакет не нужен). Маршрутизация провайдера:
 
-* содержит ``anthropic`` → Anthropic Messages API (Claude);
-* иначе → OpenAI-совместимый ``/chat/completions`` (OpenAI, OpenRouter, любой
-  совместимый endpoint).
+* base_url настоящего Anthropic (``api.anthropic.com``) → сразу ``/v1/messages``;
+* иначе → пробуем OpenAI-совместимый ``/chat/completions``. Если шлюз ответит
+  «this model is only available via /v1/messages» (так делает vibecode для
+  ``claude-*``), автоматически повторяем запрос в Anthropic-формате. Так один и
+  тот же конфиг работает и со шлюзами, отдающими claude через OpenAI-формат
+  (wellflow), и с теми, кто требует Anthropic-эндпоинт (vibecode).
 
 Конфиг (base_url/api_key/model/temperature/max_tokens) приходит из ``ai_settings``
 через :class:`AiConfig`. Ошибки сети/HTTP оборачиваются в :class:`LlmError`.
@@ -87,17 +90,47 @@ class LlmError(RuntimeError):
     """Ошибка обращения к модели (сеть/HTTP/формат ответа)."""
 
 
-def _is_anthropic(base_url: str, model: str) -> bool:
-    """Anthropic-формат (``/v1/messages``) — ТОЛЬКО для настоящего Anthropic API.
+class _NeedsAnthropic(Exception):
+    """Внутренний сигнал: модель требует Anthropic-эндпоинт ``/v1/messages``.
 
-    Шлюзы вроде wellflow отдают ВСЁ (включая ``claude-*``) через
-    OpenAI-совместимый ``/v1/chat/completions``. Раньше мы роутили по имени
-    модели (``claude-*`` → ``/v1/messages``), и запросы к таким шлюзам зависали:
-    у них нет Anthropic-эндпоинта. Поэтому Anthropic-формат включаем строго по
-    URL настоящего api.anthropic.com; всё остальное — OpenAI-совместимо.
+    Шлюз ответил на OpenAI-совместимый ``/chat/completions`` ошибкой вида
+    «this model is only available via /v1/messages». Перехватывается в
+    :func:`chat`/:func:`vision`, которые повторяют запрос в Anthropic-формате.
+    """
+
+
+def _is_anthropic(base_url: str, model: str) -> bool:
+    """Anthropic-формат (``/v1/messages``) — для настоящего Anthropic API.
+
+    Шлюзы (wellflow и пр.) ведут себя по-разному: одни отдают ``claude-*`` через
+    OpenAI-совместимый ``/chat/completions``, другие (vibecode) — ТОЛЬКО через
+    ``/v1/messages``. Поэтому мы НЕ роутим вслепую по имени модели: для всего,
+    кроме настоящего api.anthropic.com, сначала пробуем OpenAI-формат, а на
+    специфичной ошибке «only available via /v1/messages» автоматически
+    повторяем в Anthropic-формате (см. :class:`_NeedsAnthropic`).
     """
     host = base_url.lower()
     return "api.anthropic.com" in host or "anthropic" in host
+
+
+def _wants_messages_endpoint(err_text: str) -> bool:
+    """Распознаёт ошибку шлюза «модель доступна только через /v1/messages»."""
+    t = (err_text or "").lower()
+    return "/v1/messages" in t or "anthropic format" in t
+
+
+def _normalize_claude_model(model: str) -> str:
+    """Нормализует id Claude-модели под Anthropic-эндпоинт (точки → дефисы).
+
+    В ``ai_settings`` исторически встречается ``claude-opus-4.8`` (с точкой), а
+    шлюз/Anthropic ожидают ``claude-opus-4-8`` (дефис в версии). Id Claude
+    используют только дефисы, поэтому замена ``.`` → ``-`` безопасна и не
+    затрагивает OpenAI/Gemini-модели (их сюда не передают).
+    """
+    m = model.strip()
+    if m.lower().startswith("claude"):
+        return m.replace(".", "-")
+    return m
 
 
 async def chat(
@@ -116,6 +149,10 @@ async def chat(
         raise LlmError("AI disabled or api_key/model missing")
 
     use_model = (model or cfg.model).strip() or cfg.model
+    # claude-* id нормализуем сразу (точки→дефисы): на OpenAI-эндпоинте дефисный
+    # id даёт понятную подсказку «only available via /v1/messages» (а точечный —
+    # бесполезное «unknown model»), и тот же id уйдёт в Anthropic-ретрай.
+    use_model = _normalize_claude_model(use_model)
 
     # aiohttp поставляется вместе с aiogram (рантайм-зависимость). Импорт
     # ленивый, чтобы модуль импортировался даже там, где aiohttp не установлен
@@ -126,8 +163,17 @@ async def chat(
     try:
         async with aiohttp.ClientSession(timeout=timeout) as http:
             if _is_anthropic(cfg.base_url, use_model):
-                return await _anthropic_chat(http, cfg, system, messages, use_model)
-            return await _openai_chat(http, cfg, system, messages, use_model)
+                return await _anthropic_chat(
+                    http, cfg, system, messages, use_model
+                )
+            try:
+                return await _openai_chat(http, cfg, system, messages, use_model)
+            except _NeedsAnthropic:
+                # Шлюз (vibecode) отдаёт claude-* только через /v1/messages —
+                # повторяем тот же запрос в Anthropic-формате.
+                return await _anthropic_chat(
+                    http, cfg, system, messages, use_model
+                )
     except asyncio.TimeoutError as exc:
         # INCIDENT 2026-06-18 part 4: голый TimeoutError не ловится
         # `aiohttp.ClientError` и пробивал стек до aiogram. Оборачиваем.
@@ -159,7 +205,12 @@ async def _openai_chat(
     async with http.post(url, json=payload, headers=headers) as resp:
         data, raw = await _safe_json(resp)
         if resp.status >= 400:
-            raise LlmError(f"HTTP {resp.status}: {_err(data) if data is not None else raw[:300]!r}")
+            msg = _err(data) if data is not None else raw[:300]
+            # Шлюз сообщает, что эта модель доступна только через /v1/messages
+            # (Anthropic-формат) — сигналим наверх для авто-повтора.
+            if resp.status == 400 and _wants_messages_endpoint(str(msg)):
+                raise _NeedsAnthropic()
+            raise LlmError(f"HTTP {resp.status}: {msg!r}")
         if data is None:
             # 2xx без валидного JSON — gateway-аномалия (пустое тело, HTML).
             # Без этой ветки старый `data["choices"]` уронил бы хэндлер.
@@ -243,26 +294,29 @@ async def vision(
     if not cfg.usable:
         raise LlmError("AI disabled or api_key/model missing")
     use_model = (model or cfg.model).strip() or cfg.model
+    use_model = _normalize_claude_model(use_model)
 
     import aiohttp
 
     timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as http:
-            if _is_anthropic(cfg.base_url, use_model):
-                content: list[dict[str, Any]] = [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": image_b64,
-                        },
+            anthropic_content: list[dict[str, Any]] = [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": image_b64,
                     },
-                ]
-                msgs = [{"role": "user", "content": content}]
-                return await _anthropic_chat(http, cfg, system, msgs, use_model)
+                },
+            ]
+            if _is_anthropic(cfg.base_url, use_model):
+                msgs = [{"role": "user", "content": anthropic_content}]
+                return await _anthropic_chat(
+                    http, cfg, system, msgs, use_model
+                )
             # OpenAI-совместимый мультимодальный формат.
             content = [
                 {"type": "text", "text": prompt},
@@ -274,7 +328,14 @@ async def vision(
                 },
             ]
             msgs = [{"role": "user", "content": content}]
-            return await _openai_chat(http, cfg, system, msgs, use_model)
+            try:
+                return await _openai_chat(http, cfg, system, msgs, use_model)
+            except _NeedsAnthropic:
+                # Шлюз требует /v1/messages для этой (claude-*) модели.
+                amsgs = [{"role": "user", "content": anthropic_content}]
+                return await _anthropic_chat(
+                    http, cfg, system, amsgs, use_model
+                )
     except asyncio.TimeoutError as exc:
         raise LlmError(f"timeout after {_TIMEOUT_SECONDS}s") from exc
     except aiohttp.ClientError as exc:
