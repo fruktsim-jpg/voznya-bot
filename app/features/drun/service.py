@@ -23,6 +23,7 @@ from app.core.logger import get_logger
 from app.features.drun import config as drun_config
 from app.features.drun import context as drun_context
 from app.features.drun import actions as drun_actions
+from app.features.drun import ask as drun_ask
 from app.features.drun import filter as drun_filter
 from app.features.drun import memory as drun_memory
 from app.features.drun import persona as drun_persona
@@ -274,6 +275,45 @@ async def generate(
     text = drun_filter.clean(raw, max_chars=1200)
     if not text:
         return GenerateResult(ok=False, error="empty")
+
+    # СВЕРКА ФАКТОВ (read-директивы [[ask:...]]). Если в черновике друн
+    # попросил данные из БД (баланс/ранг/топ/досье третьего лица), резолвим их
+    # и делаем РОВНО ОДИН доп. вызов с подмешанными фактами. Большинство реплик
+    # директив не содержит → лишних вызовов нет. Параллель с econ-директивами,
+    # но это ТОЛЬКО ЧТЕНИЕ. Изоляция savepoint'ами — внутри ask.resolve.
+    if drun_ask.has_directive(text):
+        facts = ""
+        try:
+            facts = await drun_ask.resolve(session, text)
+        except Exception:  # noqa: BLE001
+            logger.warning("drun ask.resolve failed", exc_info=True)
+            await _heal_if_poisoned(session)
+        if facts:
+            # Чистим черновик от директив, отдаём модели факты и просим
+            # финальную реплику. messages уже содержит контекст+задание; добавляем
+            # факты отдельным user-ходом, чтобы модель видела сверку как новое
+            # входное знание, а не как часть прошлого задания.
+            followup = list(messages)
+            followup.append({"role": "assistant", "content": drun_ask.strip_directives(text)})
+            followup.append({
+                "role": "user",
+                "content": (
+                    f"{facts}\n\n# Теперь дай финальный ответ, опираясь на эти "
+                    f"ПРОВЕРЕННЫЕ факты. Не выдумывай цифры. Без директив."
+                ),
+            })
+            try:
+                raw2 = await drun_provider.chat(
+                    cfg, system=system, messages=followup,
+                    model=cfg.model_for(role or drun_config.ROLE_NARRATOR),
+                )
+                text2 = drun_filter.clean(raw2, max_chars=1200)
+                if text2:
+                    text = text2
+            except drun_provider.LlmError as exc:
+                logger.warning("drun ask follow-up failed: %s", exc)
+        # В любом случае директивы не должны утечь в видимый текст.
+        text = drun_ask.strip_directives(text) or "..."
 
     # Экономическая выходка (налог/подачка), если друн вставил директиву и
     # власть включена. Применяем к субъекту реплики.
