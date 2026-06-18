@@ -182,47 +182,51 @@ async def generate(
     if not cfg.usable:
         return GenerateResult(ok=False, error="disabled")
 
-    # SAVEPOINT-изоляция фазы сборки промпта (INCIDENT 2026-06-18 part 3).
+    # ИЗОЛЯЦИЯ ФАЗЫ СБОРКИ ПРОМПТА (INCIDENT 2026-06-18 part 4).
     #
-    # build_system_prompt и build_context — десятки SQL-запросов через 28+
-    # «best-effort» try/except в context.py, persona.py и helpers (overview,
-    # memory_block, mmr, economy, events и т.д.). Каждый из них ловит все
-    # Exception и тихо возвращает пустую строку — НО при этом session общая
-    # с хэндлером. Если SQL внутри помощника падает (schema drift, FK,
-    # deadlock, прерванная коннекция, отсутствие fact_tsv/pg_trgm/vector,
-    # любая другая DBAPIError), без rollback транзакция в asyncpg уходит в
-    # InFailedSQLTransactionError — и СЛЕДУЮЩИЙ SELECT (recent_messages на
-    # стр. 149) валит весь хэндлер с «current transaction is aborted».
+    # Раньше тут стоял ОДИН savepoint вокруг всей фазы (build_system_prompt +
+    # build_context). Он НЕ работал, потому что 28+ best-effort блоков в
+    # context.py/persona.py сами ловят Exception без rollback'а savepoint'а —
+    # отравленная asyncpg-транзакция доезжает до RELEASE SAVEPOINT и валит
+    # хэндлер целиком (см. инцидент с fastembed: модель e5-small исчезла из
+    # библиотеки → embedder бросал ValueError из memory_block → транзакция
+    # отравлялась → recent_messages и add_message падали → друн молчал).
     #
-    # Расставлять savepoint в каждом из 28 мест — шумно и легко забыть.
-    # Вместо этого оборачиваем ВСЮ фазу сборки промпта одним savepoint:
-    # любая ошибка внутри (даже в самой глубокой ветке helpers) роллбэчит
-    # ТОЛЬКО savepoint, внешняя транзакция остаётся чистой, generate
-    # продолжает работу — просто без вклада упавшего блока.
-    #
-    # Лог WARNING (а не debug) — чтобы каскадный сбой сразу был виден,
-    # а не «исчезал» в шум, как 18.06.2026.
+    # Теперь правильный уровень изоляции — внутри самих блоков (helper
+    # ``context._isolated``: каждый блок открывает свой savepoint и при
+    # любом исключении делает ROLLBACK TO SAVEPOINT). Здесь же оставляем
+    # только внешний guard: если по какой-то причине внешняя транзакция
+    # всё-таки повредилась (например, persona.build_system_prompt уронил
+    # session ещё ДО build_context), лечим её и продолжаем с минимальным
+    # system'ом — это лучше, чем уронить ответ.
     system = ""
     ctx = ""
     try:
-        async with session.begin_nested():
-            system = await drun_persona.build_system_prompt(
-                session, econ_enabled=(allow_actions and cfg.econ_enabled)
-            )
-            ctx = await drun_context.build_context(
-                session,
-                subject_id=subject_id,
-                include_events=include_events,
-                channel=channel,
-                include_chat=include_chat,
-                chat_limit=chat_limit,
-                query=query,
-            )
+        system = await drun_persona.build_system_prompt(
+            session, econ_enabled=(allow_actions and cfg.econ_enabled)
+        )
     except Exception:  # noqa: BLE001
-        logger.warning("drun prompt build failed, using minimal context", exc_info=True)
-        # Минимальный system, чтобы провайдер не упал на пустой строке.
+        logger.warning("drun build_system_prompt failed", exc_info=True)
+        await _heal_if_poisoned(session)
         system = "Ты — Тёмный друн, смотритель чата. Отвечай коротко и в образе."
+    try:
+        ctx = await drun_context.build_context(
+            session,
+            subject_id=subject_id,
+            include_events=include_events,
+            channel=channel,
+            include_chat=include_chat,
+            chat_limit=chat_limit,
+            query=query,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("drun build_context failed", exc_info=True)
+        await _heal_if_poisoned(session)
         ctx = ""
+    # Страховка перед фазой записи: если что-то в helpers всё же отравило
+    # транзакцию (например, асинхронный таск, или persona без savepoint'а),
+    # лечим до recent_messages/add_message.
+    await _heal_if_poisoned(session)
 
     # SAVEPOINT и здесь: recent_messages — критический путь истории, но
     # сама по себе одна SELECT; если БД временно недоступна или таблица

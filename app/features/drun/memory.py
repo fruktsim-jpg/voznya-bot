@@ -14,8 +14,10 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, delete, func, literal, or_, select, text
+from sqlalchemy.dialects.postgresql import REGCONFIG
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.types import Text
 
 from app.core.logger import get_logger
 from app.core.utils import now_utc
@@ -450,13 +452,20 @@ async def scored_memories(
         scope = AiMemory.subject_id.is_(None)
 
     q = (query or "").strip()
+    # SAVEPOINT вокруг SQL-ранкера: если он упадёт (отсутствие fact_tsv,
+    # несовпадение типов в plainto_tsquery, любой schema drift), asyncpg
+    # переведёт ВНЕШНЮЮ транзакцию в aborted-состояние, и следующий же SELECT
+    # (включая Python-fallback ниже) умрёт с InFailedSQLTransactionError.
+    # begin_nested() на выходе с исключением делает ROLLBACK TO SAVEPOINT —
+    # внешняя транзакция остаётся живой, и fallback реально срабатывает.
     try:
-        return await _scored_memories_sql(
-            session, scope=scope, not_expired=not_expired, query=q, limit=limit,
-        )
+        async with session.begin_nested():
+            return await _scored_memories_sql(
+                session, scope=scope, not_expired=not_expired, query=q, limit=limit,
+            )
     except DBAPIError as exc:
         # Скорее всего нет колонки fact_tsv (0049 не накачена) или нет
-        # русского конфига. Логируем один раз на отладке и идём по старому пути.
+        # русского конфига. Логируем на отладке и идём по старому пути.
         logger.debug("scored_memories SQL ranker unavailable, fallback: %s", exc)
         return await _scored_memories_python(
             session, scope=scope, not_expired=not_expired, query=q, limit=limit, now=now,
@@ -506,8 +515,14 @@ async def _scored_memories_sql(
 
     # FTS: tsquery через plainto_tsquery (терпим к произвольному вводу).
     # Конфиг 'russian' для запроса — миграция создаёт fact_tsv по тому же конфигу.
+    # ВАЖНО: plainto_tsquery существует только в сигнатуре (regconfig, text).
+    # Без явного приведения SQLAlchemy биндит `literal("russian")` как VARCHAR,
+    # и PG бросает UndefinedFunctionError: function plainto_tsquery(varchar,
+    # varchar) does not exist. Касты ниже фиксируют именно это.
     # Если в окружении нет 'russian', DBAPIError всплывёт и сработает fallback.
-    tsq = func.plainto_tsquery(literal("russian"), literal(query))
+    tsq = func.plainto_tsquery(
+        literal("russian", type_=REGCONFIG), literal(query, type_=Text)
+    )
     ts_rank = func.ts_rank(text("fact_tsv"), tsq)
 
     # similarity() требует pg_trgm. Проверяем наличие расширения один раз.

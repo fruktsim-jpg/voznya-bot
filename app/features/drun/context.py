@@ -14,6 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +29,47 @@ from app.features.drun.names import name_for, resolve_names, resolve_person_hint
 from app.models import User, WorldEvent
 
 logger = get_logger(__name__)
+
+_T = TypeVar("_T")
+
+
+async def _isolated(
+    session: AsyncSession,
+    name: str,
+    coro_factory: Callable[[], Awaitable[_T]],
+    default: _T,
+) -> _T:
+    """Запускает блок контекста в собственном SAVEPOINT.
+
+    INCIDENT 2026-06-18 part 4: каждый из 28+ ``_*_block`` в этом файле
+    ловит ``except Exception`` и тихо возвращает пустую строку. Но если
+    внутри упал SQL (отсутствие fact_tsv/pg_trgm/vector, schema drift,
+    embedder вернул ValueError из middleware-кода, etc.), asyncpg
+    переводит ОБЩУЮ транзакцию хэндлера в ``aborted`` — и СЛЕДУЮЩИЙ
+    ``_*_block`` падает на самом первом SELECT с
+    ``InFailedSQLTransactionError``, ловится тем же ``except Exception``,
+    логируется как «такой-то блок failed», но к этому моменту вся
+    последующая работа generate() (recent_messages, add_message,
+    affinity-write) уже невозможна — друн молчит.
+
+    Раньше в service.py:208 это пытались закрыть ОДНИМ savepoint вокруг
+    всей фазы сборки промпта. Не работает: savepoint роллбэчится только
+    при выходе из ``async with``, а внутри best-effort блоки уже
+    проглотили исключение — выйти из savepoint с rollback'ом некому,
+    а RELEASE SAVEPOINT в конце уже падает на отравленной транзакции.
+
+    Этот helper — правильный уровень изоляции: каждый блок открывает СВОЙ
+    savepoint, при любом исключении делается ROLLBACK TO SAVEPOINT, и
+    ВНЕШНЯЯ транзакция остаётся чистой. ``default`` — что вернуть при
+    сбое (обычно "" для блоков-строк, [] для списков). ``name`` —
+    только для лога.
+    """
+    try:
+        async with session.begin_nested():
+            return await coro_factory()
+    except Exception:  # noqa: BLE001
+        logger.warning("drun ctx block failed: %s", name, exc_info=True)
+        return default
 
 
 async def _player_assets_block(session: AsyncSession, user_id: int) -> list[str]:
@@ -805,18 +849,51 @@ async def build_context(
     # Вайб чата осмыслен только когда мы вообще подмешиваем чат: для отчётов/
     # объявлений (include_chat=False) он не нужен — не тратим лишний COUNT-запрос.
     if include_chat:
-        blocks.append(await _vibe_block(session, channel))
-        blocks.append(await _mood_block(session, channel))
+        blocks.append(
+            await _isolated(session, "vibe", lambda: _vibe_block(session, channel), "")
+        )
+        blocks.append(
+            await _isolated(session, "mood", lambda: _mood_block(session, channel), "")
+        )
     if subject_id is not None:
-        blocks.append(await _player_block(session, subject_id))
+        blocks.append(
+            await _isolated(
+                session, "player", lambda: _player_block(session, subject_id), ""
+            )
+        )
     if include_chat:
-        blocks.append(await _chat_block(session, channel, limit=chat_limit))
-    blocks.append(await _memory_block(session, subject_id, query))
-    blocks.append(await _overview_block(session))
-    blocks.append(await _economy_block(session))
-    blocks.append(await _worldview_block(session))
-    blocks.append(await _season_block(session))
+        blocks.append(
+            await _isolated(
+                session,
+                "chat",
+                lambda: _chat_block(session, channel, limit=chat_limit),
+                "",
+            )
+        )
+    blocks.append(
+        await _isolated(
+            session, "memory", lambda: _memory_block(session, subject_id, query), ""
+        )
+    )
+    blocks.append(
+        await _isolated(session, "overview", lambda: _overview_block(session), "")
+    )
+    blocks.append(
+        await _isolated(session, "economy", lambda: _economy_block(session), "")
+    )
+    blocks.append(
+        await _isolated(session, "worldview", lambda: _worldview_block(session), "")
+    )
+    blocks.append(
+        await _isolated(session, "season", lambda: _season_block(session), "")
+    )
     if include_events:
-        blocks.append(await _events_block(session))
-    blocks.append(await _antirepeat_block(session, channel))
+        blocks.append(
+            await _isolated(session, "events", lambda: _events_block(session), "")
+        )
+    blocks.append(
+        await _isolated(
+            session, "antirepeat", lambda: _antirepeat_block(session, channel), ""
+        )
+    )
     return "\n\n".join(b for b in blocks if b).strip()
