@@ -36,7 +36,7 @@ class ToolContext:
     args: dict
     # Резолверы передаются из agent.py, чтобы реестр не зависел от деталей.
     resolve_who: Callable[[str], Awaitable[int | None]]
-    resolve_audience: Callable[..., Awaitable[list[int]]]
+    resolve_audience: Callable[..., Awaitable[list[int]]]  # принимает scope/minutes/days/limit
 
     def arg_int(self, key: str, default: int = 0) -> int:
         try:
@@ -74,6 +74,7 @@ async def _h_grant(ctx: ToolContext) -> drun_tools.ToolResult:
     audience = await ctx.resolve_audience(
         scope=ctx.arg_str("scope", "active").lower(),
         minutes=ctx.arg_int("minutes", 60), days=ctx.arg_int("days", 7),
+        limit=ctx.arg_int("limit", 0) or None,
     )
     return await drun_tools.grant_to_audience(
         ctx.session, owner_id=ctx.owner_id, user_ids=audience,
@@ -107,6 +108,7 @@ async def _h_giveaway(ctx: ToolContext) -> drun_tools.ToolResult:
     audience = await ctx.resolve_audience(
         scope=ctx.arg_str("scope", "active").lower(),
         minutes=ctx.arg_int("minutes", 60), days=ctx.arg_int("days", 7),
+        limit=ctx.arg_int("limit", 0) or None,
     )
     return await drun_tools.giveaway(
         ctx.session, owner_id=ctx.owner_id, user_ids=audience,
@@ -230,6 +232,38 @@ async def _h_multiplier(ctx: ToolContext) -> drun_tools.ToolResult:
     )
 
 
+# Карта «человеческая фича → ключ app_settings» для feature_toggle.
+_FEATURE_KEYS = {
+    "casino": "casino.enabled", "казино": "casino.enabled",
+    "duel": "duel.enabled", "бои": "duel.enabled", "дуэли": "duel.enabled",
+    "farm": "farm.enabled", "ферма": "farm.enabled",
+    "cases": "cases.enabled", "кейсы": "cases.enabled",
+    "shop": "shop.enabled", "магазин": "shop.enabled", "шоп": "shop.enabled",
+    "gifts": "gifts.enabled", "подарки": "gifts.enabled",
+}
+
+
+async def _h_feature_toggle(ctx: ToolContext) -> drun_tools.ToolResult:
+    feature = ctx.arg_str("feature").lower()
+    key = _FEATURE_KEYS.get(feature)
+    if key is None:
+        return drun_tools.ToolResult(
+            ok=False, error=f"не знаю фичу «{feature}»"
+        )
+    # enable: принимаем bool/строку/число; дефолт — включить.
+    raw = ctx.args.get("enable", True)
+    return await drun_tools.set_app_setting(
+        ctx.session, owner_id=ctx.owner_id, key=key, value=raw,
+    )
+
+
+async def _h_set_param(ctx: ToolContext) -> drun_tools.ToolResult:
+    return await drun_tools.set_app_setting(
+        ctx.session, owner_id=ctx.owner_id,
+        key=ctx.arg_str("key"), value=ctx.args.get("value"),
+    )
+
+
 # spawn_treasure исполняется в reply_handlers (нужен bot+своя сессия), поэтому
 # здесь только маркер: диспетчер вернёт его как отложенное действие.
 SPAWN_TREASURE_SENTINEL = "__spawn_treasure__"
@@ -257,7 +291,8 @@ REGISTRY: dict[str, ToolSpec] = {
         ToolSpec(
             "grant",
             "выдать (или снять при amount<0) ешки АУДИТОРИИ",
-            "amount (int), scope ('recent'|'active'|'all'), minutes, days, note",
+            "amount (int), scope ('recent'|'active'|'all'|'poorest'|'richest'), "
+            "limit (int, для poorest/richest — сколько игроков), minutes, days, note",
             _h_grant,
             ("дай", "выдай", "раздай", "начисли", "закинь", "накинь", "подкинь",
              "подари", "награди", "докинь", "кинь", "забери", "сними", "отними",
@@ -279,7 +314,7 @@ REGISTRY: dict[str, ToolSpec] = {
         ToolSpec(
             "giveaway",
             "розыгрыш призового фонда между случайными из аудитории",
-            "pool (int), winners (int), scope, minutes, days, note",
+            "pool (int), winners (int), scope, limit, minutes, days, note",
             _h_giveaway,
             ("разыграй", "розыгрыш", "раздача", "giveaway", "разыгровка"),
         ),
@@ -376,6 +411,26 @@ REGISTRY: dict[str, ToolSpec] = {
             "{} (без аргументов)",
             _h_spawn_treasure,
             ("клад", "клады", "сокровище", "спавн", "раздай клад"),
+        ),
+        ToolSpec(
+            "feature_toggle",
+            "включить/выключить подсистему игры (казино/бои/ферма/кейсы/магазин/подарки)",
+            "feature (str: casino|duel|farm|cases|shop|gifts), enable (bool)",
+            _h_feature_toggle,
+            ("включи", "выключи", "вырубай", "выруби", "отключи", "врубай",
+             "врубить", "врубани", "выруби казино", "выключи бои", "останови",
+             "запусти", "погаси"),
+        ),
+        ToolSpec(
+            "set_param",
+            "изменить числовой параметр игры (ставки, кулдауны, множители)",
+            "key (str из: casino.min_bet/casino.max_bet/casino.cooldown/"
+            "duel.min_bet/duel.max_bet/duel.cooldown/farm.cooldown/farm.bonus/"
+            "modifier.eshki/modifier.drop/modifier.xp), value (число)",
+            _h_set_param,
+            ("ставку", "ставки", "лимит ставки", "кулдаун", "кд казино",
+             "кд боёв", "подними", "опусти", "понизь", "поставь множитель",
+             "макс ставка", "мин ставка", "максимальную ставку"),
         ),
     )
 }

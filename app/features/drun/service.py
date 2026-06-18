@@ -251,6 +251,18 @@ async def respond(
         web_block = await drun_web.auto_context(session, safe_text)
     except Exception:  # noqa: BLE001
         logger.debug("respond web auto_context failed", exc_info=True)
+    # «Чувство комнаты»: если чат сейчас абузит бота (каждый второй на нём
+    # висит) — подмешиваем установку отвечать короче/суше и переводить движ на
+    # общение людей. В обычном режиме подсказка пустая и ничего не меняет.
+    room_block = ""
+    try:
+        from app.features.drun import governor as drun_governor
+
+        verdict = await drun_governor.assess(session, channel=channel)
+        if verdict.throttle and verdict.note:
+            room_block = f"# РЕЖИМ КОМНАТЫ: {verdict.note}"
+    except Exception:  # noqa: BLE001
+        logger.debug("respond governor assess failed", exc_info=True)
     task = (
         f"{template}\n\n"
         f"========================\n"
@@ -258,6 +270,8 @@ async def respond(
         f"«{safe_text}»\n"
         f"========================"
     )
+    if room_block:
+        task = f"{room_block}\n\n{task}"
     if web_block:
         task = f"{web_block}\n\n{task}"
     return await generate(

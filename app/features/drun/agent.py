@@ -59,13 +59,18 @@ def _build_system() -> str:
         "- none: это НЕ команда-действие, а обычная болтовня/вопрос.\n"
         "\n"
         "Поля who — @username/имя/id игрока. scope: 'recent' (писали за minutes "
-        "мин), 'active' (играли за days дней), 'all' (все).\n"
+        "мин), 'active' (играли за days дней), 'all' (все), 'poorest' (N самых "
+        "нищих), 'richest' (N самых богатых).\n"
         "\n"
         "Правила разбора (будь гибким, читай смысл, а не точные слова):\n"
         "- «кто писал за час/последний час/недавно» → scope=recent, minutes=60.\n"
         "- «активным/за неделю/кто играет» → scope=active, days=7.\n"
         "- «всем/каждому/всему чату» без уточнения → scope=active, days=7 "
         "(безопаснее, чем all).\n"
+        "- «N самым бедным/нищим/у кого мало» → scope=poorest, limit=N. «N самым "
+        "богатым/топам/у кого больше всех» → scope=richest, limit=N. ВСЕГДА "
+        "указывай limit, если назвали число получателей («5 нищим» → limit=5). "
+        "Это критично: без limit раздаст всем подряд, а не пятерым.\n"
         "- «дай/выдай/закинь/накинь/подари по 100» → grant amount=100.\n"
         "- «забери/сними/отними/штрафани 50» → grant/grant_one amount=-50.\n"
         "- «забери всё/обнули баланс/обнули» у игрока → grant_one с большим "
@@ -144,9 +149,11 @@ async def try_handle(
     async def _resolve_who(who: str) -> int | None:
         return await drun_tools.find_user_id(session, who)
 
-    async def _resolve_audience(*, scope: str, minutes: int, days: int) -> list[int]:
+    async def _resolve_audience(
+        *, scope: str, minutes: int, days: int, limit: int | None = None
+    ) -> list[int]:
         return await drun_tools.resolve_audience(
-            session, scope=scope, minutes=minutes, days=days
+            session, scope=scope, minutes=minutes, days=days, limit=limit
         )
 
     ctx = drun_registry.ToolContext(

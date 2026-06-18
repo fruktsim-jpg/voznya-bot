@@ -188,6 +188,28 @@ async def count_replies_today(
     return int(total or 0)
 
 
+async def pulse_stats(
+    session: AsyncSession, *, channel: str = "chat", minutes: int = 15
+) -> tuple[int, int]:
+    """Пульс чата за окно: (всего реплик игроков, уникальных авторов).
+
+    Нужно activity-governor'у, чтобы отличать «один человек долбит бота» от
+    «много людей реально общаются». Один проход по окну, без подтягивания строк.
+    """
+    since = now_utc() - timedelta(minutes=max(1, minutes))
+    base = (
+        select(AiMessage.user_id)
+        .where(AiMessage.channel == channel)
+        .where(AiMessage.role == "chat")
+        .where(AiMessage.created_at >= since)
+    ).subquery()
+    total = await session.scalar(select(func.count()).select_from(base))
+    speakers = await session.scalar(
+        select(func.count(func.distinct(base.c.user_id))).select_from(base)
+    )
+    return int(total or 0), int(speakers or 0)
+
+
 # --- Долгосрочная память (факты) --------------------------------------------
 
 

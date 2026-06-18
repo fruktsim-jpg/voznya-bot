@@ -36,8 +36,6 @@ logger = get_logger(__name__)
 
 # Ключ high-water-mark: id последнего прокомментированного события.
 _KEY_LAST_EVENT = "autonomous_last_event_id"
-# Если чат сейчас активнее этого — не перебиваем живую беседу автопостом.
-_BUSY_CHAT_THRESHOLD = 12
 # Комментируем только ДЕЙСТВИТЕЛЬНО свежие события: без нижней границы по времени
 # на первом запуске (high-water-mark пуст) друн мог бы выдать событие недельной
 # давности за «только что произошло».
@@ -104,11 +102,20 @@ async def comment_on_fresh_events(
         logger.debug("autonomous: daily cap reached (%d)", posts_today)
         return None
 
-    # Не перебиваем живую беседу — если чат кипит, люди и так общаются.
-    hot = await drun_memory.recent_chat_count(session, channel=channel, seconds=300)
-    if hot >= _BUSY_CHAT_THRESHOLD:
-        logger.debug("autonomous: chat busy (%d), skip", hot)
+    # «Чувство комнаты»: governor решает, можно ли вообще сейчас вкидываться и
+    # не пора ли наоборот РАСШЕВЕЛИТЬ мёртвый чат. Перебивать живую/кипящую
+    # беседу или лезть в абуз-режиме — нельзя.
+    from app.features.drun import governor as drun_governor
+
+    verdict = await drun_governor.assess(session, channel=channel)
+    if not verdict.may_autopost:
+        logger.debug("autonomous: governor blocks (%s)", verdict.pulse.value)
         return None
+    if verdict.should_stir:
+        # Чат мёртвый и свежих событий может не быть — сами создаём движ.
+        stir = await _stir_dead_chat(session, channel=channel)
+        if stir:
+            return stir
 
     last_id = await _get_last_event_id(session)
     # Самое свежее значимое событие новее high-water-mark И не старше окна — чтобы
@@ -150,6 +157,34 @@ async def comment_on_fresh_events(
         channel=channel,
         include_events=True,
         trigger_event_id=ev.id,
+        memory_kind="monologue",
+        role=drun_config.ROLE_NARRATOR,
+    )
+    if not result.ok or not result.text:
+        return None
+    return result.text
+
+
+async def _stir_dead_chat(
+    session: AsyncSession, *, channel: str
+) -> str | None:
+    """Генерит «движ» в мёртвый чат: провокация/тема, чтобы зашли люди.
+
+    Это НЕ реакция на событие, а инициатива друна — расшевелить тишину. Без
+    выдачи ешек (это решает владелец), чисто социальный вброс в образе.
+    """
+    task = (
+        "В чате Возни мёртвая тишина, никто не пишет. Ты — живой дух этого "
+        "чата и тебе скучно. Кинь ОДНУ короткую провокационную реплику, чтобы "
+        "расшевелить народ и вытащить людей: дерзкий вопрос, подъёб «спящих», "
+        "вызов, тема для движа, странное наблюдение. БЕЗ цифр и статистики, без "
+        "представления себя ботом. Живой вброс в твоём стиле — так, чтобы "
+        "захотелось ответить."
+    )
+    result = await drun_service.generate(
+        session,
+        task=task,
+        channel=channel,
         memory_kind="monologue",
         role=drun_config.ROLE_NARRATOR,
     )

@@ -117,19 +117,39 @@ async def _audience_active(
 
 async def resolve_audience(
     session: AsyncSession, *, scope: str, minutes: int = 60, days: int = 7,
+    limit: int | None = None,
 ) -> list[int]:
     """Возвращает список user_id целевой аудитории по описанию ``scope``.
 
-    scope: ``recent`` (писали за ``minutes`` мин) / ``active`` (активны за
-    ``days`` дней) / ``all`` (все игроки с балансом-историей).
+    scope:
+      * ``recent``  — писали за ``minutes`` мин;
+      * ``active``  — активны за ``days`` дней;
+      * ``all``     — все игроки;
+      * ``poorest`` — N самых нищих (нужен ``limit``);
+      * ``richest`` — N самых богатых (нужен ``limit``).
+
+    ``limit`` — жёсткое ограничение размера аудитории. Для ``poorest``/``richest``
+    обязателен по смыслу («5 самым бедным»); для остальных scope тоже урезает
+    список, если задан. Это чинит баг «дай 5 нищим → раздал 50»: число N теперь
+    реально ограничивает выборку, а не игнорируется.
     """
+    from app.repositories import users as users_repo
+
+    n = max(1, int(limit)) if limit else None
     if scope == "recent":
         ids = await _audience_recent_chat(session, minutes=minutes)
     elif scope == "all":
-        ids = (await session.execute(select(User.user_id))).scalars().all()
-        ids = list(ids)
+        ids = list((await session.execute(select(User.user_id))).scalars().all())
+    elif scope == "poorest":
+        users = await users_repo.bottom_by_balance(session, n or 5)
+        ids = [u.user_id for u in users]
+    elif scope == "richest":
+        users = await users_repo.top_by_balance(session, n or 5)
+        ids = [u.user_id for u in users]
     else:  # active
         ids = await _audience_active(session, days=days)
+    if n is not None:
+        ids = ids[:n]
     return ids[:MAX_BULK_USERS]
 
 
@@ -150,27 +170,37 @@ async def grant_to_audience(
 
     done = 0
     skipped_broke = 0
+    # Пер-игроковый отчёт: кому сколько и какой стал баланс — чтобы в чат ушла
+    # прозрачная строка «кому что прибавил/снял», а не только сводное число.
+    per_target: list[dict] = []
     for uid in targets:
         try:
             if amount < 0:
                 # Снятие у группы: с каждого забираем сколько есть (clamp),
                 # а не пропускаем тех, у кого меньше суммы. «done» считаем по
                 # факту реального списания > 0.
-                took, _ = await _debit_clamped_to_balance(
+                took, new_bal = await _debit_clamped_to_balance(
                     session, uid, -amount, REASON_OWNER,
                     {"action": "owner_grant", "note": note, "by": owner_id},
                 )
                 if took > 0:
                     done += 1
+                    per_target.append(
+                        {"id": uid, "delta": -took, "balance": new_bal}
+                    )
                 else:
                     skipped_broke += 1
             else:
-                await economy.change_balance(
+                user = await economy.change_balance(
                     session, uid, amount, REASON_OWNER,
                     {"action": "owner_grant", "note": note, "by": owner_id},
                     allow_negative=False,
                 )
                 done += 1
+                per_target.append({
+                    "id": uid, "delta": amount,
+                    "balance": int(getattr(user, "balance", 0) or 0),
+                })
         except Exception:  # noqa: BLE001
             logger.debug("grant to %s failed", uid, exc_info=True)
     await _audit(
@@ -186,7 +216,12 @@ async def grant_to_audience(
         ok=done > 0,
         summary=summary,
         affected=done,
-        meta={"amount": amount, "per_user": amount, "skipped": skipped_broke},
+        meta={
+            "amount": amount, "per_user": amount, "skipped": skipped_broke,
+            # Кликабельный отчёт строит reply_handlers по targets; кап 30, чтобы
+            # не раздувать сообщение при раздаче на всю комнату.
+            "targets": per_target[:30],
+        },
     )
 
 
@@ -403,6 +438,28 @@ async def mute_one(
 
 
 # --- Инструмент: множитель ешек (эконом-ивент) -------------------------------
+
+
+async def set_app_setting(
+    session: AsyncSession, *, owner_id: int, key: str, value,
+) -> ToolResult:
+    """Меняет настройку игры из белого списка (admin_controls) + аудит.
+
+    Это «руки» друна в админке: вкл/выкл фич, ставки, кулдауны, множители. Сам
+    белый список и клампы — в admin_controls (нельзя записать произвольный ключ).
+    """
+    from app.features.drun import admin_controls
+
+    ok, human, coerced = await admin_controls.set_setting(
+        session, key=key, value=value, owner_id=owner_id
+    )
+    if not ok:
+        return ToolResult(ok=False, error=human)
+    await _audit(
+        session, owner_id, "owner_set_setting", None, human,
+        {"key": key, "value": coerced},
+    )
+    return ToolResult(ok=True, summary=human, meta={"key": key, "value": coerced})
 
 
 async def set_eshki_multiplier(

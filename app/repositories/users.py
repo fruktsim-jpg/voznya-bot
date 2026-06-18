@@ -92,6 +92,24 @@ async def top_by_balance(session: AsyncSession, limit: int) -> list[User]:
     return list(result.scalars().all())
 
 
+async def bottom_by_balance(
+    session: AsyncSession, limit: int, *, active_days: int | None = None
+) -> list[User]:
+    """Возвращает САМЫХ НИЩИХ игроков (по возрастанию баланса).
+
+    Используется для адресной помощи («дай 5 самым бедным»). По умолчанию любой
+    существующий игрок; при ``active_days`` ограничиваем недавней активностью,
+    чтобы не раздавать мёртвым аккаунтам.
+    """
+    stmt = select(User).order_by(User.balance.asc(), User.user_id.asc())
+    if active_days is not None:
+        since = now_utc() - timedelta(days=max(1, active_days))
+        stmt = stmt.where(User.last_active_at >= since)
+    stmt = stmt.limit(max(1, limit))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def top_by_pidor(session: AsyncSession, limit: int) -> list[User]:
     """Возвращает топ пользователей по количеству статусов «Пидор дня»."""
     result = await session.execute(
