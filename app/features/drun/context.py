@@ -244,6 +244,26 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
         except Exception:  # noqa: BLE001
             logger.debug("affinity block failed", exc_info=True)
 
+        # Что друн САМ надумал об этом игроке (его сформированное мнение из думы
+        # о мире). Делает реакции укоренёнными в его сложившейся картине.
+        try:
+            from app.models import AiMemory
+
+            opinions = (
+                await session.execute(
+                    select(AiMemory.fact)
+                    .where(AiMemory.kind == "opinion")
+                    .where(AiMemory.subject_id == user_id)
+                    .order_by(AiMemory.weight.desc(), AiMemory.updated_at.desc())
+                    .limit(2)
+                )
+            ).all()
+            for (op,) in opinions:
+                if op:
+                    lines.append(f"- ТВОЁ МНЕНИЕ О НЁМ: {op}")
+        except Exception:  # noqa: BLE001
+            logger.debug("opinion block failed", exc_info=True)
+
         # Расширенная видимость: инвентарь/ачивки/сезон/модерация/кейсы.
         try:
             lines.extend(await _player_assets_block(session, user_id))
@@ -448,6 +468,30 @@ async def _economy_block(session: AsyncSession) -> str:
 
     block = await drun_economy.chat_economy_digest(session, hours=24)
     _economy_cache = (now, block)
+    return block
+
+
+_WORLDVIEW_TTL = 180.0
+_worldview_cache: tuple[float, str] | None = None
+
+
+async def _worldview_block(session: AsyncSession) -> str:
+    """Убеждения и летопись друна (сюжеты/прогнозы/легенды), кэш на 3 мин.
+
+    Друн ссылается на собственную историю мира — это и делает его живой
+    сущностью с памятью дуг, а не реактивным ботом. Меняется медленно (дума
+    раз в часы), поэтому кэшируем агрессивно.
+    """
+    import time as _t
+
+    global _worldview_cache
+    now = _t.monotonic()
+    if _worldview_cache is not None and now - _worldview_cache[0] < _WORLDVIEW_TTL:
+        return _worldview_cache[1]
+    from app.features.drun import worldview as drun_worldview
+
+    block = await drun_worldview.worldview_block(session)
+    _worldview_cache = (now, block)
     return block
 
 
@@ -761,6 +805,7 @@ async def build_context(
     blocks.append(await _memory_block(session, subject_id, query))
     blocks.append(await _overview_block(session))
     blocks.append(await _economy_block(session))
+    blocks.append(await _worldview_block(session))
     blocks.append(await _season_block(session))
     if include_events:
         blocks.append(await _events_block(session))

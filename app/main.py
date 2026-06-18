@@ -34,6 +34,7 @@ from app.features.drun.distill import setup_memory_distill
 from app.features.drun.chat_memory import setup_chat_distill
 from app.features.drun.profile import setup_profile_sweep
 from app.features.drun.reflect import setup_reflection
+from app.features.drun.worldview import setup_worldview
 from app.features.drun.autonomous import setup_autonomous_poster
 
 from app.middlewares import (
@@ -148,6 +149,13 @@ async def on_startup(bot: Bot) -> None:
     # «уроки» про местную культуру (сленг, что смешно, как реагируют), которые
     # подмешиваются в системный промпт — он буквально умнеет со временем.
     setup_reflection(scheduler, sessionmaker)
+
+    # Мировоззрение: автономный цикл observe→think→reflect. Раз в несколько
+    # часов друн смотрит на ВЕСЬ мир (экономика/события/серии/движения) и сам
+    # формирует мнения об игроках, тянущиеся сюжеты и прогнозы, а также
+    # проверяет дозревшие прогнозы. Так он ведёт летопись Возни и ссылается на
+    # собственную историю — живая сущность, а не реактивный бот.
+    setup_worldview(scheduler, sessionmaker)
 
     # Автономное поведение: друн сам комментирует значимые события мира в чат
     # (с дневным капом и предохранителями). Делает его живым, а не реактивным.

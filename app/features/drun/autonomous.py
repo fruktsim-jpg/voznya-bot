@@ -265,6 +265,42 @@ async def _notice_pattern(
             return result.text
         return None
 
+    async def _emit_world(task: str, key: str) -> str | None:
+        """Эмит без конкретного субъекта — для сюжетов/летописи мира."""
+        result = await drun_service.generate(
+            session, task=task, subject_id=None, channel=channel,
+            include_events=False, memory_kind="monologue",
+            role=drun_config.ROLE_NARRATOR,
+        )
+        if result.ok and result.text:
+            mark[key] = now.isoformat()
+            await _set_pattern_mark(session, mark)
+            return result.text
+        return None
+
+    # Кандидат 0: летопись — друн сам поднимает тянущийся сюжет или вспоминает
+    # легенду/прогноз. Это ядро агентности: он не ждёт события, а ВЕДЁТ
+    # повествование мира. Редко (свой кулдаун), чтобы не превратить в нытьё.
+    if not _recent("worldview_story"):
+        try:
+            from app.features.drun import worldview as drun_worldview
+
+            wv = await drun_worldview.worldview_block(session)
+            if wv and "Сюжеты в развитии" in wv:
+                task = (
+                    "Ты — живой дух чата Возни и его ЛЕТОПИСЕЦ. У тебя есть свои "
+                    "сюжеты, прогнозы и легенды (ниже в контексте — блок ЛЕТОПИСЬ). "
+                    "Сам, без повода, ВКИНЬ в чат ОДНУ живую реплику: продвинь "
+                    "тянущийся сюжет, припомни легенду или напомни про свой "
+                    "прогноз — дерзко, в образе, коротко. Не зачитывай списком, "
+                    "выбери ОДНУ нить и обыграй её как ведущий шоу."
+                )
+                out = await _emit_world(task, "worldview_story")
+                if out:
+                    return out
+        except Exception:  # noqa: BLE001
+            logger.debug("worldview initiative failed", exc_info=True)
+
     # Кандидат 1: глубокий тильт в казино (серия проигрышей) — сочнейший роаст.
     if not _recent("casino_tilt"):
         u = (
