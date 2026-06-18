@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
@@ -28,6 +29,48 @@ from app.features.drun import persona as drun_persona
 from app.features.drun import provider as drun_provider
 
 logger = get_logger(__name__)
+
+
+async def _heal_if_poisoned(session: AsyncSession) -> bool:
+    """Чинит сессию, отравленную аборченной транзакцией upstream-кодом.
+
+    INCIDENT 2026-06-18: upstream-middleware (user_tracking, achievements,
+    moderation backstop и т.д.) делают SQL в общей сессии и ловят все
+    Exception без rollback. Если их SQL уронит asyncpg-транзакцию (любая
+    DBAPIError), без rollback она уходит в `InFailedSQLTransactionError` —
+    и ВСЁ дальнейшее, включая `SAVEPOINT sa_savepoint_N`, валится с
+    «current transaction is aborted». Savepoint не спасает: SAVEPOINT — это
+    тоже SQL, и его prepare уже падает на отравленной транзакции.
+
+    Этот хелпер пробует дешёвый ``SELECT 1`` через savepoint: если он
+    проходит — транзакция жива; если падает с InFailedSQLTransactionError
+    — делаем ``session.rollback()``, чтобы вернуть сессию в рабочее
+    состояние. Возвращает True, если пришлось лечить (для лога).
+
+    Цена починки: теряем неподтверждённые upstream-записи этой сессии
+    (user_tracking.upsert_user, ears.capture_chat и т.п.). Это
+    допустимая жертва: они и так не доехали бы до commit, а альтернатива
+    — крах всего чат-хэндлера.
+    """
+    from sqlalchemy import text as sql_text
+
+    try:
+        async with session.begin_nested():
+            await session.execute(sql_text("SELECT 1"))
+        return False
+    except DBAPIError as exc:
+        msg = str(exc).lower()
+        if "aborted" in msg or "infailedsqltransactionerror" in msg:
+            logger.warning(
+                "drun: outer transaction poisoned upstream — healing via rollback",
+                exc_info=False,
+            )
+            try:
+                await session.rollback()
+            except Exception:  # noqa: BLE001
+                logger.warning("drun: rollback after poison failed", exc_info=True)
+            return True
+        raise
 
 _DEFAULT_OBSERVATION = (
     "Вкинь в чат короткую живую реплику — глянь о чём базарят и вцепись в тему "
@@ -129,6 +172,12 @@ async def generate(
     подмешивается в историю, чтобы друн не продолжал свою же ленту рофлов
     вместо ответа на короткий вопрос).
     """
+    # Лечим отравленную upstream-кодом транзакцию ДО любой SQL-операции.
+    # См. docstring _heal_if_poisoned: без этого даже первый get_config()
+    # либо наша savepoint-обёртка ниже валится на самом
+    # `SAVEPOINT ...`-стейтменте с «current transaction is aborted».
+    await _heal_if_poisoned(session)
+
     cfg = await drun_config.get_config(session)
     if not cfg.usable:
         return GenerateResult(ok=False, error="disabled")
