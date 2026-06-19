@@ -258,7 +258,7 @@ async def get_affinity(session: AsyncSession, user_id: int) -> Affinity:
 
 async def record_interaction(
     session: AsyncSession, user_id: int, text: str
-) -> None:
+) -> tuple[int, str, int]:
     """Обновляет аффинити и журнал эпизодов по реплике игрока в адрес друна.
 
     Двухслойный пайплайн:
@@ -272,6 +272,12 @@ async def record_interaction(
 
     Эпизод с непустым ``gist`` пишется в журнал (последние ``_EPISODE_KEEP``).
     Профиль создаётся лениво. Коммит — на вызывающем.
+
+    Возвращает ``(sentiment, gist, prev_score)`` — чтобы вызывающий мог решить,
+    не достоин ли тон отдельного ПАМЯТНОГО ЭПИЗОДА отношений (наезд/примирение
+    в адрес друна — это поступок, а не только сдвиг аффинити). prev_score — это
+    отношение ДО этой реплики (с затуханием), нужно для распознавания
+    примирения (был врагом → вдруг тепло).
     """
     heuristic = score_sentiment(text)
     text_len = len((text or "").strip())
@@ -299,6 +305,8 @@ async def record_interaction(
                 except (ValueError, TypeError):
                     pass
 
+        prev_decayed = _decayed(prev, last_days)
+
         # LLM-уточнение зовём только когда есть шанс получить полезный сигнал:
         # либо эвристика что-то увидела, либо реплика достаточно объёмная.
         sentiment = heuristic
@@ -310,9 +318,9 @@ async def record_interaction(
 
         # Нечего записывать и нет профиля — не плодим пустые строки.
         if prof is None and sentiment == 0 and not gist:
-            return
+            return sentiment, gist, prev_decayed
 
-        new_score = apply_delta(_decayed(prev, last_days), sentiment)
+        new_score = apply_delta(prev_decayed, sentiment)
         now_iso = datetime.now(timezone.utc).isoformat()
 
         episodes = list(prev_episodes)
@@ -332,5 +340,7 @@ async def record_interaction(
             "episodes": episodes,
         }
         prof.data = data
+        return sentiment, gist, prev_decayed
     except Exception:  # noqa: BLE001
         logger.debug("record_interaction failed", exc_info=True)
+        return 0, "", 0

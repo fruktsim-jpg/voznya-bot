@@ -105,6 +105,7 @@ async def distill_chat(session: AsyncSession) -> int:
     existing = await _existing_chat_facts(session)
     expires = now_utc() + timedelta(days=_FACT_TTL_DAYS)
     added = 0
+    reinforced = 0
     for item in facts:
         fact = item["fact"]
         ids = name_to_ids.get(item["name"].lower(), set())
@@ -112,13 +113,21 @@ async def distill_chat(session: AsyncSession) -> int:
         # храним как факт про мир/чат (subject_id=None), но НЕ приписываем
         # конкретному человеку, чтобы не путать досье.
         subject_id = next(iter(ids)) if len(ids) == 1 else None
+        cat = item.get("category", "")
+        kind = f"chat:{cat}" if cat in _CATEGORIES else "chat"
         if (subject_id, fact) in existing:
+            # ПОВТОРНОЕ упоминание — не шум, а ПОДТВЕРЖДЕНИЕ. Раньше дубликат
+            # просто отбрасывался, и из-за TTL=7д прижившиеся клички/шутки/мемы
+            # выветривались, даже если чат повторял их каждую неделю. Теперь
+            # повтор УКРЕПЛЯЕТ память: бустим вес (до 3) и продлеваем жизнь —
+            # так running joke живёт, пока он живой в чате, и умирает, когда чат
+            # про него забыл. Это и есть community lore с естественным отбором.
+            if await _reinforce_fact(session, subject_id, fact, expires):
+                reinforced += 1
             continue
         existing.add((subject_id, fact))
         # Типизируем память (#3): kind = "chat:<category>" — так ники/шутки/мемы
         # отличимы и от обычных черт, и друг от друга.
-        cat = item.get("category", "")
-        kind = f"chat:{cat}" if cat in _CATEGORIES else "chat"
         session.add(
             AiMemory(
                 subject_id=subject_id,
@@ -138,9 +147,43 @@ async def distill_chat(session: AsyncSession) -> int:
     except Exception:  # noqa: BLE001
         logger.debug("persist aliases failed", exc_info=True)
 
-    if added:
+    if added or reinforced:
         await session.flush()
     return added
+
+
+async def _reinforce_fact(
+    session: AsyncSession,
+    subject_id: int | None,
+    fact: str,
+    expires,
+) -> bool:
+    """Укрепляет уже известный факт: +1 к весу (до 3) и продление TTL.
+
+    Возвращает True, если запись найдена и обновлена. Так повторяющиеся клички/
+    шутки/мемы накапливают вес (становятся «ярче» в контексте) и не протухают,
+    пока чат их повторяет. Сбой — молча False (укрепление не критично).
+    """
+    try:
+        if subject_id is None:
+            q = select(AiMemory).where(
+                AiMemory.fact == fact, AiMemory.subject_id.is_(None)
+            ).limit(1)
+        else:
+            q = select(AiMemory).where(
+                AiMemory.fact == fact, AiMemory.subject_id == subject_id
+            ).limit(1)
+        mem = (await session.execute(q)).scalar_one_or_none()
+        if mem is None:
+            return False
+        mem.weight = min(3, int(mem.weight or 1) + 1)
+        # Продлеваем жизнь только TTL-фактам (легенды/мнения без срока не трогаем).
+        if mem.expires_at is not None:
+            mem.expires_at = expires
+        return True
+    except Exception:  # noqa: BLE001
+        logger.debug("reinforce_fact failed", exc_info=True)
+        return False
 
 
 async def _persist_aliases(
@@ -250,6 +293,135 @@ async def purge_expired(session: AsyncSession) -> int:
     return int(result.rowcount or 0)
 
 
+# --- Извлечение СОЦИАЛЬНЫХ ЭПИЗОДОВ (LEAP-5) ---------------------------------
+
+_EPISODE_WINDOW = 80
+_MAX_EPISODES = 5
+
+_EPISODE_SYSTEM = (
+    "Ты — наблюдатель социальной динамики чата. По логу болтовни найди ПАМЯТНЫЕ "
+    "социальные МОМЕНТЫ между людьми — не черты и не темы, а конкретные "
+    "ПОСТУПКИ: кто кого предал, кинул с обещанием, заступился, унизил, бросил "
+    "вызов, помирился, проявил щедрость/лидерство, ныл. Игнорируй обычную "
+    "болтовню, шутки и фон — только то, что реально характеризует ОТНОШЕНИЯ и "
+    "стоит запомнить надолго."
+)
+_EPISODE_INSTRUCTION = (
+    "Верни СТРОГО JSON-массив (без пояснений) до {max} объектов вида "
+    '{{"name":"ник того, КТО совершил поступок (точно из лога)",'
+    '"type":"тип эпизода","gist":"суть в одну фразу на русском, КОНКРЕТНО, '
+    'чтобы можно было припомнить дословно","significance":1-3}}. '
+    "type — одно из: betrayal (предал/кинул), broken_promise (обещал и слил), "
+    "kept_promise (сдержал слово), promise (дал обещание), support (поддержал), "
+    "defense (заступился за кого-то), generosity (расщедрился, подарил), "
+    "leadership (повёл за собой, организовал), humiliation (публично унизил "
+    "кого-то / был унижен — пиши про того, ВОКРУГ кого момент), challenge "
+    "(бросил вызов), rivalry_escalation (вражда обострилась), reconciliation "
+    "(помирились), whining (ноет/жалуется по кругу). "
+    "significance: 1 — мелкий момент, 2 — заметный, 3 — яркий, запоминающийся "
+    "надолго. Бери ТОЛЬКО реальные моменты из лога, не выдумывай. Если памятных "
+    "поступков нет — верни []."
+)
+
+
+def _parse_episodes(raw: str) -> list[dict]:
+    """Парсит JSON-массив эпизодов из ответа модели, терпимо к мусору."""
+    from app.features.drun import episodes as drun_episodes
+
+    text = (raw or "").strip()
+    start, end = text.find("["), text.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        return []
+    try:
+        data = json.loads(text[start : end + 1])
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for el in data[:_MAX_EPISODES]:
+        if not isinstance(el, dict):
+            continue
+        name = str(el.get("name", "")).strip()
+        etype = str(el.get("type", "")).strip().lower()
+        gist = str(el.get("gist", "")).strip()
+        if not name or not gist or len(gist) > 200:
+            continue
+        if drun_episodes.episode_type(etype) is None:
+            continue
+        try:
+            sig = int(el.get("significance", 1))
+        except (TypeError, ValueError):
+            sig = 1
+        out.append({
+            "name": name, "type": etype, "gist": gist,
+            "significance": max(1, min(3, sig)),
+        })
+    return out
+
+
+async def distill_episodes(session: AsyncSession) -> int:
+    """Один проход извлечения социальных эпизодов из чата. Возвращает число.
+
+    Отдельный LLM-проход (а не довесок к фактам): эпизоды требуют другого
+    фокуса — не «какой человек», а «что он СДЕЛАЛ». Привязываем к игроку только
+    при ОДНОЗНАЧНОМ совпадении ника (иначе момент не на того — хуже, чем
+    пропустить). Запись + прямой сдвиг мнения — через episodes.record_episode.
+    """
+    cfg = await drun_config.get_config(session)
+    if not cfg.usable:
+        return 0
+
+    from app.features.drun import episodes as drun_episodes
+
+    msgs = await drun_memory.recent_chat(session, channel="chat", limit=_EPISODE_WINDOW)
+    if len(msgs) < 10:
+        return 0
+
+    lines = []
+    name_to_ids: dict[str, set[int]] = {}
+    for m in msgs:
+        nm = (m.meta or {}).get("name") or f"id{m.user_id}"
+        lines.append(f"{nm}: {m.content}")
+        if m.user_id:
+            name_to_ids.setdefault(nm.lower(), set()).add(m.user_id)
+
+    log = "\n".join(lines)
+    user_msg = (
+        f"{_EPISODE_INSTRUCTION.format(max=_MAX_EPISODES)}\n\n# ЛОГ ЧАТА\n{log}"
+    )
+    try:
+        raw = await drun_provider.chat(
+            cfg, system=_EPISODE_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+            model=cfg.model_for(drun_config.ROLE_MEMORY_EXTRACT),
+        )
+    except drun_provider.LlmError as exc:
+        logger.debug("episode distill llm failed: %s", exc)
+        return 0
+
+    items = _parse_episodes(raw)
+    if not items:
+        return 0
+
+    added = 0
+    for it in items:
+        ids = name_to_ids.get(it["name"].lower(), set())
+        if len(ids) != 1:
+            continue  # неоднозначно/неизвестно — момент не на того хуже пропуска
+        uid = next(iter(ids))
+        mem = await drun_episodes.record_episode(
+            session,
+            subject_id=uid,
+            code=it["type"],
+            gist=it["gist"],
+            significance=it["significance"],
+        )
+        if mem is not None:
+            added += 1
+    return added
+
+
 def setup_chat_distill(
     scheduler,
     sessionmaker: async_sessionmaker[AsyncSession],
@@ -266,11 +438,12 @@ def setup_chat_distill(
 
                 pruned = await drun_memory.prune_old_messages(session)
                 n = await distill_chat(session)
+                eps = await distill_episodes(session)
                 await session.commit()
-                if n or removed or pruned:
+                if n or removed or pruned or eps:
                     logger.info(
-                        "drun chat memory: +%d facts, -%d expired, -%d old msgs",
-                        n, removed, pruned,
+                        "drun chat memory: +%d facts, +%d episodes, -%d expired, -%d old msgs",
+                        n, eps, removed, pruned,
                     )
         except Exception:  # noqa: BLE001
             logger.warning("drun chat distill failed", exc_info=True)

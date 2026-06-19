@@ -34,7 +34,93 @@ logger = get_logger(__name__)
 _RIVALRY_MIN = 3
 # Окно со-упоминаний в чате (дни) и порог «корешей».
 _COMENTION_DAYS = 14
-_FRIEND_MIN = 4
+# Сколько раз пара должна оказаться «рядом», чтобы это считалось сигналом
+# (сырой минимум доказательств, до нормировки на болтливость).
+_FRIEND_RAW_MIN = 4
+# Итоговый порог «кореша» уже по НОРМИРОВАННОМУ баллу (см. _buddy_counts).
+_FRIEND_MIN = 3
+# Максимальный разрыв во времени между соседними репликами, чтобы считать их
+# одной беседой (сек). Реплики в часах друг от друга — это не диалог, а просто
+# два человека, писавшие в один день; без этого окна болтуны «дружат» со всеми.
+_ADJ_WINDOW_SEC = 180
+
+# Приоритет вида связи при схлопывании нескольких рёбер одного человека в одно.
+# Брак/вражда/соперничество — более «определяющие» отношения, чем кореш/даритель,
+# поэтому при конфликте побеждает более сильный по смыслу вид.
+_KIND_PRIORITY: dict[str, int] = {
+    "spouse": 5,
+    "rival": 4,
+    "foe": 3,
+    "ally": 2,
+    "gifter": 1,
+    "buddy": 0,
+}
+
+
+def _edge_rank(edge: "RelEdge") -> tuple[int, int]:
+    """Ключ выбора «лучшего» ребра для человека: (приоритет вида, сила)."""
+    return (_KIND_PRIORITY.get(edge.kind, 0), edge.strength)
+
+
+def _score_buddies(
+    seq: list[tuple[int, float]], user_id: int
+) -> Counter[int]:
+    """Чистая нормировка «корешей» из последовательности (автор, время_сек).
+
+    ``seq`` — реплики чата по возрастанию времени, ``ts`` в epoch-секундах.
+    Возвращает ``other_id → нормированный балл близости`` (целое, читаемое как
+    условные «реплики диалога»). Логика и мотивация — в :func:`_buddy_counts`.
+    """
+    total: Counter[int] = Counter(uid for uid, _ in seq)
+    raw: Counter[int] = Counter()
+    n = len(seq)
+    for i, (uid, ts) in enumerate(seq):
+        if uid != user_id:
+            continue
+        # соседи в пределах ±2 реплик И ближе _ADJ_WINDOW_SEC по времени
+        for j in range(max(0, i - 2), min(n, i + 3)):
+            if j == i:
+                continue
+            other, ots = seq[j]
+            if not other or other == user_id:
+                continue
+            if abs(ots - ts) <= _ADJ_WINDOW_SEC:
+                raw[other] += 1
+    # Нормируем: балл = со-появления / корень из общей активности собеседника.
+    # Корень смягчает штраф (активный, но реально близкий человек не обнуляется),
+    # но гасит глобальных болтунов, которые мелькают рядом со всеми.
+    cnt: Counter[int] = Counter()
+    for other, rc in raw.items():
+        if rc < _FRIEND_RAW_MIN:
+            continue
+        background = max(1, total.get(other, 1))
+        score = rc / (background ** 0.5)
+        scaled = int(round(score * (background ** 0.25)))
+        if scaled > 0:
+            cnt[other] = scaled
+    return cnt
+
+
+def _dedupe_by_person(
+    edges: "list[RelEdge] | dict", max_edges: int
+) -> "list[RelEdge]":
+    """Схлопывает рёбра по человеку и возвращает топ из РАЗНЫХ людей.
+
+    Один и тот же сосед мог попасть в несколько видов (buddy + gifter + ally);
+    без схлопывания один доминирующий человек занимал бы все слоты топа, а в
+    досье его имя дублировалось. Оставляем по каждому человеку ОДНО, самое
+    осмысленное ребро (по :func:`_edge_rank`).
+    """
+    values = edges.values() if isinstance(edges, dict) else edges
+    best_per_person: dict[int, RelEdge] = {}
+    for edge in values:
+        prev = best_per_person.get(edge.other_id)
+        if prev is None or _edge_rank(edge) > _edge_rank(prev):
+            best_per_person[edge.other_id] = edge
+    ranked = sorted(
+        best_per_person.values(), key=_edge_rank, reverse=True
+    )
+    return ranked[:max_edges]
 
 
 @dataclass
@@ -127,10 +213,22 @@ async def _rep_edges(
 
 
 async def _buddy_counts(session: AsyncSession, user_id: int) -> Counter[int]:
-    """Кореша: кто часто пишет в чате «рядом» с игроком (соседние реплики).
+    """Кореша: кто реально ведёт ДИАЛОГ с игроком (а не просто болтлив).
 
-    Грубая эвристика дружбы: берём окно последних реплик чата и считаем, чьи
-    сообщения идут вплотную к сообщениям игрока (диалог идёт между ними).
+    Сырая эвристика «соседних реплик» ломалась в живом чате: самые активные
+    болтуны оказывались «рядом» со всеми и становились корешами каждого. Чинит
+    это две поправки:
+
+    * ВРЕМЕННОЕ ОКНО: реплики считаются соседними, только если идут в пределах
+      ``_ADJ_WINDOW_SEC`` друг от друга. Сообщения с разрывом в часы — это не
+      диалог, а просто активность в один день.
+    * НОРМИРОВКА НА БОЛТЛИВОСТЬ: сырой счётчик со-появлений делим на «фоновую»
+      активность собеседника (сколько он вообще пишет). Так общительный сосед,
+      который реально переписывается именно с игроком, обгоняет глобального
+      болтуна, который мелькает рядом со всеми по инерции.
+
+    Вся арифметика вынесена в чистую :func:`_score_buddies` (тестируется без БД);
+    здесь только выборка истории чата.
     """
     since = now_utc() - timedelta(days=_COMENTION_DAYS)
     rows = (
@@ -143,17 +241,13 @@ async def _buddy_counts(session: AsyncSession, user_id: int) -> Counter[int]:
             .limit(4000)
         )
     ).all()
-    seq = [uid for uid, _ in rows]
-    cnt: Counter[int] = Counter()
-    for i, uid in enumerate(seq):
-        if uid != user_id:
-            continue
-        # соседи в пределах ±2 реплик — вероятный диалог
-        for j in range(max(0, i - 2), min(len(seq), i + 3)):
-            other = seq[j]
-            if other and other != user_id:
-                cnt[other] += 1
-    return cnt
+    seq: list[tuple[int, float]] = []
+    for uid, ts in rows:
+        try:
+            seq.append((uid, ts.timestamp()))
+        except Exception:  # noqa: BLE001
+            seq.append((uid, 0.0))
+    return _score_buddies(seq, user_id)
 
 
 async def _gift_counts(session: AsyncSession, user_id: int) -> Counter[int]:
@@ -233,7 +327,7 @@ async def compute_edges(
             if c >= _FRIEND_MIN and (oid, "spouse") not in edges:
                 key = (oid, "buddy")
                 if key not in edges:
-                    edges[key] = RelEdge(oid, "", "buddy", strength=c // 2)
+                    edges[key] = RelEdge(oid, "", "buddy", strength=c)
                     need_names.add(oid)
     except Exception:  # noqa: BLE001
         logger.debug("buddy edges failed", exc_info=True)
@@ -256,5 +350,9 @@ async def compute_edges(
             if not edge.other_name:
                 edge.other_name = name_for(names, oid)
 
-    ranked = sorted(edges.values(), key=lambda e: e.strength, reverse=True)
-    return ranked[:max_edges]
+    # Схлопываем рёбра по ЧЕЛОВЕКУ: один и тот же сосед мог попасть в несколько
+    # видов (buddy + gifter + ally), и без этого один доминирующий человек
+    # занимал бы все слоты топа, а в досье его имя дублировалось. Оставляем по
+    # каждому человеку ОДНО, самое осмысленное ребро (см. _dedupe_by_person),
+    # чтобы итоговый список был из РАЗНЫХ людей.
+    return _dedupe_by_person(edges, max_edges)

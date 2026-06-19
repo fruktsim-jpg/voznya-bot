@@ -190,7 +190,73 @@ async def distill(session: AsyncSession) -> int:
         # Фиксируем в сессии, чтобы повторный проход (и параллельные читатели в
         # той же сессии) уже видели факты и не плодили дубли.
         await session.flush()
+
+    # ОБЪЕКТИВНЫЕ СОЦИАЛЬНЫЕ ЭПИЗОДЫ (LEAP-5): часть памятных поступков видна
+    # прямо из событий мира, без LLM. Эпизоды двигают вектор мнения НАПРЯМУЮ
+    # (см. episodes.record_episode → opinions.apply_deltas), поэтому gist пишем
+    # БЕЗ меняющихся счётчиков — иначе рост числа породил бы новый эпизод и
+    # повторный сдвиг мнения на каждом проходе. Дедуп record_episode по тексту
+    # гарантирует, что один поступок укрепляет мнение РОВНО раз.
+    try:
+        await _distill_objective_episodes(
+            session, names=names, rank_ups=rank_ups,
+            gifts_received=gifts_received, pair_duels=pair_duels,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("objective episodes failed", exc_info=True)
+
     return added
+
+
+# Пороги объективных эпизодов (выше, чем у обычных traits — эпизод заметнее).
+_EP_GIFT_MIN = 4        # щедрость: столько подарков получено (осыпают любимчика)
+_EP_RANKUP_MIN = 3      # лидерство/рост: серия повышений ранга
+_EP_RIVALRY_MIN = 5     # эскалация вражды: пара рубится особенно часто
+
+
+async def _distill_objective_episodes(
+    session: AsyncSession,
+    *,
+    names: dict[int, str],
+    rank_ups: "Counter[int]",
+    gifts_received: "Counter[int]",
+    pair_duels: "Counter[tuple[int, int]]",
+) -> None:
+    """Пишет памятные эпизоды, выводимые из событий мира детерминированно.
+
+    gist'ы НАМЕРЕННО без чисел (идемпотентность дедупа record_episode): один
+    устойчивый поступок укрепляет мнение единожды, а не на каждом проходе.
+    """
+    from app.features.drun import episodes as drun_episodes
+
+    # Лидерство/рост: серия повышений ранга → друн уважает «поднимающегося».
+    for uid, cnt in rank_ups.items():
+        if cnt >= _EP_RANKUP_MIN:
+            await drun_episodes.record_episode(
+                session, subject_id=uid, code="leadership",
+                gist=f"{name_for(names, uid)} уверенно поднимался в рейтинге дуэлей",
+                significance=2,
+            )
+
+    # Щедрость: кого осыпают подарками — обычно это любимчик, который и сам дарит.
+    for uid, cnt in gifts_received.items():
+        if cnt >= _EP_GIFT_MIN:
+            await drun_episodes.record_episode(
+                session, subject_id=uid, code="generosity",
+                gist=f"вокруг {name_for(names, uid)} крутится обмен подарками",
+                significance=1,
+            )
+
+    # Эскалация вражды: пара рубится особенно часто — оба «бойцы с историей».
+    for (a, b), cnt in pair_duels.items():
+        if cnt >= _EP_RIVALRY_MIN:
+            na, nb = name_for(names, a), name_for(names, b)
+            for uid, foe in ((a, nb), (b, na)):
+                await drun_episodes.record_episode(
+                    session, subject_id=uid, code="rivalry_escalation",
+                    gist=f"давняя дуэльная вражда с {foe}",
+                    significance=2,
+                )
 
 
 def setup_memory_distill(

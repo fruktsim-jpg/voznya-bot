@@ -24,10 +24,12 @@ from app.features.drun import config as drun_config
 from app.features.drun import context as drun_context
 from app.features.drun import actions as drun_actions
 from app.features.drun import ask as drun_ask
+from app.features.drun import emotion as drun_emotion
 from app.features.drun import filter as drun_filter
 from app.features.drun import memory as drun_memory
 from app.features.drun import persona as drun_persona
 from app.features.drun import provider as drun_provider
+from app.features.drun import variance as drun_variance
 
 logger = get_logger(__name__)
 
@@ -131,6 +133,66 @@ def _econ_hint_for_intent(intent_kind: str | None) -> str:
     return _ECON_HINT_BY_INTENT.get(intent_kind.lower(), "")
 
 
+async def _peek_mood(session: AsyncSession, channel: str) -> tuple[str | None, int]:
+    """Мгновенное настроение мира (mood) для смещения стиля. Сбой → (None, 1).
+
+    Изолируем в savepoint: mood делает SELECT'ы, и на отравленной транзакции
+    они бы каскадно валили generate. begin_nested откатывает только себя.
+    """
+    try:
+        from app.features.drun import mood as drun_mood
+
+        async with session.begin_nested():
+            m = await drun_mood.compute_mood(session, channel=channel)
+        return m.label, int(m.intensity or 1)
+    except Exception:  # noqa: BLE001
+        logger.debug("peek_mood failed", exc_info=True)
+        return None, 1
+
+
+async def _peek_emotion(session: AsyncSession):
+    """Стойкое настроение друна (emotion) с учётом затухания. Сбой → нейтрал."""
+    try:
+        async with session.begin_nested():
+            return await drun_emotion.get_state(session)
+    except Exception:  # noqa: BLE001
+        logger.debug("peek_emotion failed", exc_info=True)
+        return drun_emotion.Emotion(0.0, 0.0)
+
+
+async def _peek_affinity(session: AsyncSession, subject_id: int | None) -> int:
+    """Накопленное личное отношение к собеседнику (-100..100). Сбой → 0."""
+    if subject_id is None:
+        return 0
+    try:
+        from app.features.drun import affinity as drun_affinity
+
+        async with session.begin_nested():
+            aff = await drun_affinity.get_affinity(session, subject_id)
+        return int(getattr(aff, "score", 0) or 0)
+    except Exception:  # noqa: BLE001
+        logger.debug("peek_affinity failed", exc_info=True)
+        return 0
+
+
+async def _peek_opinion(session: AsyncSession, subject_id: int | None):
+    """Сложившееся многомерное мнение об игроке (для окраски стиля). Сбой → нейтрал.
+
+    Возвращает :class:`opinions.Opinion` (с осями 0..100). Изолируем в savepoint:
+    ходит в БД, на отравленной транзакции иначе уронил бы generate.
+    """
+    from app.features.drun import opinions as drun_opinions
+
+    if subject_id is None:
+        return drun_opinions.neutral()
+    try:
+        async with session.begin_nested():
+            return await drun_opinions.get_opinion(session, subject_id)
+    except Exception:  # noqa: BLE001
+        logger.debug("peek_opinion failed", exc_info=True)
+        return drun_opinions.neutral()
+
+
 @dataclass
 class GenerateResult:
     """Результат генерации реплики друна."""
@@ -160,6 +222,9 @@ async def generate(
     query: str | None = None,
     intent_kind: str | None = None,
     asker_id: int | None = None,
+    addressed: bool = True,
+    urge: float = 0.0,
+    vary: bool = True,
 ) -> GenerateResult:
     """Генерирует одну реплику друна под конкретное задание ``task``.
 
@@ -172,6 +237,11 @@ async def generate(
     участвует в истории) или ``monologue`` (автономный вкид/реакция — НЕ
     подмешивается в историю, чтобы друн не продолжал свою же ленту рофлов
     вместо ответа на короткий вопрос).
+
+    ``vary`` — включает слой ВАРИАТИВНОСТИ (:mod:`variance`): на каждый ответ
+    собирается уникальный стиль (длина/яд/агрессия/тепло) + override температуры,
+    чтобы реплики не схлопывались к «средне-дерзкой реплике средней длины». Для
+    служебных объявлений (announce) можно отключить.
     """
     # Лечим отравленную upstream-кодом транзакцию ДО любой SQL-операции.
     # См. docstring _heal_if_poisoned: без этого даже первый get_config()
@@ -260,6 +330,54 @@ async def generate(
                 if to_name else m.content
             )
             messages.append({"role": "assistant", "content": content})
+    # СЛОЙ ВАРИАТИВНОСТИ + СТОЙКОЕ НАСТРОЕНИЕ. Это лекарство от однообразия:
+    # вместо статичной инструкции «будь разным» (которая всегда регрессирует к
+    # среднему) собираем КОНКРЕТНУЮ разнарядку на ЭТУ реплику — длину, яд,
+    # агрессию, тепло — со смещённым рандомом, плюс override температуры. Сигналы
+    # смещения: намерение perceive, мгновенное настроение мира (mood), стойкая
+    # эмоция друна (emotion), накопленное аффинити к собеседнику. Любой сбой —
+    # деградируем к дефолтному поведению, ответ не роняем.
+    style = None
+    temp_override: float | None = None
+    if vary:
+        try:
+            mood_label, mood_intensity = await _peek_mood(session, channel)
+            emo = await _peek_emotion(session)
+            affinity_score = await _peek_affinity(session, subject_id)
+            op = await _peek_opinion(session, subject_id)
+            # Стойкая эмоция двигает базовое настроение для стиля: взвинченность
+            # подмешивает «angry/chaotic»-смещение даже без свежих событий мира.
+            eff_mood = mood_label
+            if emo.arousal >= 0.6 and emo.valence <= -0.2:
+                eff_mood = "angry"
+            elif emo.arousal >= 0.6 and emo.valence >= 0.2:
+                eff_mood = "excited"
+            style = drun_variance.build_style(
+                intent_kind=intent_kind,
+                mood_label=eff_mood,
+                mood_intensity=mood_intensity,
+                affinity_score=affinity_score,
+                urge=urge,
+                addressed=addressed,
+                base_temperature=cfg.temperature,
+                op_annoyance=op.get("annoyance"),
+                op_respect=op.get("respect"),
+                op_entertainment=op.get("entertainment"),
+                op_trust=op.get("trust"),
+            )
+            temp_override = style.temperature
+            # Директивы стиля и стойкого настроения — в самый конец задания,
+            # ближе всего к точке генерации (модель сильнее слушает финал).
+            extra = [style.directive()]
+            emo_dir = emo.directive()
+            if emo_dir:
+                extra.append(emo_dir)
+            task = task + "\n\n" + "\n\n".join(extra)
+        except Exception:  # noqa: BLE001
+            logger.debug("drun variance/emotion failed, using defaults", exc_info=True)
+            style = None
+            temp_override = None
+
     user_content = (f"{ctx}\n\n# ЗАДАНИЕ\n{task}" if ctx else task).strip()
     messages.append({"role": "user", "content": user_content})
 
@@ -267,12 +385,16 @@ async def generate(
         raw = await drun_provider.chat(
             cfg, system=system, messages=messages,
             model=cfg.model_for(role or drun_config.ROLE_NARRATOR),
+            temperature=temp_override,
         )
     except drun_provider.LlmError as exc:
         logger.warning("drun generate failed: %s", exc)
         return GenerateResult(ok=False, error=str(exc))
 
-    text = drun_filter.clean(raw, max_chars=1200)
+    # Потолок длины под выбранную ось длины (на TERSE модель часто игнорит
+    # словесную рамку — режем жёстко пост-фильтром).
+    max_chars = style.max_chars if style is not None else 1200
+    text = drun_filter.clean(raw, max_chars=max_chars)
     if not text:
         return GenerateResult(ok=False, error="empty")
 
@@ -311,8 +433,9 @@ async def generate(
                 raw2 = await drun_provider.chat(
                     cfg, system=system, messages=followup,
                     model=cfg.model_for(role or drun_config.ROLE_NARRATOR),
+                    temperature=temp_override,
                 )
-                text2 = drun_filter.clean(raw2, max_chars=1200)
+                text2 = drun_filter.clean(raw2, max_chars=max_chars)
                 if text2:
                     text = text2
             except drun_provider.LlmError as exc:
@@ -376,6 +499,7 @@ async def observe(
     channel: str = "chat",
     intent_note: str | None = None,
     intent_kind: str | None = None,
+    urge: float = 0.0,
 ) -> GenerateResult:
     """Спонтанное встревание друна в живой чат (не ответ на обращение).
 
@@ -413,6 +537,8 @@ async def observe(
         intent_kind=intent_kind,
         allow_actions=(subject_id is not None),
         asker_id=None,
+        addressed=False,
+        urge=urge,
     )
 
 
@@ -446,6 +572,7 @@ async def respond(
     reply_context: str | None = None,
     intent_note: str | None = None,
     intent_kind: str | None = None,
+    urge: float = 0.5,
 ) -> GenerateResult:
     """Ответ друна на обращение игрока в чате (по контексту беседы).
 
@@ -493,9 +620,46 @@ async def respond(
         from app.features.drun import affinity as drun_affinity
 
         async with session.begin_nested():
-            await drun_affinity.record_interaction(session, asker_id, safe_text)
+            tone_sent, tone_gist, prev_aff = await drun_affinity.record_interaction(
+                session, asker_id, safe_text
+            )
+        # ПАМЯТНЫЙ ЭПИЗОД В АДРЕС ДРУНА (LEAP-5): сильный тон к нему лично — это
+        # не просто сдвиг аффинити, а ПОСТУПОК, который друн запомнит как момент.
+        # Резкий наезд → «унижение/нытьё» в его адрес; явное тепло после вражды
+        # → примирение; обычное тепло → поддержка. Берём только ЯРКИЙ тон
+        # (|sentiment|>=2) с непустым gist, чтобы не плодить эпизоды на «спс».
+        try:
+            if tone_gist and abs(tone_sent) >= 2:
+                async with session.begin_nested():
+                    from app.features.drun import episodes as drun_episodes
+
+                    if tone_sent <= -2:
+                        code = "humiliation"
+                    elif prev_aff <= -25:
+                        code = "reconciliation"  # был врагом → вдруг тепло
+                    else:
+                        code = "support"
+                    await drun_episodes.record_episode(
+                        session, subject_id=asker_id, code=code,
+                        gist=f"(в твой адрес) {tone_gist}"[:200], significance=2,
+                    )
+        except Exception:  # noqa: BLE001
+            logger.debug("respond personal episode failed", exc_info=True)
     except Exception:  # noqa: BLE001
         logger.warning("respond affinity update failed", exc_info=True)
+    # Стойкое НАСТРОЕНИЕ друна: тон обращения в его адрес сдвигает эмоцию,
+    # которая ПЕРЕЖИВЁТ этот ответ и покрасит следующие (взвинтят наездом —
+    # друн ещё какое-то время резче со всеми). Дёшево, без LLM; затухает само.
+    try:
+        async with session.begin_nested():
+            if intent_kind == "roast":
+                await drun_emotion.apply_nudge(session, drun_emotion.NUDGE_HOSTILE)
+            elif intent_kind == "support":
+                await drun_emotion.apply_nudge(session, drun_emotion.NUDGE_WARM)
+            elif intent_kind == "hype":
+                await drun_emotion.apply_nudge(session, drun_emotion.NUDGE_WIN)
+    except Exception:  # noqa: BLE001
+        logger.debug("respond emotion nudge failed", exc_info=True)
     # Фактический вопрос (погода/новости/курс/«что такое») → подтягиваем свежие
     # данные из интернета, чтобы друн не выдумывал. Для внутренних тем Возни и
     # обычной болтовни веб не дёргается (см. websearch.looks_factual).
@@ -567,6 +731,8 @@ async def respond(
         allow_actions=True,
         query=safe_text,
         intent_kind=intent_kind,
+        addressed=True,
+        urge=urge,
     )
 
 
@@ -608,6 +774,7 @@ async def announce_action(
         include_events=False,
         remember_message=False,
         memory_kind="monologue",
+        vary=False,
     )
 
 

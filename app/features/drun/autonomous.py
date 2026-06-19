@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,6 +28,8 @@ from app.core.logger import get_logger
 from app.core.money import money
 from app.core.utils import now_utc
 from app.features.drun import config as drun_config
+from app.features.drun import deferral as drun_deferral
+from app.features.drun import emotion as drun_emotion
 from app.features.drun import memory as drun_memory
 from app.features.drun import service as drun_service
 from app.features.drun.names import name_for, resolve_names
@@ -69,6 +72,22 @@ async def _set_last_event_id(session: AsyncSession, event_id: int) -> None:
         )
     )
     await session.execute(stmt)
+
+
+def _event_emotion_delta(event_type: str) -> tuple[float, float]:
+    """Толчок стойкого настроения от типа события мира (для emotion.apply_nudge).
+
+    Празднично-выигрышные события дают кураж (valence↑, arousal↑), конфликтные
+    — заводят и слегка хмурят. Опираемся на те же канонические наборы типов,
+    что и mood (единый источник классификации), чтобы не разойтись.
+    """
+    from app.features.drun import mood as drun_mood
+
+    if event_type in drun_mood._CELEBRATORY_TYPES:
+        return drun_emotion.NUDGE_WIN
+    if event_type in drun_mood._CONFLICT_TYPES:
+        return drun_emotion.NUDGE_CONFLICT
+    return (0.0, 0.0)
 
 
 def _describe_event(ev: WorldEvent, names: dict[int, str]) -> str:
@@ -165,6 +184,14 @@ async def comment_on_fresh_events(
     # Двигаем high-water-mark СРАЗУ (даже если генерация упадёт) — чтобы не
     # зациклиться на одном событии при повторных сбоях LLM.
     await _set_last_event_id(session, ev.id)
+
+    # Стойкое настроение друна реагирует на пульс мира: победы/джекпоты дают
+    # кураж, конфликты — заводят. Эмоция переживёт этот пост и покрасит
+    # ближайшие реплики. Изолируем — сбой не должен ронять автопост.
+    try:
+        await drun_emotion.apply_nudge(session, _event_emotion_delta(ev.type))
+    except Exception:  # noqa: BLE001
+        logger.debug("autonomous emotion nudge failed", exc_info=True)
 
     names = await resolve_names(
         session, [i for i in (ev.actor_id, ev.target_id) if i]
@@ -315,6 +342,84 @@ async def _notice_pattern(
         except Exception:  # noqa: BLE001
             logger.debug("worldview initiative failed", exc_info=True)
 
+    # Кандидат 0.4: СОЦИАЛЬНОЕ ЧУТЬЁ. Друн — участник сообщества с любимчиками и
+    # теми, кто его бесит. Иногда он сам, без повода, выдаёт реплику ПРО ЧЕЛОВЕКА
+    # из своих сложившихся симпатий/антипатий — это и делает его узнаваемым
+    # членом чата, а не нейтральным комментатором событий. Берём верх рейтинга
+    # мнений (любимчики/враги) и обыгрываем ОДНОГО.
+    if not _recent("social_take"):
+        try:
+            from app.features.drun import opinions as drun_opinions
+
+            favs, foes = await drun_opinions.rank_chat(session)
+            pool = []
+            # Слегка чаще тянемся к «занозам» (драма интереснее), но и любимчиков
+            # выделяем — баланс через простой выбор по доступности и рандому.
+            if foes:
+                pool.append((foes[0], "foe"))
+            if favs:
+                pool.append((favs[0], "fav"))
+            if pool:
+                pick, side = random.choice(pool)
+                if side == "foe":
+                    task = (
+                        "Ты — живой участник чата Возни, и есть человек, который "
+                        "тебя давно подбешивает (сложившееся мнение, не разовая "
+                        "обида). Сам, без повода, кинь ОДНУ колкую реплику в его "
+                        f"адрес по имени — в образе, коротко.\n\n# КТО: {pick.name} "
+                        f"(твой статус для него: {pick.standing})"
+                    )
+                else:
+                    task = (
+                        "Ты — живой участник чата Возни, и этот человек тебе по "
+                        "душе (сложившееся доброе мнение). Сам, без повода, "
+                        "выдели его ОДНОЙ репликой: тёплый подъёб своего, "
+                        f"признание или подъёб-вызов.\n\n# КТО: {pick.name} "
+                        f"(твой статус для него: {pick.standing})"
+                    )
+                out = await _emit(
+                    SimpleNamespace(user_id=pick.user_id), task, "social_take"
+                )
+                if out:
+                    return out
+        except Exception:  # noqa: BLE001
+            logger.debug("social initiative failed", exc_info=True)
+
+    # Кандидат 0.5: ПРИПОМИНАНИЕ. Друн раньше заметил чьё-то хвастовство/наезд,
+    # смолчал, а теперь — спустя время, без повода — припоминает это. Реакция с
+    # естественной задержкой ломает паттерн «стимул→мгновенный ответ» (см.
+    # deferral). Берём ОДНУ дозревшую заметку (не протухшую).
+    if not _recent("deferred_callback"):
+        try:
+            due = await drun_deferral.take_due(session)
+        except Exception:  # noqa: BLE001
+            logger.debug("deferral take_due failed", exc_info=True)
+            due = None
+        if due is not None:
+            tone = (
+                "припомни с подъёбом" if due.kind == "roast"
+                else "вспомни и обыграй"
+            )
+            task = (
+                "Ты — живой дух чата Возни с хорошей памятью. Какое-то время "
+                "назад один человек кое-что сказал/сделал, ты смолчал, а сейчас "
+                f"вдруг РЕШИЛ это припомнить — без повода, по своей памяти ({tone}). "
+                "Кинь ОДНУ короткую реплику в образе, как будто только что "
+                "вспомнил. Начни с чего-то вроде «кстати», «о, а помнишь», "
+                "«я тут вспомнил». По имени.\n\n"
+                f"# КОГО И ЧТО ПРИПОМНИТЬ: {due.name} недавно: «{due.gist}»"
+            )
+            result = await drun_service.generate(
+                session, task=task, subject_id=due.user_id, channel=channel,
+                include_events=False, memory_kind="monologue",
+                intent_kind=due.kind or None,
+                role=drun_config.ROLE_NARRATOR,
+            )
+            if result.ok and result.text:
+                mark["deferred_callback"] = now.isoformat()
+                await _set_pattern_mark(session, mark)
+                return result.text
+
     # Кандидат 1: глубокий тильт в казино (серия проигрышей) — сочнейший роаст.
     if not _recent("casino_tilt"):
         u = (
@@ -386,6 +491,17 @@ def setup_autonomous_poster(
     async def _job() -> None:
         try:
             async with sessionmaker() as session:
+                # НЕИДЕАЛЬНОСТЬ (LEAP-4, цель «неожиданная смена настроения»):
+                # изредка настроение друна дрейфует БЕЗ внешнего повода — как у
+                # живого человека «встал не с той ноги». Маленький случайный
+                # толчок, затем штатное затухание вернёт к норме. Это ломает
+                # предсказуемость «настроение = функция событий».
+                if random.random() < 0.06:
+                    drift = (random.uniform(-0.2, 0.2), random.uniform(0.0, 0.18))
+                    try:
+                        await drun_emotion.apply_nudge(session, drift)
+                    except Exception:  # noqa: BLE001
+                        logger.debug("mood drift failed", exc_info=True)
                 text = await comment_on_fresh_events(session)
                 # Метрика видимости: сколько автопостов сделано за сутки уже
                 # ПОСЛЕ этого (для наблюдаемости — видно в логах, не растёт молча).

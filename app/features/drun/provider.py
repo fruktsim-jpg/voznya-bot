@@ -139,11 +139,15 @@ async def chat(
     system: str,
     messages: list[dict[str, str]],
     model: str | None = None,
+    temperature: float | None = None,
 ) -> str:
     """Один запрос к модели. ``messages`` — список {role, content} (user/assistant).
 
     ``model`` переопределяет модель из конфига (например быстрая модель для
-    служебных задач). Возвращает текст ответа. Бросает :class:`LlmError`.
+    служебных задач). ``temperature`` (если задана) переопределяет температуру
+    сэмплинга из конфига — так слой вариативности (:mod:`variance`) задаёт
+    живость на уровне декодера, а не только словами в промпте. Возвращает текст
+    ответа. Бросает :class:`LlmError`.
     """
     if not cfg.usable:
         raise LlmError("AI disabled or api_key/model missing")
@@ -159,20 +163,25 @@ async def chat(
     # (например, в окружении прогона юнит-тестов без сетевых зависимостей).
     import aiohttp
 
+    # Эффективная температура: override от слоя вариативности или дефолт конфига.
+    use_temp = cfg.temperature if temperature is None else float(temperature)
+
     timeout = aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as http:
             if _is_anthropic(cfg.base_url, use_model):
                 return await _anthropic_chat(
-                    http, cfg, system, messages, use_model
+                    http, cfg, system, messages, use_model, use_temp
                 )
             try:
-                return await _openai_chat(http, cfg, system, messages, use_model)
+                return await _openai_chat(
+                    http, cfg, system, messages, use_model, use_temp
+                )
             except _NeedsAnthropic:
                 # Шлюз (vibecode) отдаёт claude-* только через /v1/messages —
                 # повторяем тот же запрос в Anthropic-формате.
                 return await _anthropic_chat(
-                    http, cfg, system, messages, use_model
+                    http, cfg, system, messages, use_model, use_temp
                 )
     except asyncio.TimeoutError as exc:
         # INCIDENT 2026-06-18 part 4: голый TimeoutError не ловится
@@ -188,11 +197,12 @@ async def _openai_chat(
     system: str,
     messages: list[dict[str, str]],
     model: str,
+    temperature: float | None = None,
 ) -> str:
     url = f"{cfg.base_url}/chat/completions"
     payload: dict[str, Any] = {
         "model": model,
-        "temperature": cfg.temperature,
+        "temperature": cfg.temperature if temperature is None else temperature,
         # Шлюзы (wellflow и др.) ограничивают max_tokens сверху (док: 2048).
         # Клампим, чтобы не упереться в лимит и не получить 400 на больших значениях.
         "max_tokens": min(int(cfg.max_tokens), 2048),
@@ -227,12 +237,13 @@ async def _anthropic_chat(
     system: str,
     messages: list[dict[str, str]],
     model: str,
+    temperature: float | None = None,
 ) -> str:
     url = f"{cfg.base_url}/messages"
     payload: dict[str, Any] = {
         "model": model,
         "max_tokens": cfg.max_tokens,
-        "temperature": cfg.temperature,
+        "temperature": cfg.temperature if temperature is None else temperature,
         "system": system,
         "messages": messages,
     }

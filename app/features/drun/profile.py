@@ -69,6 +69,8 @@ async def gather_stats(session: AsyncSession, user_id: int) -> RawStats:
         casino_games=getattr(user, "casino_games_count", 0) or 0,
         farm_streak=getattr(user, "farm_streak", 0) or 0,
         pidor_count=getattr(user, "pidor_count", 0) or 0,
+        casino_loss_streak=getattr(user, "casino_loss_streak", 0) or 0,
+        duel_loss_streak=getattr(user, "duel_loss_streak", 0) or 0,
     )
     rs.lines.append(
         f"Баланс {money(bal)}, заработал за всё время {money(earned)}, "
@@ -293,6 +295,33 @@ async def refresh_profile(
         # сбрасывается в ноль на следующем же свипе. Сохраняем накопленное.
         "affinity": prev.get("affinity", {}),
     }
+    # МНОГОМЕРНОЕ МНЕНИЕ (LEAP-4): свип профиля — естественное место медленно
+    # эволюционировать вектор мнения об игроке. Строим детерминированное
+    # наблюдение из статы/аффинити/поведения и сдвигаем хранимый вектор на
+    # малую долю (EMA): мнение копится неделями, а не прыгает за один свип.
+    try:
+        from app.features.drun import opinions as drun_opinions
+
+        aff_score = int((prev.get("affinity") or {}).get("score", 0) or 0)
+        observation = drun_opinions.observe_from_signals(
+            affinity_score=aff_score,
+            rep_score=int(rs.stats.get("rep", 0) or 0),
+            rep_minus=int(rs.stats.get("rep_minus", 0) or 0),
+            duels_won=int(rs.stats.get("duels_won", 0) or 0),
+            duels_lost=int(rs.stats.get("duels_lost", 0) or 0),
+            messages=int(rs.stats.get("messages_count", 0) or 0),
+            casino_loss_streak=int(rs.stats.get("casino_loss_streak", 0) or 0),
+            farm_streak=int(rs.stats.get("farm_streak", 0) or 0),
+            duel_loss_streak=int(rs.stats.get("duel_loss_streak", 0) or 0),
+            balance=int(rs.stats.get("balance", 0) or 0),
+            pidor_count=int(rs.stats.get("pidor_count", 0) or 0),
+        )
+        data["opinion"] = drun_opinions.merge_observation(
+            prev.get("opinion"), observation
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("opinion evolve failed", exc_info=True)
+        data["opinion"] = prev.get("opinion", {})
     if prof is None:
         prof = AiProfile(user_id=user_id)
         session.add(prof)

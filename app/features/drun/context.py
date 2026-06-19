@@ -317,6 +317,34 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
         except Exception:  # noqa: BLE001
             logger.debug("opinion block failed", exc_info=True)
 
+        # СЛОЖИВШЕЕСЯ МНОГОМЕРНОЕ МНЕНИЕ (LEAP-4): вектор, копившийся неделями
+        # (доверие/уважение/раздражение/интерес/хаос/надёжность/веселье). Даёт
+        # узнаваемую социальную роль (любимчик/уважаемый/бесит/...) и красит
+        # поведение поверх сиюминутной эмоции — суть устойчивой личности.
+        try:
+            from app.features.drun import opinions as drun_opinions
+
+            op_vec = await drun_opinions.get_opinion(session, user_id)
+            op_dir = op_vec.directive()
+            if op_dir:
+                lines.append(op_dir)
+        except Exception:  # noqa: BLE001
+            logger.debug("opinion vector block failed", exc_info=True)
+
+        # ЧТО ОН ДЕЛАЛ (LEAP-5): памятные социальные ЭПИЗОДЫ — конкретные
+        # поступки (предал/заступился/слил обещание/унизил/помирился), а не
+        # агрегаты. Это «история отношений важнее сырой статы»: друн ссылается
+        # на конкретный момент, а не на средние цифры. Значимые живут месяцами.
+        try:
+            from app.features.drun import episodes as drun_episodes
+
+            eps = await drun_episodes.recent_episodes(session, user_id, limit=5)
+            ep_block = drun_episodes.render_block(eps)
+            if ep_block:
+                lines.append(ep_block)
+        except Exception:  # noqa: BLE001
+            logger.debug("episodes block failed", exc_info=True)
+
         # Расширенная видимость: инвентарь/ачивки/сезон/модерация/кейсы.
         try:
             lines.extend(await _player_assets_block(session, user_id))
@@ -654,9 +682,15 @@ async def _memory_block(
             "chat:meme": "[мем] ",
         }
         for m in mems:
-            prefix = tag.get(getattr(m, "kind", "") or "", "")
+            kind = getattr(m, "kind", "") or ""
+            # Эпизоды отношений рендерятся отдельным богатым блоком «ЧТО ОН
+            # ДЕЛАЛ» в досье (с типом/значимостью/давностью) — здесь их не
+            # дублируем плоским списком.
+            if kind.startswith("episode:"):
+                continue
+            prefix = tag.get(kind, "")
             lines.append(f"- {prefix}{m.fact}")
-        return "\n".join(lines)
+        return "\n".join(lines) if len(lines) > 1 else ""
     except Exception:  # noqa: BLE001
         logger.debug("memory_block failed", exc_info=True)
         return ""

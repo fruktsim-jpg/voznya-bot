@@ -30,6 +30,7 @@ from app.core.logger import get_logger
 from app.core.utils import now_utc
 from app.features.drun import config as drun_config
 from app.features.drun import agent as drun_agent
+from app.features.drun import deferral as drun_deferral
 from app.features.drun import memory as drun_memory
 from app.features.drun import service as drun_service
 from app.models import Cooldown
@@ -226,6 +227,23 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
             # реже; общий темп регулируется одной ручкой random_butt_in_chance.
             gate = engagement.urge * (1.0 + max(0.0, cfg.random_butt_in_chance) * 4.0)
             if random.random() >= min(0.95, gate):
+                # ЗАМЕТИЛ, НО СМОЛЧАЛ. Живой человек не реагирует на всё сразу —
+                # но и не забывает. Сигнальные реплики (наезд/хвастовство/
+                # обещание) друн иногда кладёт в «отложку», чтобы припомнить их
+                # ПОЗЖЕ, без повода (см. autonomous._notice_pattern → deferral).
+                # Это ломает паттерн «стимул→мгновенный ответ».
+                if engagement.intent.value in ("roast", "hype") and random.random() < 0.5:
+                    try:
+                        await drun_deferral.stash(
+                            session,
+                            user_id=user.id,
+                            name=_display_name(message),
+                            gist=text[:160],
+                            kind=engagement.intent.value,
+                        )
+                        await session.commit()
+                    except Exception:  # noqa: BLE001
+                        logger.debug("deferral stash on silence failed", exc_info=True)
                 return
 
     # Дневной кап — предел расходов/спама на АВТОНОМНЫЕ вкиды. Адресные
@@ -342,6 +360,7 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
             reply_context=reply_ctx,
             intent_note=addr_engagement.reason if addr_engagement.wants_in else None,
             intent_kind=addr_engagement.intent.value if addr_engagement.wants_in else None,
+            urge=addr_engagement.urge if addr_engagement.wants_in else 0.5,
         )
     else:
         # Спонтанное встревание по решению восприятия. Передаём НАМЕРЕНИЕ
@@ -351,6 +370,7 @@ async def on_chat_message(message: Message, session: AsyncSession) -> None:
             subject_id=user.id,
             intent_note=engagement.reason if engagement else None,
             intent_kind=engagement.intent.value if engagement else None,
+            urge=engagement.urge if engagement else 0.0,
         )
     if not result.ok:
         return
