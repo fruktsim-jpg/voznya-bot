@@ -209,16 +209,33 @@ class WorldEventsListener:
             text = await drun_autonomous.comment_on_fresh_events(session)
             await session.commit()
         if text:
-            try:
-                await self._bot.send_message(self._chat_id, text)
-                logger.info(
-                    "drun listener: posted reactive comment (channel=%s)",
-                    _CHANNEL,
-                )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "drun listener: send_message failed", exc_info=True,
-                )
+            # Через единый surface-слой (Phase 3): сейчас это группа, но точка
+            # доставки больше не зашита в send_message — друн может вещать на
+            # другие поверхности тем же путём.
+            from app.features.drun.presence import get_presence
+
+            presence = get_presence()
+            if presence is not None:
+                res = await presence.say_group(text)
+                if res.ok:
+                    logger.info(
+                        "drun listener: posted reactive comment (channel=%s)", _CHANNEL,
+                    )
+                else:
+                    logger.warning(
+                        "drun listener: presence delivery failed (%s)", res.error,
+                    )
+            else:
+                try:
+                    await self._bot.send_message(self._chat_id, text)
+                    logger.info(
+                        "drun listener: posted reactive comment (channel=%s)",
+                        _CHANNEL,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "drun listener: send_message failed", exc_info=True,
+                    )
 
 
 # --- Регистрация в lifespan приложения --------------------------------------

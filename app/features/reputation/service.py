@@ -98,7 +98,7 @@ async def apply_reputation(
         return RepResult(status="cooldown", retry_after_seconds=retry_after)
 
     # Пишем изменение и возвращаем актуальный итог.
-    await rep_repo.add_entry(
+    entry_id = await rep_repo.add_entry(
         session,
         giver_user_id=giver_user_id,
         target_user_id=target_user_id,
@@ -108,4 +108,20 @@ async def apply_reputation(
     await session.flush()
 
     summary = await rep_repo.get_summary(session, target_user_id)
+
+    # Проекция в world_events: друн видит соц-динамику уважения (кто кому
+    # накинул/снял), а не только итоговый счёт. Идемпотентно по записи журнала.
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_REPUTATION,
+        actor_id=giver_user_id,
+        target_id=target_user_id,
+        amount=value,
+        ref_table="reputation_entries",
+        ref_id=entry_id,
+        meta={"new_score": summary.score, "reason": (reason or "")[:200]},
+    )
+
     return RepResult(status="applied", value=value, new_score=summary.score)

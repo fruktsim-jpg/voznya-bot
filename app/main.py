@@ -37,6 +37,8 @@ from app.features.drun.profile import setup_profile_sweep
 from app.features.drun.reflect import setup_reflection
 from app.features.drun.worldview import setup_worldview
 from app.features.drun.autonomous import setup_autonomous_poster
+from app.features.drun.presence import setup_presence
+from app.features.drun.events import setup_events_scheduler
 from app.features.drun.events_listener import (
     setup_events_listener,
     teardown_events_listener,
@@ -172,6 +174,17 @@ async def on_startup(bot: Bot) -> None:
     # Автономное поведение: друн сам комментирует значимые события мира в чат
     # (с дневным капом и предохранителями). Делает его живым, а не реактивным.
     setup_autonomous_poster(scheduler, bot, sessionmaker, settings.chat_id)
+
+    # Голос друна как surface-agnostic слой (Phase 3): один разум — много
+    # поверхностей (группа / личка владельца / веб-лента). Раньше друн умел
+    # говорить только в settings.chat_id жёстко зашитым send_message.
+    setup_presence(
+        bot=bot, group_chat_id=settings.chat_id, sessionmaker=sessionmaker
+    )
+
+    # Автономные ивенты друна (Phase 4): фоновое авто-разрешение дозревших
+    # челленджей/прогнозов — выплата наград через экономику + объявление итога.
+    setup_events_scheduler(scheduler, sessionmaker)
 
     # Real-time подписка на крупные события через Postgres LISTEN/NOTIFY:
     # вместо 7-минутного опросного тика друн реагирует на джекпот/свадьбу/

@@ -78,6 +78,8 @@ async def distill(session: AsyncSession) -> int:
     rank_ups: Counter[int] = Counter()        # растущий боец (mmr rank up)
     gifts_received: Counter[int] = Counter()  # кому дарят подарки
     mod_hits: Counter[int] = Counter()        # кого регулярно нагибает модерация
+    pidor_hits: Counter[int] = Counter()      # кого часто выбирают пидором дня
+    rep_minus: Counter[int] = Counter()       # кому регулярно режут репутацию
     for e in events:
         if e.type == "duel_won" and e.actor_id:
             duel_wins[e.actor_id] += 1
@@ -103,6 +105,14 @@ async def distill(session: AsyncSession) -> int:
             # target_id — кого нагнули; именно его и запоминаем как «штрафника».
             if e.target_id:
                 mod_hits[e.target_id] += 1
+        elif e.type == "nomination_pidor":
+            # target_id — победитель номинации «пидор дня».
+            if e.target_id:
+                pidor_hits[e.target_id] += 1
+        elif e.type == "reputation_change":
+            # amount=-1 — кому-то срезали репутацию (повод для рофла/защиты).
+            if e.target_id and (e.amount or 0) < 0:
+                rep_minus[e.target_id] += 1
 
     existing = await _existing_facts(session)
     added = 0
@@ -166,6 +176,16 @@ async def distill(session: AsyncSession) -> int:
     for uid, cnt in mod_hits.items():
         if cnt >= 2:
             _add(uid, "trait", f"{name_for(names, uid)} — постоянный клиент модерации, ходит по краю", 2)
+
+    # Пидоры дня: кого чат регулярно выбирает «пидором дня» (повод для рофла).
+    for uid, cnt in pidor_hits.items():
+        if cnt >= 2:
+            _add(uid, "trait", f"{name_for(names, uid)} — частый пидор дня, чат его любит назначать", 2)
+
+    # Непопулярные: кому регулярно режут репутацию (его недолюбливают).
+    for uid, cnt in rep_minus.items():
+        if cnt >= 3:
+            _add(uid, "trait", f"{name_for(names, uid)} — ему часто режут репутацию, недолюбливают", 1)
 
     # Соперничества (пара часто рубится).
     for (a, b), cnt in pair_duels.items():

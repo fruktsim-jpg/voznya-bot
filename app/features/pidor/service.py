@@ -92,6 +92,19 @@ async def get_or_choose_pidor(
     bonus = balance.NOMINATION_OPEN_BONUS
     await change_balance(session, opener_id, bonus, "nomination", {"type": "pidor"})
 
+    # Проекция в world_events: друн ведёт хронику «позора дня».
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_NOMINATION_PIDOR,
+        actor_id=opener_id,
+        target_id=winner_id,
+        ref_table="daily_nominations",
+        ref_id=inserted_id,
+        meta={"count": winner.pidor_count, "nomination_type": "pidor"},
+    )
+
     return PidorResult(
         status="chosen", winner_id=winner_id, count=winner.pidor_count, opener_bonus=bonus
     )

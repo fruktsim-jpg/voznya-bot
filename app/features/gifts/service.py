@@ -245,6 +245,25 @@ async def buy_gift(
         )
     )
 
+    # 5) Проекция в world_events: друн видит сам факт покупки (а не только
+    # позднюю доставку gift_delivered/gift_to_player). Идемпотентно по проводке.
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_GIFT_PURCHASE,
+        actor_id=user_id,
+        amount=gift.price_eshki,
+        ref_table="transactions",
+        ref_id=tx.id,
+        meta={
+            "gift": gift.code,
+            "gift_name": gift.name,
+            "star_cost": gift.star_cost,
+            "channel": channel,
+        },
+    )
+
     return BuyResult(
         status="ok",
         gift_name=gift.name,
@@ -623,6 +642,20 @@ async def sell_gift(
     )
     delivery.status = "cancelled"
     delivery.meta = meta
+
+    # Проекция в world_events: продажа предмета — сток ешек (эмиссия в карман
+    # игрока) и сигнал «человек сливает инвентарь». Идемпотентно по доставке.
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_ITEM_SOLD,
+        actor_id=user_id,
+        amount=amount,
+        ref_table="gift_transactions",
+        ref_id=delivery.id,
+        meta={"gift": gift_code, "full_value": full_value, "channel": channel},
+    )
 
     user = await session.get(User, user_id)
     return SellOutcome(

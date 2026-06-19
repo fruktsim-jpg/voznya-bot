@@ -66,3 +66,25 @@ def test_autonomous_min_gap_default_conservative():
     # Автономность по-прежнему выключена по умолчанию (явный опт-ин).
     assert drun_config.DEFAULTS[drun_config.KEY_AUTONOMOUS_ENABLED] is False
 
+
+def test_new_sense_event_types_have_severity():
+    # Phase 1 «единые чувства»: новые типы должны быть в каталоге severity,
+    # иначе emit потеряет приоритет NOTIFY и упадёт на 0.
+    for t in (
+        we.EVENT_REPUTATION,
+        we.EVENT_NOMINATION_PIDOR,
+        we.EVENT_NOMINATION_PARA,
+        we.EVENT_ITEM_SOLD,
+        we.EVENT_GIFT_PURCHASE,
+    ):
+        assert t in we.DEFAULT_SEVERITY
+    # Пара дня — крупное соц-событие (NOTIFY), пидор/репутация — тише.
+    assert we.DEFAULT_SEVERITY[we.EVENT_NOMINATION_PARA] >= 2
+    assert we.DEFAULT_SEVERITY[we.EVENT_ITEM_SOLD] == 1
+
+
+def test_mood_classifies_nominations():
+    # Пидор дня — публичный «позор» (конфликт), пара дня — праздник.
+    assert we.EVENT_NOMINATION_PIDOR in drun_mood._CONFLICT_TYPES
+    assert we.EVENT_NOMINATION_PARA in drun_mood._CELEBRATORY_TYPES
+

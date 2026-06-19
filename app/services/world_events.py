@@ -51,6 +51,19 @@ EVENT_MOD_BAN = "mod_ban"
 EVENT_MOD_MUTE = "mod_mute"
 EVENT_MOD_WARN = "mod_warn"
 EVENT_MOD_KICK = "mod_kick"
+# Репутация: кто кому накинул/снял (+1/-1). actor=даритель, target=получатель,
+# amount=±1. Друн видит соц-динамику уважения, а не только итоговый счёт.
+EVENT_REPUTATION = "reputation_change"
+# Номинации дня: пидор дня / пара дня. actor=открывший день, target=победитель
+# (для пары — первый из двоих; второй в meta). Друн ведёт хронику «позора/любви».
+EVENT_NOMINATION_PIDOR = "nomination_pidor"
+EVENT_NOMINATION_PARA = "nomination_para"
+# Инвентарь: продажа предмета за ешки (сток экономики). actor=продавец,
+# amount=выручка. Покупка подарка — EVENT_GIFT_PURCHASE выше.
+EVENT_ITEM_SOLD = "item_sold"
+# Исход автономного ивента друна (челлендж/прогноз/мини-ивент): кто победил,
+# сколько выплачено. Друн «видит» свой же ивент как новость мира.
+EVENT_DRUN_EVENT_RESOLVED = "drun_event_resolved"
 
 DEFAULT_SEVERITY: dict[str, int] = {
     EVENT_CASE_OPEN: 0,
@@ -72,6 +85,11 @@ DEFAULT_SEVERITY: dict[str, int] = {
     EVENT_MOD_MUTE: 1,
     EVENT_MOD_WARN: 1,
     EVENT_MOD_KICK: 2,
+    EVENT_REPUTATION: 1,
+    EVENT_NOMINATION_PIDOR: 1,
+    EVENT_NOMINATION_PARA: 2,
+    EVENT_ITEM_SOLD: 1,
+    EVENT_DRUN_EVENT_RESOLVED: 2,
 }
 
 _INSERT = text(

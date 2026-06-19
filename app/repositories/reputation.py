@@ -99,20 +99,22 @@ async def add_entry(
     target_user_id: int,
     value: int,
     reason: str | None,
-) -> None:
-    """Добавляет одно изменение репутации в журнал.
+) -> int:
+    """Добавляет одно изменение репутации в журнал. Возвращает id записи.
 
     Не делает commit — его выполнит вызывающий код. Антиспам и проверки
-    (само-оценка, боты и т.п.) — ответственность сервиса/хендлера.
+    (само-оценка, боты и т.п.) — ответственность сервиса/хендлера. id нужен
+    для идемпотентной проекции в ``world_events`` (ref_table/ref_id).
     """
-    session.add(
-        ReputationEntry(
-            giver_user_id=giver_user_id,
-            target_user_id=target_user_id,
-            value=value,
-            reason=reason,
-        )
+    entry = ReputationEntry(
+        giver_user_id=giver_user_id,
+        target_user_id=target_user_id,
+        value=value,
+        reason=reason,
     )
+    session.add(entry)
+    await session.flush()
+    return entry.id
 
 
 async def top_by_reputation(

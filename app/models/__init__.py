@@ -63,6 +63,7 @@ from app.models.treasure import Treasure
 from app.models.user import User
 from app.models.user_achievement import UserAchievement
 from app.models.world_event import WorldEvent
+from app.models.drun_event import DrunEvent, DrunProposal
 
 __all__ = [
     "Base",
@@ -121,6 +122,8 @@ __all__ = [
     "AiMessage",
     "AiMemory",
     "AiProfile",
+    "DrunEvent",
+    "DrunProposal",
 ]
 
 

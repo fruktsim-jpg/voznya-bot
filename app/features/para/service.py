@@ -84,6 +84,24 @@ async def get_or_choose_para(session: AsyncSession, opener_id: int) -> ParaResul
     bonus = balance.NOMINATION_OPEN_BONUS
     await change_balance(session, opener_id, bonus, "nomination", {"type": "para"})
 
+    # Проекция в world_events: друн ведёт хронику «любви дня». target — первый
+    # из пары, второй кладём в meta (одно поле target_id на двоих не растянуть).
+    from app.services import world_events
+
+    await world_events.emit_safe(
+        session,
+        type=world_events.EVENT_NOMINATION_PARA,
+        actor_id=opener_id,
+        target_id=first_id,
+        ref_table="daily_nominations",
+        ref_id=inserted_id,
+        meta={
+            "first_id": first_id,
+            "second_id": second_id,
+            "nomination_type": "para",
+        },
+    )
+
     return ParaResult(
         status="chosen", first_id=first_id, second_id=second_id, opener_bonus=bonus
     )

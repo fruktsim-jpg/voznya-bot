@@ -54,12 +54,15 @@ _CELEBRATORY_TYPES = frozenset({
     _we.EVENT_CASINO_BIG_WIN, _we.EVENT_MARRIAGE_CREATED,
     _we.EVENT_MMR_RANK_UP, _we.EVENT_CASE_GIFT_DROP, _we.EVENT_GIFT_TO_PLAYER,
     _we.EVENT_ACHIEVEMENT_UNLOCKED, _we.EVENT_GIFT_DELIVERED,
+    _we.EVENT_NOMINATION_PARA,
 })
 # Конфликты/напряжение → хаос/злость. Дуэль — боевой тип; налог друна и
-# репрессии модерации (бан/мьют/кик) тоже добавляют напряжения в чат.
+# репрессии модерации (бан/мьют/кик) тоже добавляют напряжения в чат. Пидор дня
+# — публичный «позор», тоже горячит обстановку.
 _CONFLICT_TYPES = frozenset({
     _we.EVENT_DUEL_WON, _we.EVENT_DRUN_TAX,
     _we.EVENT_MOD_BAN, _we.EVENT_MOD_MUTE, _we.EVENT_MOD_KICK,
+    _we.EVENT_NOMINATION_PIDOR,
 })
 
 
