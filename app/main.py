@@ -80,6 +80,8 @@ BOT_COMMANDS = [
     BotCommand(command="marriage", description="💍 Инфо о браке"),
     BotCommand(command="divorce", description="💔 Развод"),
     BotCommand(command="families", description="💞 Крепкие семьи"),
+    BotCommand(command="events", description="🎯 Ивенты друна"),
+    BotCommand(command="join", description="🎯 Записаться в ивент друна"),
     BotCommand(command="help", description="❓ Помощь и команды"),
 
 ]

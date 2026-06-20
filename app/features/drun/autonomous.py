@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -508,7 +509,16 @@ def setup_autonomous_poster(
                 posts_today = await drun_memory.count_replies_today(session)
                 await session.commit()
             if text:
-                await bot.send_message(chat_id, text)
+                # Phase A: route self-standing world commentary through Presence
+                # so it lands in the group AND the read-only web "Друн говорит"
+                # feed. Falls back to a raw send if Presence isn't wired (tests).
+                from app.features.drun.presence import get_presence
+
+                presence = get_presence()
+                if presence is not None:
+                    await presence.announce(text, kind="monologue")
+                else:
+                    await bot.send_message(chat_id, text)
                 logger.info(
                     "drun autonomous: posted (replies_today=%d)", posts_today
                 )

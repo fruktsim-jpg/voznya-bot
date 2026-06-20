@@ -142,6 +142,43 @@ class DrunPresence:
         """Shortcut: send a private message (owner management, Phase 2)."""
         return await self.deliver(PresenceTarget.dm(user_id), text, parse_mode=parse_mode)
 
+    async def announce(
+        self,
+        text: str,
+        *,
+        kind: str = "monologue",
+        user_id: int | None = None,
+        meta: dict[str, Any] | None = None,
+        parse_mode: str | None = None,
+    ) -> DeliveryResult:
+        """Post a self-standing Drun utterance to the GROUP and mirror it to WEB.
+
+        Phase A ("public presence"): every meaningful thing Drun says on its own
+        initiative — autonomous event commentary, worldview storylines, resolved
+        ivent results — should also land in the read-only web "Друн говорит" feed
+        so players who never open the group still meet Drun. The WEB copy is
+        persisted to ``ai_messages(channel='web', role='assistant')`` (no new
+        table) and is best-effort: a web-persist failure never affects the group
+        delivery (``deliver`` never raises).
+
+        Reactive replies addressed to a specific person stay group-only on
+        purpose — they need conversational context that a public feed lacks.
+        Returns the GROUP delivery result (the player-visible channel).
+
+        ``kind`` is stored in ``meta.kind`` so the feed could later categorise
+        entries; ``user_id`` optionally scopes the utterance to a player (e.g.
+        commentary about someone), without exposing the trigger to the feed UI.
+        """
+        group_res = await self.say_group(text, parse_mode=parse_mode)
+        # Mirror to the web feed regardless of group outcome: the two surfaces are
+        # independent and a player may only ever see the web one.
+        await self.deliver(
+            PresenceTarget.web(user_id=user_id),
+            text,
+            meta={"kind": kind, **(meta or {})},
+        )
+        return group_res
+
     async def _deliver_telegram(
         self,
         chat_id: int,

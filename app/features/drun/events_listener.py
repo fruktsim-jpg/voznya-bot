@@ -216,7 +216,7 @@ class WorldEventsListener:
 
             presence = get_presence()
             if presence is not None:
-                res = await presence.say_group(text)
+                res = await presence.announce(text, kind="event_reaction")
                 if res.ok:
                     logger.info(
                         "drun listener: posted reactive comment (channel=%s)", _CHANNEL,

@@ -321,7 +321,10 @@ def setup_events_scheduler(
             if presence is None:
                 return
             for _eid, title in resolved:
-                await presence.say_group(f"Ивент завершён: {title}. Итоги подведены.")
+                await presence.announce(
+                    f"Ивент завершён: {title}. Итоги подведены.",
+                    kind="event_result",
+                )
         except Exception:  # noqa: BLE001
             logger.warning("drun events resolver failed", exc_info=True)
 
