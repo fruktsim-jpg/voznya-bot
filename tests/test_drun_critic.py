@@ -55,3 +55,27 @@ def test_repair_trims_too_long_response():
 
     assert len(repaired) < len(long)
     assert repaired.endswith("…")
+
+
+def test_should_rewrite_only_serious_quality_failures():
+    generic = critic.Critique(ok=False, reasons=("generic_refusal",))
+    economy = critic.Critique(ok=False, reasons=("ungrounded_economy_claim",))
+    ok = critic.Critique(ok=True)
+
+    assert critic.should_rewrite(generic) is True
+    assert critic.should_rewrite(economy) is False
+    assert critic.should_rewrite(ok) is False
+
+
+def test_rewrite_prompt_contains_constraints_and_truncates_context():
+    prompt = critic.rewrite_prompt(
+        query="что было раньше",
+        context="x" * 6000,
+        bad_response="я не знаю",
+        critique=critic.Critique(ok=False, reasons=("generic_refusal",)),
+    )
+
+    assert "Перепиши ответ" in prompt
+    assert "не выдумывай факты" in prompt
+    assert "generic_refusal" in prompt
+    assert len(prompt) < 5900

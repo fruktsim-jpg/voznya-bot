@@ -104,6 +104,7 @@ def test_owner_diag_parser_status_commands():
     assert owner_dm._parse_owner_diag("друн архив статус") == ("archive_status", "")
     assert owner_dm._parse_owner_diag("drun memory status") == ("memory_status", "")
     assert owner_dm._parse_owner_diag("джобы статус") == ("jobs_status", "")
+    assert owner_dm._parse_owner_diag("друн критик статус") == ("critic_status", "")
 
 
 def test_owner_diag_parser_search_commands():

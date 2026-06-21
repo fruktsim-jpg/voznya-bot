@@ -78,6 +78,8 @@ def _parse_owner_diag(text: str) -> tuple[str, str] | None:
         "memory status": "memory_status",
         "джобы статус": "jobs_status",
         "jobs status": "jobs_status",
+        "критик статус": "critic_status",
+        "critic status": "critic_status",
     }
     if low in commands:
         return commands[low], ""
@@ -229,6 +231,53 @@ async def _jobs_status(session: AsyncSession) -> str:
     return drun_job_health.render_health(rows)
 
 
+async def _critic_status(session: AsyncSession) -> str:
+    from app.models import AiMessage
+
+    rows = (
+        await session.execute(
+            select(AiMessage.meta, AiMessage.content, AiMessage.created_at)
+            .where(AiMessage.role == "assistant")
+            .where(AiMessage.meta["critic"].is_not(None))
+            .order_by(AiMessage.created_at.desc())
+            .limit(100)
+        )
+    ).all()
+    if not rows:
+        return "Критик пока пуст: новых ответов с critic metadata ещё нет."
+
+    total = len(rows)
+    bad = 0
+    reasons: dict[str, int] = {}
+    examples: list[str] = []
+    for meta, content, created_at in rows:
+        critic = (meta or {}).get("critic") or {}
+        if critic.get("ok") is False:
+            bad += 1
+            for reason in critic.get("reasons") or []:
+                reasons[str(reason)] = reasons.get(str(reason), 0) + 1
+            if len(examples) < 5:
+                when = created_at.strftime("%Y-%m-%d %H:%M") if created_at else "?"
+                text = " ".join((content or "").split())[:180]
+                examples.append(f"- {when}: {text}")
+
+    reason_s = ", ".join(
+        f"{name}={count}" for name, count in sorted(
+            reasons.items(), key=lambda kv: kv[1], reverse=True
+        )
+    ) or "нет"
+    lines = [
+        "Критик ответов:",
+        f"- проверено последних: {total}",
+        f"- помечено плохими: {bad}",
+        f"- причины: {reason_s}",
+    ]
+    if examples:
+        lines.append("Последние плохие:")
+        lines.extend(examples)
+    return "\n".join(lines)
+
+
 async def _handle_owner_diag(
     message: Message, session: AsyncSession, command: str, arg: str
 ) -> None:
@@ -242,6 +291,8 @@ async def _handle_owner_diag(
         out = await _memory_search(session, arg)
     elif command == "jobs_status":
         out = await _jobs_status(session)
+    elif command == "critic_status":
+        out = await _critic_status(session)
     else:
         out = "Не понял диагностику."
     await session.commit()

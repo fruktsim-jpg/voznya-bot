@@ -110,3 +110,48 @@ def repair_response_text(response: str, critique: Critique) -> str:
     if "too_long" in critique.reasons:
         return text[:1400].rstrip() + "…"
     return text
+
+
+def should_rewrite(critique: Critique) -> bool:
+    """Whether a bad answer deserves one LLM rewrite attempt.
+
+    Keep this conservative: the rewrite pass is for obvious quality failures,
+    not for every stylistic nit. Economy issues are not rewritten automatically
+    because inventing a correction would be worse than logging the risk.
+    """
+    if critique.ok:
+        return False
+    serious = {
+        "too_short",
+        "generic_refusal",
+        "ignores_archive_query",
+        "context_copy",
+    }
+    return any(reason in serious for reason in critique.reasons)
+
+
+def rewrite_prompt(
+    *,
+    query: str | None,
+    context: str | None,
+    bad_response: str,
+    critique: Critique,
+) -> str:
+    """Build user prompt for a single safe rewrite pass."""
+    ctx = (context or "").strip()
+    if len(ctx) > 5000:
+        ctx = ctx[:5000].rstrip() + "…"
+    return (
+        "Перепиши ответ Тёмного друна.\n"
+        "Требования:\n"
+        "- отвечай по запросу, конкретно и живо;\n"
+        "- не выдумывай факты вне контекста;\n"
+        "- не повторяй память дословно;\n"
+        "- не утверждай баланс/ешки/экономику, если этого нет в контексте;\n"
+        "- сохрани язвительную персону, но без generic AI-отмазок;\n"
+        "- верни только финальный текст ответа.\n\n"
+        f"Причины критики: {', '.join(critique.reasons)}\n\n"
+        f"Запрос пользователя:\n{query or ''}\n\n"
+        f"Контекст:\n{ctx}\n\n"
+        f"Плохой ответ:\n{bad_response}"
+    )
