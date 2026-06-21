@@ -53,6 +53,15 @@ def _norm_fact(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
+def _fact_signature(text: str) -> tuple[str, ...]:
+    """Token-level signature for safe sim=1.0 duplicates.
+
+    This ignores punctuation/quotes/case, but keeps word order and all tokens.
+    Examples: ``Хинт`` vs ``хинт.`` and ``что, заболел`` vs ``что заболел``.
+    """
+    return tuple(_WORD_RE.findall((text or "").lower()))
+
+
 def _shingle(text: str, k: int = 4) -> set[str]:
     """Множество словесных k-шинглов для оценки почти-дублей (Jaccard)."""
     words = _WORD_RE.findall((text or "").lower())
@@ -77,24 +86,25 @@ def _keep_key(row: MemoryRow) -> tuple[int, int]:
 def _build_cleanup_plan(rows: Iterable[MemoryRow]) -> list[CleanupGroup]:
     """Build safe duplicate cleanup plan without touching storage.
 
-    Safe means only groups whose normalized facts are equal. That covers exact
-    duplicates and the reported ``хинт``/``Хинт`` class of sim=1.0 near-dups.
-    We deliberately do not merge looser near-duplicates here.
+    Safe means only groups whose normalized facts or full token signatures are
+    equal. That covers exact duplicates and the reported punctuation/case-only
+    sim=1.0 near-dups. We deliberately do not merge looser near-duplicates here.
     """
-    by_key: dict[tuple[int | None, str], list[MemoryRow]] = defaultdict(list)
+    by_key: dict[tuple[int | None, tuple[str, ...]], list[MemoryRow]] = defaultdict(list)
     for row in rows:
-        norm = _norm_fact(row.fact)
-        if norm:
-            by_key[(row.subject_id, norm)].append(row)
+        signature = _fact_signature(row.fact)
+        if signature:
+            by_key[(row.subject_id, signature)].append(row)
 
     groups: list[CleanupGroup] = []
-    for (subject_id, norm_fact), items in by_key.items():
+    for (subject_id, signature), items in by_key.items():
         if len(items) < 2:
             continue
         keep = max(items, key=_keep_key)
         delete_ids = tuple(sorted(row.id for row in items if row.id != keep.id))
+        norm_fact = " ".join(signature)
         groups.append(CleanupGroup(
-            reason="normalized_fact",
+            reason="token_signature",
             keep_id=keep.id,
             delete_ids=delete_ids,
             ids=tuple(sorted(row.id for row in items)),

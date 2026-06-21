@@ -23,7 +23,7 @@ def _row(
 def test_cleanup_plan_keeps_highest_weight_duplicate():
     plan = _build_cleanup_plan([
         _row(1, "хинт", weight=1),
-        _row(2, " Хинт ", weight=3),
+        _row(2, " Хинт. ", weight=3),
         _row(3, "хинт", weight=2),
     ])
 
@@ -31,6 +31,17 @@ def test_cleanup_plan_keeps_highest_weight_duplicate():
     assert plan[0].keep_id == 2
     assert plan[0].delete_ids == (1, 3)
     assert plan[0].norm_fact == "хинт"
+
+
+def test_cleanup_plan_collapses_punctuation_only_sim_one_near_dup():
+    plan = _build_cleanup_plan([
+        _row(1, "написал в школу, что заболел", weight=1),
+        _row(2, "написал в школу что заболел", weight=2),
+    ])
+
+    assert len(plan) == 1
+    assert plan[0].keep_id == 2
+    assert plan[0].delete_ids == (1,)
 
 
 def test_cleanup_plan_tie_keeps_oldest_row():
