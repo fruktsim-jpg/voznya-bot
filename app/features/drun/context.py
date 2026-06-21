@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import TypeVar
 
 from sqlalchemy import select
@@ -34,6 +36,135 @@ from app.models import User, WorldEvent
 logger = get_logger(__name__)
 
 _T = TypeVar("_T")
+
+
+class ContextIntent(StrEnum):
+    """Намерение текущего запроса — определяет, какие блоки тащить в prompt."""
+
+    DEFAULT = "default"
+    PAST = "past"
+    PERSON = "person"
+    ECONOMY = "economy"
+    WEB = "web"
+    OWNER = "owner"
+
+
+@dataclass(frozen=True)
+class ContextRoute:
+    """Какие блоки контекста включать под конкретное намерение.
+
+    Цель не идеальный NLU, а чтобы НЕ каждый ответ получал все тяжёлые блоки
+    сразу (память + архив + экономика + мир + web). Экономика остаётся фоном по
+    умолчанию для Model-2-осведомлённости, но past/person приоритезируют
+    социальную память и историю.
+    """
+
+    intent: ContextIntent
+    include_recent_chat: bool = True
+    include_memory: bool = True
+    include_archive: bool = False
+    include_web: bool = False
+    include_overview: bool = True
+    include_worldview: bool = True
+    include_economy: bool = True
+    include_identity: bool = False
+    archive_limit: int = 4
+
+
+_PAST_WORDS = (
+    "помнишь", "вспомни", "когда", "раньше", "раньш", "стар", "архив",
+    "истори", "было", "писал", "писала", "писали", "говорил", "говорила",
+    "цитат", "сообщен", "что было",
+)
+_ECONOMY_WORDS = (
+    "ешк", "баланс", "деньг", "казино", "ставк", "банк", "богат", "бедн",
+    "зарплат", "эконом", "топ по деньгам", "кошел", "монет",
+)
+_WEB_WORDS = (
+    "найди", "погугли", "загугли", "в интернете", "ссылк", "новост",
+    "погода", "курс", "что такое", "кто такой", "когда выш", "актуальн",
+    "сейчас в мире", "web", "search", "google",
+)
+_PERSON_WORDS = (
+    "кто такой", "кто такая", "что знаешь про", "расскажи про", "досье",
+    "профиль", "характер", "память про", "про него", "про неё", "про нее",
+)
+
+
+def _route_has_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(n in text for n in needles)
+
+
+def classify_context_route(
+    query: str | None,
+    *,
+    channel: str = "chat",
+    subject_id: int | None = None,
+) -> ContextRoute:
+    """Детерминированная маршрутизация контекста по намерению запроса."""
+    q = (query or "").lower().strip()
+    if channel == "owner_dm":
+        return ContextRoute(
+            intent=ContextIntent.OWNER,
+            include_recent_chat=False,
+            include_archive=False,
+            include_web=False,
+            include_overview=True,
+            include_worldview=True,
+            include_economy=True,
+            archive_limit=0,
+        )
+    if _route_has_any(q, _WEB_WORDS):
+        return ContextRoute(
+            intent=ContextIntent.WEB,
+            include_archive=_route_has_any(q, _PAST_WORDS),
+            include_web=True,
+            include_overview=False,
+            include_worldview=False,
+            include_economy=False,
+            archive_limit=3,
+        )
+    if _route_has_any(q, _PAST_WORDS):
+        return ContextRoute(
+            intent=ContextIntent.PAST,
+            include_archive=True,
+            include_web=False,
+            include_overview=False,
+            include_worldview=True,
+            include_economy=False,
+            include_identity=True,
+            archive_limit=8,
+        )
+    if _route_has_any(q, _ECONOMY_WORDS):
+        return ContextRoute(
+            intent=ContextIntent.ECONOMY,
+            include_archive=False,
+            include_web=False,
+            include_overview=True,
+            include_worldview=False,
+            include_economy=True,
+            archive_limit=0,
+        )
+    if subject_id is not None or _route_has_any(q, _PERSON_WORDS):
+        return ContextRoute(
+            intent=ContextIntent.PERSON,
+            include_archive=_route_has_any(q, _PAST_WORDS),
+            include_web=False,
+            include_overview=False,
+            include_worldview=True,
+            include_economy=False,
+            include_identity=True,
+            archive_limit=4,
+        )
+    return ContextRoute(
+        intent=ContextIntent.DEFAULT,
+        include_archive=False,
+        include_web=False,
+        include_overview=True,
+        include_worldview=True,
+        include_economy=True,
+        archive_limit=0,
+    )
 
 
 class ContextBuildResult(str):
@@ -922,9 +1053,10 @@ async def build_context(
     наверх всплывают воспоминания «в тему» разговора.
     """
     blocks: list[str] = [await _now_block()]
+    route = classify_context_route(query, channel=channel, subject_id=subject_id)
     # Вайб чата осмыслен только когда мы вообще подмешиваем чат: для отчётов/
     # объявлений (include_chat=False) он не нужен — не тратим лишний COUNT-запрос.
-    if include_chat:
+    if include_chat and route.include_recent_chat:
         blocks.append(
             await _isolated(session, "vibe", lambda: _vibe_block(session, channel), "")
         )
@@ -946,6 +1078,14 @@ async def build_context(
                 "",
             )
         )
+    # IDENTITY: для запросов про людей/прошлое сначала резолвим, о ком речь,
+    # чтобы модель не гадала по случайным фактам и не путала людей/пол.
+    if route.include_identity and query:
+        blocks.append(
+            await _isolated(
+                session, "identity", lambda: _identity_block(session, query), ""
+            )
+        )
     # ПАМЯТЬ про людей (факты/клички/связи) идёт СРАЗУ за живым чатом и досье —
     # это «социальное знание», на котором друн должен строить ответ. Раньше оно
     # тонуло НИЖЕ трёх денежных блоков (overview/economy/worldview), и модель,
@@ -960,33 +1100,44 @@ async def build_context(
         ("", []),
     )
     blocks.append(memory_block)
-    archive_block, archive_ids = await _isolated(
-        session,
-        "chat_archive",
-        lambda: drun_chat_archive.build_archive(
-            session, subject_id=subject_id, query=query, channel=channel, limit=6,
-        ),
-        ("", []),
-    )
-    blocks.append(archive_block)
-    blocks.append(
-        await _isolated(session, "worldview", lambda: _worldview_block(session), "")
-    )
+    archive_ids: list[int] = []
+    if route.include_archive and route.archive_limit > 0:
+        archive_block, archive_ids = await _isolated(
+            session,
+            "chat_archive",
+            lambda: drun_chat_archive.build_archive(
+                session,
+                subject_id=subject_id,
+                query=query,
+                channel=channel,
+                limit=route.archive_limit,
+            ),
+            ("", []),
+        )
+        blocks.append(archive_block)
+    # web-факты подмешиваются отдельно в respond() (auto_context/grounded),
+    # здесь route.include_web лишь помечает намерение и гасит лишние фоновые блоки.
+    if route.include_worldview:
+        blocks.append(
+            await _isolated(session, "worldview", lambda: _worldview_block(session), "")
+        )
     if include_events:
         blocks.append(
             await _isolated(session, "events", lambda: _events_block(session), "")
         )
     # Денежно-макро блоки — В САМОМ НИЗУ как фон (приправа, не суть): общая
     # картина чата и потоки экономики. Друн НЕ должен сводить разговор к ним.
-    blocks.append(
-        await _isolated(session, "overview", lambda: _overview_block(session), "")
-    )
-    blocks.append(
-        await _isolated(session, "economy", lambda: _economy_block(session), "")
-    )
-    blocks.append(
-        await _isolated(session, "season", lambda: _season_block(session), "")
-    )
+    if route.include_overview:
+        blocks.append(
+            await _isolated(session, "overview", lambda: _overview_block(session), "")
+        )
+    if route.include_economy:
+        blocks.append(
+            await _isolated(session, "economy", lambda: _economy_block(session), "")
+        )
+        blocks.append(
+            await _isolated(session, "season", lambda: _season_block(session), "")
+        )
     blocks.append(
         await _isolated(
             session, "antirepeat", lambda: _antirepeat_block(session, channel), ""

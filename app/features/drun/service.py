@@ -31,6 +31,7 @@ from app.features.drun import memory as drun_memory
 from app.features.drun import persona as drun_persona
 from app.features.drun import policy as drun_policy
 from app.features.drun import provider as drun_provider
+from app.features.drun import response_mode as drun_response_mode
 from app.features.drun import variance as drun_variance
 
 logger = get_logger(__name__)
@@ -451,6 +452,24 @@ async def generate(
             logger.debug("drun variance/emotion failed, using defaults", exc_info=True)
             style = None
             temp_override = None
+
+    # РЕЖИМ ОТВЕТА (детерминированный): вопрос/гайд/психолог/наезд/прикол/смолток.
+    # Persona-промпт описывает режимы абстрактно и тонет в общем блоке — модель
+    # сваливается в один токсичный тон и иногда не отвечает на прямой вопрос.
+    # Здесь по последней реплике человека подмешиваем ОДНУ короткую директиву в
+    # самый конец задания (recency: модель сильнее слушает финал). Только для
+    # адресованных реплик с реальным текстом человека.
+    mode_source = (query or "").strip() or (
+        memory_user_content or "" if memory_kind == "reply" else ""
+    ).strip()
+    if addressed and mode_source:
+        try:
+            _mode_name, mode_block = drun_response_mode.mode_directive(
+                mode_source, addressed=addressed
+            )
+            task = task + "\n\n" + mode_block
+        except Exception:  # noqa: BLE001
+            logger.debug("drun response_mode failed, skipping", exc_info=True)
 
     if grounded:
         # Для web/factual ответов стиль может быть живым, но декодер — холоднее:
