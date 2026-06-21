@@ -653,15 +653,11 @@ async def _overview_block_uncached(session: AsyncSession) -> str:
         except Exception:  # noqa: BLE001
             logger.debug("overview mmr failed", exc_info=True)
 
-        # Экономика: сумма ешек на руках у всех — пульс инфляции.
-        try:
-            total_eshki = await session.scalar(
-                select(func.coalesce(func.sum(User.balance), 0))
-            )
-            if total_eshki:
-                lines.append(f"- Всего ешек в обороте: {money(int(total_eshki))}")
-        except Exception:  # noqa: BLE001
-            logger.debug("overview economy failed", exc_info=True)
+        # ПРИМЕЧАНИЕ: «всего ешек в обороте» намеренно УБРАНО из общего контекста.
+        # Это макро-цифра инфляции, почти никогда не относящаяся к живому разговору;
+        # она лишь усиливала крен друна в «у кого сколько ешек» вместо разговора о
+        # людях. Если нужно денежное чутьё — есть отдельный _economy_block (потоки),
+        # а точные суммы друн добирает директивой [[ask:...]].
 
         return "\n".join(lines) if len(lines) > 1 else ""
     except Exception:  # noqa: BLE001
@@ -874,7 +870,10 @@ async def build_context(
     """Собирает полный контекстный блок (всё, что друн «видит» сейчас).
 
     Порядок = приоритет внимания модели: сначала ВРЕМЯ и ВАЙБ, потом ДОСЬЕ на
-    собеседника и ЖИВОЙ ЧАТ, потом ПАМЯТЬ про людей, и лишь в конце — фон.
+    собеседника и ЖИВОЙ ЧАТ, потом СОЦИАЛЬНАЯ ПАМЯТЬ про людей и летопись, и лишь
+    В САМОМ КОНЦЕ — денежно-макро фон (общая картина/экономика/сезон). Это
+    сознательно: друн должен строить ответ на ЛЮДЯХ и их истории, а не сводить
+    всё к «у кого больше ешек» — поэтому денежные блоки идут ниже социальных.
 
     ``chat_limit`` — сколько реплик чата подмешивать. Для прямого ответа человеку
     берём меньше (чтобы его сообщение не утонуло в логе), для автономного вкида —
@@ -909,11 +908,25 @@ async def build_context(
                 "",
             )
         )
+    # ПАМЯТЬ про людей (факты/клички/связи) идёт СРАЗУ за живым чатом и досье —
+    # это «социальное знание», на котором друн должен строить ответ. Раньше оно
+    # тонуло НИЖЕ трёх денежных блоков (overview/economy/worldview), и модель,
+    # видя больше про ешки, кренилась в «у кого сколько». Теперь соц-память выше
+    # экономики; денежные блоки идут ФОНОМ в самом низу.
     blocks.append(
         await _isolated(
             session, "memory", lambda: _memory_block(session, subject_id, query), ""
         )
     )
+    blocks.append(
+        await _isolated(session, "worldview", lambda: _worldview_block(session), "")
+    )
+    if include_events:
+        blocks.append(
+            await _isolated(session, "events", lambda: _events_block(session), "")
+        )
+    # Денежно-макро блоки — В САМОМ НИЗУ как фон (приправа, не суть): общая
+    # картина чата и потоки экономики. Друн НЕ должен сводить разговор к ним.
     blocks.append(
         await _isolated(session, "overview", lambda: _overview_block(session), "")
     )
@@ -921,15 +934,8 @@ async def build_context(
         await _isolated(session, "economy", lambda: _economy_block(session), "")
     )
     blocks.append(
-        await _isolated(session, "worldview", lambda: _worldview_block(session), "")
-    )
-    blocks.append(
         await _isolated(session, "season", lambda: _season_block(session), "")
     )
-    if include_events:
-        blocks.append(
-            await _isolated(session, "events", lambda: _events_block(session), "")
-        )
     blocks.append(
         await _isolated(
             session, "antirepeat", lambda: _antirepeat_block(session, channel), ""
