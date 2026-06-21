@@ -26,6 +26,10 @@ _MIN_EMBED_CHARS = 15
 _MAX_CONTEXT_LINES = 6
 
 
+def _clean_archive_text(text_in: str, *, limit: int = 2000) -> str:
+    return " ".join((text_in or "").split())[:limit]
+
+
 @dataclass(frozen=True)
 class ArchiveHit:
     id: int
@@ -44,7 +48,7 @@ def archive_rows_from_export(
     """Pure conversion from parsed Telegram export messages to DB rows."""
     rows: list[dict] = []
     for msg in messages:
-        clean = " ".join((msg.text or "").split())
+        clean = _clean_archive_text(msg.text)
         if not clean:
             continue
         rows.append({
@@ -58,6 +62,72 @@ def archive_rows_from_export(
             if msg.reply_to_message_id is not None else {},
         })
     return rows
+
+
+def live_archive_row(
+    *,
+    message_id: int,
+    user_id: int | None,
+    name: str,
+    text: str,
+    message_at: datetime | None,
+    media: str | None = None,
+    reply_to_message_id: int | None = None,
+    source: str = SOURCE,
+) -> dict | None:
+    """Build one live-chat archive row.
+
+    ``source`` intentionally defaults to the Telegram export source: live group
+    message ids share the same namespace as future exports, so idempotent import
+    will not duplicate messages that were already captured live.
+    """
+    clean = _clean_archive_text(text or (f"[{media}]" if media else ""))
+    if not clean:
+        return None
+    meta: dict[str, object] = {"live": True}
+    if media:
+        meta["media"] = media
+    if reply_to_message_id is not None:
+        meta["reply_to_message_id"] = int(reply_to_message_id)
+    return {
+        "source": source,
+        "source_message_id": int(message_id),
+        "user_id": user_id,
+        "name": (name or "")[:96],
+        "text": clean,
+        "message_at": message_at,
+        "meta": meta,
+    }
+
+
+async def record_live_message(
+    session: AsyncSession,
+    *,
+    message_id: int,
+    user_id: int | None,
+    name: str,
+    text: str,
+    message_at: datetime | None,
+    media: str | None = None,
+    reply_to_message_id: int | None = None,
+) -> bool:
+    """Append a new live chat line to raw archive. Commit is on caller."""
+    row = live_archive_row(
+        message_id=message_id,
+        user_id=user_id,
+        name=name,
+        text=text,
+        message_at=message_at,
+        media=media,
+        reply_to_message_id=reply_to_message_id,
+    )
+    if row is None:
+        return False
+    stmt = insert(AiChatArchive.__table__).values(row).on_conflict_do_nothing(
+        index_elements=["source", "source_message_id"]
+    )
+    result = await session.execute(stmt)
+    return bool(result.rowcount or 0)
 
 
 async def import_export_messages(

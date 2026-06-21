@@ -57,3 +57,35 @@ def test_render_archive_hits_uses_real_dates_and_truncates():
 
 def test_render_archive_hits_empty():
     assert a.render_archive_hits([]) == ""
+
+
+def test_live_archive_row_uses_export_namespace_for_dedupe():
+    row = a.live_archive_row(
+        message_id=555,
+        user_id=10,
+        name="h1nt",
+        text=" новое   живое сообщение ",
+        message_at=datetime(2026, 6, 21, tzinfo=timezone.utc),
+        reply_to_message_id=500,
+    )
+
+    assert row is not None
+    assert row["source"] == "telegram_export"
+    assert row["source_message_id"] == 555
+    assert row["text"] == "новое живое сообщение"
+    assert row["meta"] == {"live": True, "reply_to_message_id": 500}
+
+
+def test_live_archive_row_keeps_media_placeholder():
+    row = a.live_archive_row(
+        message_id=556,
+        user_id=10,
+        name="h1nt",
+        text="",
+        message_at=None,
+        media="sticker",
+    )
+
+    assert row is not None
+    assert row["text"] == "[sticker]"
+    assert row["meta"] == {"live": True, "media": "sticker"}

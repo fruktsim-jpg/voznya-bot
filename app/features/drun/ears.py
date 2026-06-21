@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.logger import get_logger
+from app.features.drun import chat_archive as drun_chat_archive
 from app.features.drun import memory as drun_memory
 
 logger = get_logger(__name__)
@@ -208,13 +209,27 @@ class DrunEarsMiddleware(BaseMiddleware):
             return
         bot_id = message.bot.id if message.bot else 0
         reply = _reply_perception(message, bot_id)
+        display_name = _display_name(message)
         await drun_memory.capture_chat(
             session,
             user_id=user.id,
-            name=_display_name(message),
+            name=display_name,
             content=text,
             media=media,
             reply_to_name=reply.get("reply_to_name"),
             reply_to_bot=bool(reply.get("reply_to_bot")),
             reply_excerpt=reply.get("reply_excerpt"),
+        )
+        await drun_chat_archive.record_live_message(
+            session,
+            message_id=message.message_id,
+            user_id=user.id,
+            name=display_name,
+            text=text,
+            message_at=message.date,
+            media=media,
+            reply_to_message_id=(
+                message.reply_to_message.message_id
+                if message.reply_to_message is not None else None
+            ),
         )
