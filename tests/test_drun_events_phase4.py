@@ -20,10 +20,24 @@ def test_high_impact_classification():
     assert drun_owner.is_high_impact("grant")
     assert drun_owner.is_high_impact("ban")
     assert drun_owner.is_high_impact("multiplier")
+    # Правка параметров мира / вкл-выкл подсистем — тоже high-impact.
+    assert drun_owner.is_high_impact("set_param")
+    assert drun_owner.is_high_impact("feature_toggle")
     # Малые/точечные — нет.
     assert not drun_owner.is_high_impact("grant_one")
     assert not drun_owner.is_high_impact("mute")
     assert not drun_owner.is_high_impact("warn")
+
+
+def test_high_impact_tools_exist_in_registry():
+    # Регресс-гард против рассинхрона: каждое имя из HIGH_IMPACT_TOOLS обязано
+    # быть реальным ключом реестра. Раньше тут жил «set_setting», которого в
+    # registry нет (реальные тулы — set_param/feature_toggle), и правка мира
+    # молча шла мимо approval-flow в личке владельца.
+    from app.features.drun import registry as drun_registry
+
+    for tool in drun_owner.HIGH_IMPACT_TOOLS:
+        assert tool in drun_registry.REGISTRY, tool
 
 
 def test_decision_parser():
