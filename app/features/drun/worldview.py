@@ -286,9 +286,15 @@ async def think(session: AsyncSession, *, hours: int = 24) -> int:
 
     # Что друн уже думает — даём в думу, чтобы он развивал, а не повторял.
     prior = await _recent_beliefs_text(session)
+    # Калибровка: насколько сбываются его прогнозы. Раньше промах прогноза лишь
+    # помечался «(не сбылось)» и ничему не учил. Теперь даём думе hit-rate, чтобы
+    # друн осознавал свою склонность пере/недо-предсказывать и корректировал
+    # уверенность вместо штамповки новых прогнозов с тем же перекосом.
+    calib = await _prediction_calibration_text(session)
     user_msg = (
         f"{_THINK_INSTRUCTION.format(max=_PER_RUN)}\n\n"
         f"# ЧТО ТЫ УЖЕ ДУМАЕШЬ (развивай, не повторяй дословно):\n{prior}\n\n"
+        f"{calib}"
         f"# СРЕЗ МИРА СЕЙЧАС:\n{_snapshot_text(snap)}"
     )
     try:
@@ -337,6 +343,51 @@ async def think(session: AsyncSession, *, hours: int = 24) -> int:
     if added:
         await session.flush()
     return added
+
+
+def calibration_hint(hits: int, misses: int) -> str:
+    """Чистая логика подсказки калибровки по hit/miss. Пусто, если данных мало.
+
+    Вынесено отдельно от БД-запроса, чтобы быть юнит-тестируемым.
+    """
+    total = hits + misses
+    if total < 3:
+        return ""
+    rate = round(100 * hits / total)
+    if rate >= 70:
+        hint = "ты предсказываешь осторожно и точно — можно быть смелее."
+    elif rate >= 40:
+        hint = "точность средняя — держи прогнозы конкретными и в меру смелыми."
+    else:
+        hint = (
+            "ты ЧАСТО промахиваешься — не лепи самоуверенных прогнозов, "
+            "формулируй осторожнее или предсказывай только очевидное."
+        )
+    return f"# ТОЧНОСТЬ ТВОИХ ПРОГНОЗОВ: сбылось {hits}/{total} ({rate}%). {hint}\n\n"
+
+
+async def _prediction_calibration_text(session: AsyncSession) -> str:
+    """Сводка точности прогнозов (hit-rate) для самокалибровки в думе.
+
+    Считает разрешённые прогнозы по ``source`` (PRED_HIT/PRED_MISS) и формулирует
+    короткую подсказку. Пусто, если разрешённых прогнозов мало (не на чем
+    калиброваться). Любой сбой — пустая строка (дума идёт без калибровки).
+    """
+    try:
+        hits = int(await session.scalar(
+            select(func.count()).select_from(AiMemory)
+            .where(AiMemory.kind == KIND_PREDICTION)
+            .where(AiMemory.source == PRED_HIT)
+        ) or 0)
+        misses = int(await session.scalar(
+            select(func.count()).select_from(AiMemory)
+            .where(AiMemory.kind == KIND_PREDICTION)
+            .where(AiMemory.source == PRED_MISS)
+        ) or 0)
+        return calibration_hint(hits, misses)
+    except Exception:  # noqa: BLE001
+        logger.debug("prediction calibration failed", exc_info=True)
+        return ""
 
 
 async def _recent_beliefs_text(session: AsyncSession, limit: int = 24) -> str:

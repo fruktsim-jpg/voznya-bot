@@ -53,7 +53,10 @@ _INSTRUCTION = (
     "на твои подколы; локальные мемы и традиции; на что в чате принято "
     "реагировать тепло или агрессивно. weight: 3 — важное правило поведения, "
     "1 — мелкое наблюдение. Только то, что устойчиво и пригодится МНОГО раз. "
-    "Если нового знания нет — верни []."
+    "ОСОБО цени уроки из блока про ОТКЛИК на твои реплики: если реплики с "
+    "пометкой [ТИШИНА] похожи между собой — выведи правило, ЧТО так заходить "
+    "НЕ стоит; если [ЗАШЛО] — что сработало и стоит повторять (по сути, а не "
+    "дословно). Если нового знания нет — верни []."
 )
 
 
@@ -107,6 +110,15 @@ async def _prune_lessons(session: AsyncSession) -> None:
         await session.delete(stale)
 
 
+def _engagement_mark(replies: int) -> str:
+    """Метка отклика на реплику друна по числу ответов. Чистая логика (тест)."""
+    if replies >= 3:
+        return f"[ЗАШЛО: {replies} ответов]"
+    if replies >= 1:
+        return f"[слабый отклик: {replies}]"
+    return "[ТИШИНА: 0 ответов — не зашло]"
+
+
 async def reflect(session: AsyncSession) -> int:
     """Один проход рефлексии: чат → уроки. Возвращает число новых/усиленных."""
     cfg = await drun_config.get_config(session)
@@ -121,12 +133,29 @@ async def reflect(session: AsyncSession) -> int:
     for m in msgs:
         nm = (m.meta or {}).get("name") or f"id{m.user_id}"
         lines.append(f"{nm}: {m.content}")
-    # Свои недавние реплики — чтобы учиться на своём заходе/провале.
+    # Свои недавние реплики С МЕТРИКОЙ ОТКЛИКА — чтобы учиться на РЕАЛЬНОМ
+    # заходе/провале, а не вслепую. Сколько игроков ответили на каждую реплику
+    # (reply_to_bot) — это бесплатный outcome-сигнал: много ответов = зацепило,
+    # тишина в ответ на обращённую реплику = не зашло. Раньше друн «оценивал»
+    # свои посты без единого факта об их успехе и просто галлюцинировал.
     try:
-        own = await drun_memory.recent_self_posts(session, channel="chat", limit=10)
+        own_posts = await drun_memory.recent_self_posts_with_engagement(
+            session, channel="chat", limit=10
+        )
     except Exception:  # noqa: BLE001
-        own = []
-    own_block = ("\n# ТВОИ НЕДАВНИЕ РЕПЛИКИ\n" + "\n".join(f"- {p}" for p in own)) if own else ""
+        own_posts = []
+    if own_posts:
+        own_lines = []
+        for p in own_posts:
+            mark = _engagement_mark(p.get("replies", 0))
+            own_lines.append(f"- {mark} {p['content']}")
+        own_block = (
+            "\n# ТВОИ НЕДАВНИЕ РЕПЛИКИ И КАК НА НИХ ОТРЕАГИРОВАЛИ "
+            "(учись на этом: что вызвало ответы, а что — тишину):\n"
+            + "\n".join(own_lines)
+        )
+    else:
+        own_block = ""
 
     user_msg = (
         f"{_INSTRUCTION.format(max=_PER_RUN)}\n\n# ЛОГ ЧАТА\n"

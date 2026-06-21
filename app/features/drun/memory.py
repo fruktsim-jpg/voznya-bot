@@ -232,6 +232,62 @@ async def recent_self_posts(
     return [r for r in rows if r]
 
 
+async def recent_self_posts_with_engagement(
+    session: AsyncSession,
+    *,
+    channel: str = "chat",
+    limit: int = 10,
+    window_minutes: int = 30,
+) -> list[dict]:
+    """Последние реплики друна + СКОЛЬКО на них ОТВЕТИЛИ игроки (outcome-сигнал).
+
+    Это «обратная связь по своим действиям», которой раньше не было: для каждой
+    собственной реплики друна считаем, сколько живых сообщений с
+    ``meta.reply_to_bot=True`` пришло в течение ``window_minutes`` после неё.
+    Чем больше ответов — тем сильнее реплика «зашла» (зацепила беседу). Сигнал
+    бесплатный: ``reply_to_bot`` уже пишется в meta каждого ответа боту, новых
+    подписок/таблиц не нужно.
+
+    Возвращает список ``[{"content","replies","created_at"}]`` (новые первыми).
+    Грубая, но честная метрика: ответ ≠ всегда «понравилось», но молчание в
+    ответ на обращённую реплику — надёжный признак, что не зашло.
+    """
+    posts = (
+        await session.execute(
+            select(AiMessage.content, AiMessage.created_at)
+            .where(AiMessage.channel == channel)
+            .where(AiMessage.role == "assistant")
+            .order_by(AiMessage.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    if not posts:
+        return []
+
+    out: list[dict] = []
+    for content, created_at in posts:
+        if not content or created_at is None:
+            continue
+        window_end = created_at + timedelta(minutes=window_minutes)
+        replies = await session.scalar(
+            select(func.count())
+            .select_from(AiMessage)
+            .where(AiMessage.channel == channel)
+            .where(AiMessage.role == "chat")
+            .where(AiMessage.created_at > created_at)
+            .where(AiMessage.created_at <= window_end)
+            .where(AiMessage.meta["reply_to_bot"].as_boolean().is_(True))
+        )
+        out.append(
+            {
+                "content": content,
+                "replies": int(replies or 0),
+                "created_at": created_at,
+            }
+        )
+    return out
+
+
 async def recent_chat_count(
     session: AsyncSession, *, channel: str = "chat", seconds: int = 180
 ) -> int:
