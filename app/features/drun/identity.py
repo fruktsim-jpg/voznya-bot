@@ -24,6 +24,11 @@ _QUERY_PREFIXES = (
     "person find", "find person",
 )
 
+_FILLER_WORDS = {
+    "вообще", "там", "это", "этот", "эта", "тот", "та", "же", "бля", "блять",
+    "нахуй", "пж", "плиз", "pls", "про", "чел", "человек",
+}
+
 
 @dataclass
 class PersonCandidate:
@@ -51,8 +56,48 @@ def extract_person_query(text: str) -> str:
             break
     # Keep the first compact name-like span; extra words are usually the actual
     # question and hurt exact archive speaker matching.
-    words = _WORD_RE.findall(body)
+    words = [w for w in _WORD_RE.findall(body) if w.lower() not in _FILLER_WORDS]
     return " ".join(words[:3]).strip()
+
+
+async def _attach_archive_aliases(
+    session: AsyncSession,
+    bucket: dict[int | str, PersonCandidate],
+) -> None:
+    """For matched user_ids, add their other display names from archive.
+
+    This is the automatic identity-learning path: if one name resolves to a
+    concrete speaker, the resolver learns that user's other historic names
+    without owner hand-labeling.
+    """
+    user_ids = [key for key in bucket if isinstance(key, int)]
+    if not user_ids:
+        return
+    rows = (
+        await session.execute(
+            select(
+                AiChatArchive.user_id,
+                AiChatArchive.name,
+                func.count().label("cnt"),
+            )
+            .where(AiChatArchive.user_id.in_(user_ids))
+            .where(AiChatArchive.name != "")
+            .group_by(AiChatArchive.user_id, AiChatArchive.name)
+            .order_by(func.count().desc())
+            .limit(max(20, len(user_ids) * 8))
+        )
+    ).all()
+    for user_id, display_name, cnt in rows:
+        if user_id is None or not display_name:
+            continue
+        cand = bucket.get(int(user_id))
+        if cand is None:
+            continue
+        if display_name not in cand.aliases:
+            cand.aliases.append(display_name)
+        if "archive_same_user_alias" not in cand.sources:
+            cand.sources.append("archive_same_user_alias")
+        cand.archive_hits += int(cnt or 0)
 
 
 def _merge_candidate(
@@ -163,6 +208,7 @@ async def resolve_person(
             memory_hits=int(cnt or 0),
         )
 
+    await _attach_archive_aliases(session, bucket)
     return rank_candidates(list(bucket.values()))[:limit]
 
 

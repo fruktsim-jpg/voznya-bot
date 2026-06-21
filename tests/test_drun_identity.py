@@ -9,7 +9,7 @@ def test_normalize_name_lowers_and_strips_punctuation():
 
 
 def test_extract_person_query_removes_common_prefixes():
-    assert identity.extract_person_query("кто такой Хинт вообще") == "Хинт вообще"
+    assert identity.extract_person_query("кто такой Хинт вообще") == "Хинт"
     assert identity.extract_person_query("досье на oew") == "oew"
     assert identity.extract_person_query("человек найти фрукта") == "фрукта"
 
