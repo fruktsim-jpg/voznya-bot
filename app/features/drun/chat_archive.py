@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
 from app.features.drun import embeddings as drun_embeddings
+from app.features.drun import job_health as drun_job_health
 from app.features.drun.telegram_export_ingest import ExportMessage, SOURCE
 from app.models import AiChatArchive, AiMessage
 
@@ -212,7 +213,13 @@ def setup_archive_embeddings_backfill(
     async def _job() -> None:
         try:
             async with sessionmaker() as session:
-                await backfill_archive_embeddings(session)
+                await drun_job_health.run_tracked(
+                    session,
+                    "drun.archive.embedding_backfill",
+                    lambda: backfill_archive_embeddings(session),
+                    rows_from_result=lambda n: int(n or 0),
+                    meta={"limit": _EMBED_BATCH},
+                )
         except Exception:  # noqa: BLE001
             logger.warning("chat archive embeddings backfill job failed", exc_info=True)
 

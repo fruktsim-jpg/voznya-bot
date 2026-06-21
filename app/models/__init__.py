@@ -6,7 +6,14 @@
 
 from app.models.account_link import AccountLink
 from app.models.admin_role import AdminRole
-from app.models.ai import AiChatArchive, AiMemory, AiMessage, AiPrompt, AiSetting
+from app.models.ai import (
+    AiChatArchive,
+    AiJobHealth,
+    AiMemory,
+    AiMessage,
+    AiPrompt,
+    AiSetting,
+)
 from app.models.ai_profile import AiProfile
 from app.models.app_setting import AppSetting
 from app.models.audit_log import AuditLog
@@ -122,6 +129,7 @@ __all__ = [
     "AiMessage",
     "AiMemory",
     "AiChatArchive",
+    "AiJobHealth",
     "AiProfile",
     "DrunEvent",
     "DrunProposal",

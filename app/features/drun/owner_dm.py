@@ -222,6 +222,13 @@ async def _memory_search(session: AsyncSession, query: str) -> str:
     return "\n".join(lines)
 
 
+async def _jobs_status(session: AsyncSession) -> str:
+    from app.features.drun import job_health as drun_job_health
+
+    rows = await drun_job_health.list_health(session)
+    return drun_job_health.render_health(rows)
+
+
 async def _handle_owner_diag(
     message: Message, session: AsyncSession, command: str, arg: str
 ) -> None:
@@ -234,7 +241,7 @@ async def _handle_owner_diag(
     elif command == "memory_search":
         out = await _memory_search(session, arg)
     elif command == "jobs_status":
-        out = "Job health layer ещё не включён. Следующий слой — last_run/error/duration по джобам."
+        out = await _jobs_status(session)
     else:
         out = "Не понял диагностику."
     await session.commit()
