@@ -35,6 +35,25 @@ logger = get_logger(__name__)
 _T = TypeVar("_T")
 
 
+class ContextBuildResult(str):
+    """String context with ids of memory/archive rows shown to the model."""
+
+    memory_ids: list[int]
+    archive_ids: list[int]
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        memory_ids: list[int] | None = None,
+        archive_ids: list[int] | None = None,
+    ):
+        obj = str.__new__(cls, value)
+        obj.memory_ids = memory_ids or []
+        obj.archive_ids = archive_ids or []
+        return obj
+
+
 async def _isolated(
     session: AsyncSession,
     name: str,
@@ -674,12 +693,13 @@ async def _memory_block(
     channel: str = "chat",
 ) -> str:
     try:
-        return await drun_memory_recall.build_recall_block(
+        block, _ = await drun_memory_recall.build_recall(
             session,
             subject_id=subject_id,
             query=query,
             channel=channel,
         )
+        return block
     except Exception:  # noqa: BLE001
         logger.debug("memory_block failed", exc_info=True)
         return ""
@@ -693,12 +713,14 @@ async def _archive_block(
     try:
         if not (query or "").strip():
             return ""
-        return await drun_chat_archive.build_archive_block(
+        block, _ = await drun_chat_archive.build_archive(
             session,
             subject_id=subject_id,
             query=query,
+            channel="chat",
             limit=6,
         )
+        return block
     except Exception:  # noqa: BLE001
         logger.debug("archive_block failed", exc_info=True)
         return ""
@@ -920,22 +942,24 @@ async def build_context(
     # тонуло НИЖЕ трёх денежных блоков (overview/economy/worldview), и модель,
     # видя больше про ешки, кренилась в «у кого сколько». Теперь соц-память выше
     # экономики; денежные блоки идут ФОНОМ в самом низу.
-    blocks.append(
-        await _isolated(
-            session,
-            "memory",
-            lambda: _memory_block(session, subject_id, query, channel),
-            "",
-        )
+    memory_block, memory_ids = await _isolated(
+        session,
+        "memory",
+        lambda: drun_memory_recall.build_recall(
+            session, subject_id=subject_id, query=query, channel=channel,
+        ),
+        ("", []),
     )
-    blocks.append(
-        await _isolated(
-            session,
-            "chat_archive",
-            lambda: _archive_block(session, subject_id, query),
-            "",
-        )
+    blocks.append(memory_block)
+    archive_block, archive_ids = await _isolated(
+        session,
+        "chat_archive",
+        lambda: drun_chat_archive.build_archive(
+            session, subject_id=subject_id, query=query, channel=channel, limit=6,
+        ),
+        ("", []),
     )
+    blocks.append(archive_block)
     blocks.append(
         await _isolated(session, "worldview", lambda: _worldview_block(session), "")
     )
@@ -959,4 +983,5 @@ async def build_context(
             session, "antirepeat", lambda: _antirepeat_block(session, channel), ""
         )
     )
-    return "\n\n".join(b for b in blocks if b).strip()
+    text = "\n\n".join(b for b in blocks if b).strip()
+    return ContextBuildResult(text, memory_ids=memory_ids, archive_ids=archive_ids)

@@ -89,3 +89,14 @@ def test_live_archive_row_keeps_media_placeholder():
     assert row is not None
     assert row["text"] == "[sticker]"
     assert row["meta"] == {"live": True, "media": "sticker"}
+
+
+def test_diversify_archive_hits_moves_recent_ids_back():
+    hits = [
+        a.ArchiveHit(1, 10, "a", "old repeated", None, score=10.0),
+        a.ArchiveHit(2, 10, "a", "fresh", None, score=5.0),
+    ]
+
+    selected = a.diversify_archive_hits(hits, recent_archive_ids=[1], limit=2)
+
+    assert [h.id for h in selected] == [2, 1]

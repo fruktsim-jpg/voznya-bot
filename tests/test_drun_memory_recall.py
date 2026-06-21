@@ -59,6 +59,16 @@ def test_recall_penalizes_recently_used_fact():
     assert any(item.memory.id == 1 and item.repeated for item in items)
 
 
+def test_recall_penalizes_recent_prompt_memory_id():
+    used = Mem(1, "chat:trait", "любит сливать все деньги в казино", weight=3)
+    fresh = Mem(2, "chat:trait", "часто спорит про музыку", weight=1)
+
+    items = r.select_recall_items([used, fresh], recent_memory_ids=[1])
+
+    assert items[0].memory.id == 2
+    assert any(item.memory.id == 1 and item.repeated for item in items)
+
+
 def test_render_recall_is_structured_and_warns_about_repeats():
     items = r.select_recall_items(
         [

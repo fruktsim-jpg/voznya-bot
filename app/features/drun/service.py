@@ -366,6 +366,8 @@ async def generate(
         logger.warning("drun build_context failed", exc_info=True)
         await _heal_if_poisoned(session)
         ctx = ""
+    memory_ids = list(getattr(ctx, "memory_ids", []) or [])
+    archive_ids = list(getattr(ctx, "archive_ids", []) or [])
     # Страховка перед фазой записи: если что-то в helpers всё же отравило
     # транзакцию (например, асинхронный таск, или persona без savepoint'а),
     # лечим до recent_messages/add_message.
@@ -564,7 +566,12 @@ async def generate(
             channel=channel,
             user_id=subject_id,
             trigger_event_id=trigger_event_id,
-            meta={"kind": memory_kind, "to_name": subject_name},
+            meta={
+                "kind": memory_kind,
+                "to_name": subject_name,
+                "memory_ids": memory_ids[:32],
+                "archive_ids": archive_ids[:32],
+            },
         )
 
     return GenerateResult(ok=True, text=text, econ=econ_result)

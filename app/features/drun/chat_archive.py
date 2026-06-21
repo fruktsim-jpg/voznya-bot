@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Iterable
 
 from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logger import get_logger
 from app.features.drun import embeddings as drun_embeddings
 from app.features.drun.telegram_export_ingest import ExportMessage, SOURCE
-from app.models import AiChatArchive
+from app.models import AiChatArchive, AiMessage
 
 logger = get_logger(__name__)
 
@@ -279,6 +280,50 @@ async def search_archive(
     ) for r in rows]
 
 
+async def recent_prompt_archive_ids(
+    session: AsyncSession,
+    *,
+    channel: str = "chat",
+    limit: int = 12,
+) -> list[int]:
+    rows = (
+        await session.execute(
+            select(AiMessage.meta)
+            .where(AiMessage.channel == channel)
+            .where(AiMessage.role == "assistant")
+            .order_by(AiMessage.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    out: list[int] = []
+    seen: set[int] = set()
+    for (meta,) in rows:
+        ids = (meta or {}).get("archive_ids") or []
+        if not isinstance(ids, list):
+            continue
+        for raw in ids:
+            try:
+                aid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if aid not in seen:
+                seen.add(aid)
+                out.append(aid)
+    return out
+
+
+def diversify_archive_hits(
+    hits: list[ArchiveHit],
+    *,
+    recent_archive_ids: Iterable[int] = (),
+    limit: int = _MAX_CONTEXT_LINES,
+) -> list[ArchiveHit]:
+    used = {int(aid) for aid in recent_archive_ids}
+    fresh = [h for h in hits if int(h.id) not in used]
+    repeated = [h for h in hits if int(h.id) in used]
+    return (fresh + repeated)[:limit]
+
+
 def render_archive_hits(hits: list[ArchiveHit]) -> str:
     if not hits:
         return ""
@@ -299,7 +344,23 @@ async def build_archive_block(
     subject_id: int | None = None,
     limit: int = _MAX_CONTEXT_LINES,
 ) -> str:
-    hits = await search_archive(
-        session, query=query or "", subject_id=subject_id, limit=limit,
+    block, _ = await build_archive(
+        session, query=query, subject_id=subject_id, limit=limit,
     )
-    return render_archive_hits(hits)
+    return block
+
+
+async def build_archive(
+    session: AsyncSession,
+    *,
+    query: str | None,
+    subject_id: int | None = None,
+    channel: str = "chat",
+    limit: int = _MAX_CONTEXT_LINES,
+) -> tuple[str, list[int]]:
+    hits = await search_archive(
+        session, query=query or "", subject_id=subject_id, limit=max(limit * 3, limit),
+    )
+    recent_ids = await recent_prompt_archive_ids(session, channel=channel)
+    selected = diversify_archive_hits(hits, recent_archive_ids=recent_ids, limit=limit)
+    return render_archive_hits(selected), [int(hit.id) for hit in selected]

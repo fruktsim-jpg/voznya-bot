@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, Protocol
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.drun import memory as drun_memory
+from app.models import AiMessage
 
 _WORD_RE = re.compile(r"[\w']+", re.UNICODE)
 
@@ -170,12 +172,14 @@ def select_recall_items(
     *,
     query: str | None = None,
     recent_posts: Iterable[str] = (),
+    recent_memory_ids: Iterable[int] = (),
     now: datetime | None = None,
     total_cap: int = _TOTAL_CAP,
 ) -> list[RecallItem]:
     """Pure selection layer: dedupe, score, cap per kind/section, diversify."""
     current = now or datetime.now(timezone.utc)
     posts = list(recent_posts)
+    used_ids = {int(mid) for mid in recent_memory_ids}
     seen_signatures: set[tuple[int | None, str]] = set()
     candidates: list[RecallItem] = []
     for mem in memories:
@@ -188,6 +192,9 @@ def select_recall_items(
             continue
         seen_signatures.add(dedupe_key)
         score, repeated = _score(mem, query=query, recent_posts=posts, now=current)
+        if int(getattr(mem, "id", 0) or 0) in used_ids:
+            score -= 8.0
+            repeated = True
         candidates.append(RecallItem(
             memory=mem,
             section=_section_for(mem),
@@ -215,6 +222,39 @@ def select_recall_items(
 
     selected.sort(key=lambda item: (_SECTION_ORDER.index(item.section), -item.score))
     return selected
+
+
+async def recent_prompt_memory_ids(
+    session: AsyncSession,
+    *,
+    channel: str = "chat",
+    limit: int = 12,
+) -> list[int]:
+    """Memory ids that were recently shown to the model in assistant turns."""
+    rows = (
+        await session.execute(
+            select(AiMessage.meta)
+            .where(AiMessage.channel == channel)
+            .where(AiMessage.role == "assistant")
+            .order_by(AiMessage.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    out: list[int] = []
+    seen: set[int] = set()
+    for (meta,) in rows:
+        ids = (meta or {}).get("memory_ids") or []
+        if not isinstance(ids, list):
+            continue
+        for raw in ids:
+            try:
+                mid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+    return out
 
 
 def render_recall(items: Iterable[RecallItem]) -> str:
@@ -259,6 +299,22 @@ async def build_recall_block(
     query: str | None,
     channel: str = "chat",
 ) -> str:
+    block, _ = await build_recall(
+        session,
+        subject_id=subject_id,
+        query=query,
+        channel=channel,
+    )
+    return block
+
+
+async def build_recall(
+    session: AsyncSession,
+    *,
+    subject_id: int | None,
+    query: str | None,
+    channel: str = "chat",
+) -> tuple[str, list[int]]:
     memories = await drun_memory.scored_memories(
         session,
         subject_id=subject_id,
@@ -266,11 +322,18 @@ async def build_recall_block(
         limit=_CANDIDATE_LIMIT,
     )
     if not memories:
-        return ""
+        return "", []
     recent_posts = await drun_memory.recent_self_posts(
         session,
         channel=channel,
         limit=_RECENT_POSTS_LIMIT,
     )
-    items = select_recall_items(memories, query=query, recent_posts=recent_posts)
-    return render_recall(items)
+    recent_ids = await recent_prompt_memory_ids(session, channel=channel)
+    items = select_recall_items(
+        memories,
+        query=query,
+        recent_posts=recent_posts,
+        recent_memory_ids=recent_ids,
+    )
+    ids = [int(getattr(item.memory, "id", 0)) for item in items]
+    return render_recall(items), [mid for mid in ids if mid]
