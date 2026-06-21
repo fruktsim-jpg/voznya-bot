@@ -25,6 +25,8 @@ _ECONOMY_WORDS = (
     "ешк", "баланс", "деньг", "казино", "ставк", "банк", "богат", "бедн",
     "кошел", "монет",
 )
+_DUEL_WORDS = ("дуэл", "кд", "kd", "килл", "побед", "проиграл", "проигран")
+_JOKE_REQUEST_WORDS = ("анекдот", "шутк", "пошути", "рассмеши", "прикол", "зарофли")
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,12 @@ def critique_response(
         economy_grounded = "# ЭКОНОМИКА" in context_text or _has_any(query_text, _ECONOMY_WORDS)
         if not economy_grounded:
             reasons.append("ungrounded_economy_claim")
+
+    if _has_any(query_text, _JOKE_REQUEST_WORDS):
+        # The common failure mode: user asks for a joke, Drun falls back to its
+        # stale casino/duel/KD roast. Mark it so diagnostics/rewrite can catch it.
+        if _has_any(text, _ECONOMY_WORDS) or _has_any(text, _DUEL_WORDS):
+            reasons.append("stale_economy_duel_joke")
 
     # Repeating a raw memory sentence verbatim is usually worse than using it as
     # flavor. High overlap against context catches quote-dumps/generic summaries.

@@ -40,6 +40,14 @@ def test_context_router_economy_keeps_money_blocks():
     assert route.include_worldview is False
 
 
+def test_context_router_joke_request_suppresses_economy_noise():
+    route = classify_context_route("расскажи анекдот")
+
+    assert route.intent == ContextIntent.DEFAULT
+    assert route.include_economy is False
+    assert route.include_worldview is True
+
+
 def test_context_router_person_focuses_social_memory():
     route = classify_context_route("расскажи о хинте", subject_id=123)
 

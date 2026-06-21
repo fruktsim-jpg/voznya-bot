@@ -29,6 +29,14 @@ def test_threat_joke_mode():
     assert mode.name == "threat_joke"
 
 
+def test_joke_request_mode_avoids_generic_roast():
+    mode = rm.classify_response_mode("расскажи анекдот")
+
+    assert mode.name == "joke"
+    assert "проигранные ешки" in mode.directive
+    assert "сетап" in mode.directive
+
+
 def test_aggression_mode():
     mode = rm.classify_response_mode("тупой бот заткнись")
     assert mode.name == "aggression"

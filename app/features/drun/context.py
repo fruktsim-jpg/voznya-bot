@@ -90,6 +90,9 @@ _PERSON_WORDS = (
     "расскажи о", "расскажи об", "что знаешь о", "что знаешь об",
     "профиль", "характер", "память про", "память о", "про него", "про неё", "про нее",
 )
+_JOKE_WORDS = (
+    "анекдот", "пошути", "шутк", "смешно", "рассмеши", "зарофли", "прикол",
+)
 
 
 def _route_has_any(text: str, needles: tuple[str, ...]) -> bool:
@@ -149,6 +152,17 @@ def classify_context_route(
             include_economy=False,
             include_identity=True,
             archive_limit=8,
+        )
+    if _route_has_any(q, _JOKE_WORDS):
+        return ContextRoute(
+            intent=ContextIntent.DEFAULT,
+            include_archive=False,
+            include_web=False,
+            include_overview=False,
+            include_worldview=True,
+            include_economy=False,
+            include_identity=False,
+            archive_limit=0,
         )
     if _route_has_any(q, _ECONOMY_WORDS):
         return ContextRoute(

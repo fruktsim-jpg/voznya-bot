@@ -47,6 +47,17 @@ def test_critic_allows_grounded_economy_claim():
     assert "ungrounded_economy_claim" not in result.reasons
 
 
+def test_critic_flags_stale_economy_duel_joke():
+    result = critic.critique_response(
+        query="расскажи анекдот",
+        context="# ДОЛГАЯ ПАМЯТЬ ДРУНА\n- любит музыку",
+        response="Анекдот: ты опять проиграл все ешки и кд в дуэлях как мусор.",
+    )
+
+    assert result.ok is False
+    assert "stale_economy_duel_joke" in result.reasons
+
+
 def test_repair_trims_too_long_response():
     long = "x" * 2000
     result = critic.critique_response(query="x", context="", response=long)
