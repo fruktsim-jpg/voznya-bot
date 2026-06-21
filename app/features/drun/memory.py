@@ -622,7 +622,7 @@ async def _scored_memories_sql(
     # для cosine — соседи. Подключается прозрачно: при отсутствии embedding
     # у факта или embedder выключен — компонент даёт 0, общий ранкер работает
     # как и раньше. Cosine distance ∈ [0, 2] → сходство = 1 - dist/2 ∈ [0, 1].
-    query_vec = await drun_embeddings.embed_text(session, query)
+    query_vec = await drun_embeddings.embed_query(session, query)
     has_vector = bool(
         await session.scalar(
             select(literal(1)).where(
