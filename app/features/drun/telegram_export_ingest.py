@@ -361,3 +361,90 @@ async def apply_proposals(
             ))
         stats["inserted"] += 1
     return stats
+
+
+# --- Мост: имена из export → AiProfile.data["aliases"] -----------------------
+#
+# ВАЖНО: trusted-резолв owner-команд (``aliases.resolve_alias``) ищет прозвища
+# ТОЛЬКО в ``AiProfile.data["aliases"]``. Дистилляция export'а кладёт клички в
+# ``ai_memories`` (kind='chat:nickname') как ТЕКСТ — этот путь резолв не видит.
+# Поэтому имена, под которыми человек реально фигурировал в истории, надо
+# положить прямо в профиль, чтобы «друн дай пете 500» нашёл Петю из импорта.
+#
+# Преимущество export'а: user_id известен ТОЧНО (из ``from_id``), без разрешения
+# тёзок по логу окна — мис-привязка к чужому человеку исключена.
+
+# Сколько раз имя должно встретиться в истории, чтобы считать его значимым
+# (отсекаем разовые опечатки/смену ника на один день).
+_ALIAS_MIN_COUNT = 2
+# Потолок веса, который один импорт добавляет прозвищу. Намеренно НЕ даём
+# дотянуть до автономного порога резолва (``_MIN_RESOLVE_WEIGHT``=3) с одного
+# импорта: исторические display-имена безопасны для owner-команд (вес ≥1), но
+# не должны сами по себе разрешать АВТОНОМНЫЕ действия без подтверждения чатом.
+_ALIAS_MAX_IMPORT_WEIGHT = 2
+
+
+def collect_profile_aliases(
+    messages: list[ExportMessage],
+) -> dict[int, list[str]]:
+    """Имена, под которыми каждый user_id фигурировал в истории (для профиля).
+
+    Чистая функция. Возвращает ``{user_id: [имя, ...]}`` — имена, встреченные
+    не реже ``_ALIAS_MIN_COUNT`` раз, по убыванию частоты. Список построен так,
+    что частые имена повторяются (до ``_ALIAS_MAX_IMPORT_WEIGHT`` раз), чтобы
+    ``aliases.add_aliases`` накопил им соответствующий вес за один проход.
+    """
+    names: dict[int, Counter[str]] = defaultdict(Counter)
+    for m in messages:
+        if m.user_id is not None and m.name:
+            names[m.user_id][m.name] += 1
+
+    out: dict[int, list[str]] = {}
+    for uid, counter in names.items():
+        ordered: list[str] = []
+        for name, count in counter.most_common():
+            if count < _ALIAS_MIN_COUNT:
+                continue
+            # Вес = частота, но не выше потолка импорта (см. константу).
+            ordered.extend([name] * min(count, _ALIAS_MAX_IMPORT_WEIGHT))
+        if ordered:
+            out[uid] = ordered
+    return out
+
+
+async def apply_profile_aliases(
+    session: AsyncSession,
+    alias_map: dict[int, list[str]],
+    *,
+    dry_run: bool = True,
+) -> dict[str, int]:
+    """Дописывает имена из истории в ``AiProfile.data['aliases']``.
+
+    Создаёт минимальный профиль, если его ещё нет (свип позже обогатит его
+    портретом). Накопление веса и анти-раздувание — внутри ``add_aliases``.
+    Commit — на вызывающем. Возвращает счётчики для отчёта.
+    """
+    from app.features.drun import aliases as drun_aliases
+    from app.models import AiProfile
+
+    stats = {"users": len(alias_map), "profiles_touched": 0, "created": 0}
+    for uid, new_aliases in alias_map.items():
+        if not new_aliases:
+            continue
+        prof = await session.get(AiProfile, uid)
+        merged = drun_aliases.add_aliases(
+            (prof.data or {}).get("aliases") if prof is not None else None,
+            new_aliases,
+        )
+        stats["profiles_touched"] += 1
+        if dry_run:
+            continue
+        if prof is None:
+            session.add(AiProfile(user_id=uid, data={"aliases": merged}))
+            stats["created"] += 1
+        else:
+            data = dict(prof.data or {})
+            data["aliases"] = merged
+            prof.data = data
+    return stats
+

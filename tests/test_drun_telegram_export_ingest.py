@@ -8,6 +8,7 @@ from app.features.drun.telegram_export_ingest import (
     SOURCE,
     build_deterministic_proposals,
     chunk_range,
+    collect_profile_aliases,
     filter_messages,
     load_export_messages,
     normalize_text,
@@ -93,3 +94,52 @@ def test_chunk_range_supports_resumable_batches():
     assert len(chunks) == 2
     assert chunks[0][0] is messages[30]
     assert chunks[1][0] is messages[40]
+
+
+# --- мост имён в профили (trusted owner-резолв по кличке из импорта) ----------
+
+
+def _msg(mid: int, uid: int, name: str):
+    from app.features.drun.telegram_export_ingest import ExportMessage
+
+    return ExportMessage(message_id=mid, user_id=uid, name=name, text="x", dt=None)
+
+
+def test_collect_profile_aliases_groups_names_by_user():
+    messages = [
+        _msg(1, 10, "Вася"),
+        _msg(2, 10, "Вася"),
+        _msg(3, 10, "Кот"),
+        _msg(4, 10, "Кот"),
+        _msg(5, 11, "Петя"),
+        _msg(6, 11, "Петя"),
+    ]
+    out = collect_profile_aliases(messages)
+    assert set(out) == {10, 11}
+    # Имена, встреченные ≥2 раз, попадают; вес кодируется повторами для add_aliases.
+    assert "Вася" in out[10] and "Кот" in out[10]
+    assert out[11].count("Петя") >= 1
+
+
+def test_collect_profile_aliases_drops_rare_names():
+    # Разовое имя (опечатка/однодневная смена ника) не должно стать алиасом.
+    messages = [
+        _msg(1, 10, "Вася"),
+        _msg(2, 10, "Вася"),
+        _msg(3, 10, "Опечатка"),
+    ]
+    out = collect_profile_aliases(messages)
+    assert "Опечатка" not in out.get(10, [])
+    assert "Вася" in out[10]
+
+
+def test_collect_profile_aliases_feeds_add_aliases_weight():
+    # Контракт с add_aliases: повторы поднимают вес прозвища до потолка импорта.
+    from app.features.drun import aliases as drun_aliases
+    from app.features.drun.telegram_export_ingest import _ALIAS_MAX_IMPORT_WEIGHT
+
+    messages = [_msg(i, 10, "Кот") for i in range(20)]
+    out = collect_profile_aliases(messages)
+    merged = drun_aliases.add_aliases(None, out[10])
+    kot = next(a for a in merged if a["alias"] == "кот")
+    assert kot["w"] == _ALIAS_MAX_IMPORT_WEIGHT

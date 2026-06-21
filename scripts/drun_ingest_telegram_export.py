@@ -24,8 +24,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.db import dispose_engine, get_sessionmaker  # noqa: E402
 from app.features.drun.telegram_export_ingest import (  # noqa: E402
+    apply_profile_aliases,
     apply_proposals,
     build_deterministic_proposals,
+    collect_profile_aliases,
     distill_export_chunks,
     filter_messages,
     load_export_messages,
@@ -37,6 +39,7 @@ async def _amain(args: argparse.Namespace) -> int:
     exclude_ids = {int(x) for x in args.exclude_user_id}
     messages = filter_messages(loaded_messages, exclude_user_ids=exclude_ids)
     proposals = build_deterministic_proposals(messages)
+    alias_map = collect_profile_aliases(messages)
 
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
@@ -50,6 +53,11 @@ async def _amain(args: argparse.Namespace) -> int:
                 start_chunk=args.start_chunk,
             ))
         stats = await apply_proposals(session, proposals, dry_run=not args.apply)
+        # Мост в профили: имена из истории → AiProfile.data['aliases'], чтобы
+        # trusted owner-резолв («друн дай пете 500») находил людей из импорта.
+        alias_stats = await apply_profile_aliases(
+            session, alias_map, dry_run=not args.apply
+        )
         if args.apply:
             await session.commit()
         else:
@@ -62,6 +70,7 @@ async def _amain(args: argparse.Namespace) -> int:
         "excluded_user_ids": sorted(exclude_ids),
         "proposals": len(proposals),
         "stats": stats,
+        "alias_stats": alias_stats,
         "sample": [p.as_dict() for p in proposals[: args.sample]],
     }, ensure_ascii=False, indent=2, default=str))
     await dispose_engine()
