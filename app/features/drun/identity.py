@@ -21,13 +21,14 @@ _WORD_RE = re.compile(r"[\w']+", re.UNICODE)
 
 _QUERY_PREFIXES = (
     "кто такой", "кто такая", "кто это", "что знаешь про", "расскажи про",
-    "память про", "досье на", "досье", "про", "найди человека", "человек найти",
+    "что знаешь о", "что знаешь об", "расскажи о", "расскажи об",
+    "память про", "память о", "досье на", "досье", "про", "найди человека", "человек найти",
     "person find", "find person",
 )
 
 _FILLER_WORDS = {
     "вообще", "там", "это", "этот", "эта", "тот", "та", "же", "бля", "блять",
-    "нахуй", "пж", "плиз", "pls", "про", "чел", "человек",
+    "нахуй", "пж", "плиз", "pls", "про", "о", "об", "чел", "человек",
 }
 
 
@@ -67,6 +68,7 @@ class DossierRelationshipLine:
 @dataclass(frozen=True)
 class PersonDossier:
     candidate: PersonCandidate
+    mention_lines: list[DossierArchiveLine] = field(default_factory=list)
     archive_lines: list[DossierArchiveLine] = field(default_factory=list)
     memories: list[DossierMemoryLine] = field(default_factory=list)
     relationships: list[DossierRelationshipLine] = field(default_factory=list)
@@ -190,6 +192,7 @@ async def resolve_person(
 
     bucket: dict[int | str, PersonCandidate] = {}
     like = f"%{name}%"
+    query_tokens = [w for w in _WORD_RE.findall(name.lower()) if w]
 
     # 1) Speaker names from raw archive. This is the most concrete identity
     # evidence: user_id + actual Telegram display names/frequency.
@@ -217,6 +220,33 @@ async def resolve_person(
             archive_hits=int(cnt or 0),
         )
 
+    # 1b) If the queried name appears in message text ("Карина", "карине"),
+    # find the speakers who mention it most. This covers people who are talked
+    # about a lot but rarely use that exact string as their display name.
+    mention_rows = (
+        await session.execute(
+            select(
+                AiChatArchive.user_id,
+                AiChatArchive.name,
+                func.count().label("cnt"),
+            )
+            .where(AiChatArchive.text.ilike(like))
+            .where(AiChatArchive.user_id.is_not(None))
+            .group_by(AiChatArchive.user_id, AiChatArchive.name)
+            .order_by(func.count().desc())
+            .limit(20)
+        )
+    ).all()
+    for user_id, display_name, cnt in mention_rows:
+        _merge_candidate(
+            bucket,
+            user_id=int(user_id) if user_id is not None else None,
+            name=display_name or name,
+            confidence=0.36,
+            source="archive_text_mentioner",
+            archive_hits=int(cnt or 0),
+        )
+
     # 2) Long-memory subjects mentioning the name. Lower confidence than speaker
     # identity, but useful for aliases/kлички that don't appear as display names.
     memory_rows = (
@@ -238,6 +268,34 @@ async def resolve_person(
             source="memory_fact",
             memory_hits=int(cnt or 0),
         )
+
+    # 3) Very small Russian-name stemming fallback: Карина -> карин*, фрукта ->
+    # фрукт*. This is intentionally weak evidence, but prevents "ничего не знаю"
+    # for common inflected names in chat history.
+    if not bucket and query_tokens:
+        stem = query_tokens[0]
+        if len(stem) > 4:
+            stem = stem[:-1]
+        stem_like = f"%{stem}%"
+        rows = (
+            await session.execute(
+                select(AiChatArchive.user_id, AiChatArchive.name, func.count().label("cnt"))
+                .where(AiChatArchive.text.ilike(stem_like))
+                .where(AiChatArchive.user_id.is_not(None))
+                .group_by(AiChatArchive.user_id, AiChatArchive.name)
+                .order_by(func.count().desc())
+                .limit(12)
+            )
+        ).all()
+        for user_id, display_name, cnt in rows:
+            _merge_candidate(
+                bucket,
+                user_id=int(user_id) if user_id is not None else None,
+                name=display_name or name,
+                confidence=0.28,
+                source="archive_text_stem_mentioner",
+                archive_hits=int(cnt or 0),
+            )
 
     await _attach_archive_aliases(session, bucket)
     return rank_candidates(list(bucket.values()))[:limit]
@@ -281,6 +339,12 @@ def render_dossier(dossier: PersonDossier) -> str:
             lines.append(
                 f"- {rel.name} (user_id={uid}): {rel.direction}, reply-связей={rel.count}"
             )
+    if dossier.mention_lines:
+        lines.append("## Реальные упоминания имени в чате")
+        for line in dossier.mention_lines[:6]:
+            when = line.message_at.date().isoformat() if line.message_at else "без даты"
+            text = line.text if len(line.text) <= 180 else line.text[:179].rstrip() + "…"
+            lines.append(f"- [{when}] {line.name}: {text}")
     if dossier.archive_lines:
         lines.append("## Реальные старые реплики этого человека")
         for line in dossier.archive_lines[:6]:
@@ -384,6 +448,24 @@ async def build_person_dossier(
             for name, text, message_at in rows
         ]
 
+    mention_lines: list[DossierArchiveLine] = []
+    person_name = extract_person_query(query)
+    if person_name:
+        mention_like = f"%{person_name}%"
+        rows = (
+            await session.execute(
+                select(AiChatArchive.name, AiChatArchive.text, AiChatArchive.message_at)
+                .where(AiChatArchive.text.ilike(mention_like))
+                .order_by(AiChatArchive.message_at.desc().nullslast())
+                .limit(6)
+            )
+        ).all()
+        mention_lines = [
+            DossierArchiveLine(name=name or "?", text=text or "", message_at=message_at)
+            for name, text, message_at in rows
+            if text
+        ]
+
     memories: list[DossierMemoryLine] = []
     if cand.user_id is not None:
         rows = (
@@ -406,6 +488,7 @@ async def build_person_dossier(
 
     return PersonDossier(
         candidate=cand,
+        mention_lines=mention_lines,
         archive_lines=archive_lines,
         memories=memories,
         relationships=relationships,

@@ -11,6 +11,7 @@ def test_normalize_name_lowers_and_strips_punctuation():
 def test_extract_person_query_removes_common_prefixes():
     assert identity.extract_person_query("кто такой Хинт вообще") == "Хинт"
     assert identity.extract_person_query("досье на oew") == "oew"
+    assert identity.extract_person_query("расскажи о Карине") == "Карине"
     assert identity.extract_person_query("человек найти фрукта") == "фрукта"
 
 
@@ -64,6 +65,7 @@ def test_render_dossier_includes_caution_facts_and_archive_lines():
             confidence=0.6,
             aliases=["Хинт", "h1nt"],
         ),
+        mention_lines=[identity.DossierArchiveLine(name="friend", text="Карина опять в теме", message_at=None)],
         memories=[identity.DossierMemoryLine(kind="chat:trait", fact="любит pgvector", weight=3)],
         relationships=[
             identity.DossierRelationshipLine(
@@ -83,4 +85,6 @@ def test_render_dossier_includes_caution_facts_and_archive_lines():
     assert "любит pgvector" in rendered
     assert "reply-граф" in rendered
     assert "oew" in rendered
+    assert "упоминания имени" in rendered
+    assert "Карина опять" in rendered
     assert "pgvector норм" in rendered

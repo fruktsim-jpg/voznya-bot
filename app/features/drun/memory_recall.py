@@ -49,8 +49,8 @@ _SECTION_TITLE = {
 _SECTION_CAP = {
     "identity": 6,
     "fresh": 6,
-    "relationships": 5,
-    "episodes": 5,
+    "relationships": 3,
+    "episodes": 4,
     "world": 5,
     "other": 4,
 }
@@ -62,7 +62,7 @@ _KIND_CAP = {
     "chat:trait": 4,
     "trait": 4,
     "opinion": 2,
-    "rivalry": 3,
+    "rivalry": 1,
     "chat:relationship": 3,
     "legend": 3,
     "storyline": 2,

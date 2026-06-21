@@ -23,6 +23,14 @@ def test_context_router_web_uses_web_and_suppresses_background_noise():
     assert route.include_economy is False
 
 
+def test_context_router_who_is_person_not_web():
+    route = classify_context_route("кто такая карина")
+
+    assert route.intent == ContextIntent.PERSON
+    assert route.include_identity is True
+    assert route.include_economy is False
+
+
 def test_context_router_economy_keeps_money_blocks():
     route = classify_context_route("у кого больше ешек и кто богатый")
 
@@ -33,7 +41,7 @@ def test_context_router_economy_keeps_money_blocks():
 
 
 def test_context_router_person_focuses_social_memory():
-    route = classify_context_route("расскажи про хинта", subject_id=123)
+    route = classify_context_route("расскажи о хинте", subject_id=123)
 
     assert route.intent == ContextIntent.PERSON
     assert route.include_memory is True

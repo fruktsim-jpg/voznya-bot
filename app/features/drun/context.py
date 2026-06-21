@@ -82,12 +82,13 @@ _ECONOMY_WORDS = (
 )
 _WEB_WORDS = (
     "найди", "погугли", "загугли", "в интернете", "ссылк", "новост",
-    "погода", "курс", "что такое", "кто такой", "когда выш", "актуальн",
+    "погода", "курс", "что такое", "когда выш", "актуальн",
     "сейчас в мире", "web", "search", "google",
 )
 _PERSON_WORDS = (
     "кто такой", "кто такая", "что знаешь про", "расскажи про", "досье",
-    "профиль", "характер", "память про", "про него", "про неё", "про нее",
+    "расскажи о", "расскажи об", "что знаешь о", "что знаешь об",
+    "профиль", "характер", "память про", "память о", "про него", "про неё", "про нее",
 )
 
 
@@ -113,6 +114,20 @@ def classify_context_route(
             include_worldview=True,
             include_economy=True,
             archive_limit=0,
+        )
+    # Person lookup must win over generic web wording. Russian queries like
+    # "кто такая Карина" look like fact/web questions syntactically, but in this
+    # product they usually mean "resolve a chat person and show dossier".
+    if subject_id is not None or _route_has_any(q, _PERSON_WORDS):
+        return ContextRoute(
+            intent=ContextIntent.PERSON,
+            include_archive=_route_has_any(q, _PAST_WORDS),
+            include_web=False,
+            include_overview=False,
+            include_worldview=True,
+            include_economy=False,
+            include_identity=True,
+            archive_limit=4,
         )
     if _route_has_any(q, _WEB_WORDS):
         return ContextRoute(
@@ -144,17 +159,6 @@ def classify_context_route(
             include_worldview=False,
             include_economy=True,
             archive_limit=0,
-        )
-    if subject_id is not None or _route_has_any(q, _PERSON_WORDS):
-        return ContextRoute(
-            intent=ContextIntent.PERSON,
-            include_archive=_route_has_any(q, _PAST_WORDS),
-            include_web=False,
-            include_overview=False,
-            include_worldview=True,
-            include_economy=False,
-            include_identity=True,
-            archive_limit=4,
         )
     return ContextRoute(
         intent=ContextIntent.DEFAULT,
