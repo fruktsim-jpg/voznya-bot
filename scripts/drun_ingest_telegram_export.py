@@ -27,12 +27,15 @@ from app.features.drun.telegram_export_ingest import (  # noqa: E402
     apply_proposals,
     build_deterministic_proposals,
     distill_export_chunks,
+    filter_messages,
     load_export_messages,
 )
 
 
 async def _amain(args: argparse.Namespace) -> int:
-    messages = load_export_messages(args.path)
+    loaded_messages = load_export_messages(args.path)
+    exclude_ids = {int(x) for x in args.exclude_user_id}
+    messages = filter_messages(loaded_messages, exclude_user_ids=exclude_ids)
     proposals = build_deterministic_proposals(messages)
 
     sessionmaker = get_sessionmaker()
@@ -53,7 +56,9 @@ async def _amain(args: argparse.Namespace) -> int:
 
     print(json.dumps({
         "mode": "apply" if args.apply else "dry-run",
+        "loaded_messages": len(loaded_messages),
         "messages": len(messages),
+        "excluded_user_ids": sorted(exclude_ids),
         "proposals": len(proposals),
         "stats": stats,
         "sample": [p.as_dict() for p in proposals[: args.sample]],
@@ -74,6 +79,12 @@ def main() -> int:
     parser.add_argument("--chunk-size", type=int, default=90)
     parser.add_argument("--max-chunks", type=int, default=80, help="0 = all chunks")
     parser.add_argument("--sample", type=int, default=25)
+    parser.add_argument(
+        "--exclude-user-id",
+        action="append",
+        default=["8785112116"],
+        help="Telegram user_id to exclude from learning; repeatable. Defaults to Drun bot id.",
+    )
     args = parser.parse_args()
     return asyncio.run(_amain(args))
 

@@ -119,6 +119,21 @@ def load_export_messages(path: str | Path) -> list[ExportMessage]:
     return out
 
 
+def filter_messages(
+    messages: list[ExportMessage], *, exclude_user_ids: set[int] | None = None
+) -> list[ExportMessage]:
+    """Filters export messages before learning.
+
+    By default the script excludes the bot/Drun account: learning from its own
+    exported replies creates a feedback loop and teaches it to imitate itself
+    instead of the chat.
+    """
+    exclude_user_ids = exclude_user_ids or set()
+    if not exclude_user_ids:
+        return messages
+    return [m for m in messages if m.user_id not in exclude_user_ids]
+
+
 def _chunks(messages: list[ExportMessage], size: int) -> Iterable[list[ExportMessage]]:
     for i in range(0, len(messages), size):
         chunk = messages[i : i + size]

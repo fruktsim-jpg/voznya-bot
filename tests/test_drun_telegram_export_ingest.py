@@ -7,6 +7,7 @@ import json
 from app.features.drun.telegram_export_ingest import (
     SOURCE,
     build_deterministic_proposals,
+    filter_messages,
     load_export_messages,
     normalize_text,
 )
@@ -60,3 +61,17 @@ def test_build_deterministic_proposals_from_export(tmp_path):
     meme = [p for p in proposals if p.kind == "chat:meme"][0]
     assert meme.source == SOURCE
     assert "чина" in meme.fact
+
+
+def test_filter_messages_excludes_bot_id(tmp_path):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps({
+        "messages": [
+            {"id": 1, "type": "message", "from": "Тёмный друн", "from_id": "user8785112116", "text": "я друн"},
+            {"id": 2, "type": "message", "from": "Вася", "from_id": "user10", "text": "чина"},
+        ]
+    }), encoding="utf-8")
+    messages = load_export_messages(path)
+    filtered = filter_messages(messages, exclude_user_ids={8785112116})
+    assert len(filtered) == 1
+    assert filtered[0].user_id == 10
