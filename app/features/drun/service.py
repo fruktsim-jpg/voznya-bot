@@ -281,6 +281,7 @@ async def generate(
     addressed: bool = True,
     urge: float = 0.0,
     vary: bool = True,
+    grounded: bool = False,
 ) -> GenerateResult:
     """Генерирует одну реплику друна под конкретное задание ``task``.
 
@@ -298,6 +299,10 @@ async def generate(
     собирается уникальный стиль (длина/яд/агрессия/тепло) + override температуры,
     чтобы реплики не схлопывались к «средне-дерзкой реплике средней длины». Для
     служебных объявлений (announce) можно отключить.
+
+    ``grounded`` — режим ответа по внешним/проверенным фактам (web/ask). Он не
+    выключает голос друна, но ограничивает температуру, чтобы модель меньше
+    додумывала поверх найденных данных.
     """
     # Лечим отравленную upstream-кодом транзакцию ДО любой SQL-операции.
     # См. docstring _heal_if_poisoned: без этого даже первый get_config()
@@ -444,6 +449,12 @@ async def generate(
             logger.debug("drun variance/emotion failed, using defaults", exc_info=True)
             style = None
             temp_override = None
+
+    if grounded:
+        # Для web/factual ответов стиль может быть живым, но декодер — холоднее:
+        # свежие данные важнее импровизации. Это снижает «додумывание» поверх
+        # найденных страниц/погоды/курсов без отдельной модели.
+        temp_override = min(temp_override if temp_override is not None else cfg.temperature, 0.45)
 
     user_content = (f"{ctx}\n\n# ЗАДАНИЕ\n{task}" if ctx else task).strip()
     messages.append({"role": "user", "content": user_content})
@@ -815,6 +826,7 @@ async def respond(
         intent_kind=intent_kind,
         addressed=True,
         urge=urge,
+        grounded=bool(web_block),
     )
 
 

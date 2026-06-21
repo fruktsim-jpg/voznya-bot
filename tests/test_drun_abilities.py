@@ -66,6 +66,54 @@ def test_extract_bad_shape():
     assert websearch._extract([]) == []
 
 
+def test_extract_weather_location():
+    assert websearch._extract_weather_location("какая погода в Амстердаме?") == "Амстердаме"
+    assert websearch._extract_weather_location("температура в Санкт-Петербурге сейчас") == "Санкт-Петербурге"
+    assert websearch._extract_weather_location("здарова друн") == ""
+
+
+def test_format_weather_summary():
+    data = {
+        "current_condition": [{
+            "temp_C": "18",
+            "FeelsLikeC": "17",
+            "humidity": "70",
+            "windspeedKmph": "12",
+            "lang_ru": [{"value": "Переменная облачность"}],
+        }],
+        "weather": [{"hourly": [{"chanceofrain": "20"}]}],
+    }
+    out = websearch._format_weather(data, "Amsterdam")
+    assert "Amsterdam: 18°C" in out
+    assert "ощущается как 17°C" in out
+    assert "шанс дождя 20%" in out
+
+
+def test_rewrite_fresh_queries():
+    assert websearch._rewrite_query("новости ИИ") == "новости ИИ сегодня"
+    assert websearch._rewrite_query("курс евро") == "курс евро сейчас"
+    assert websearch._rewrite_query("что такое pgvector") == "что такое pgvector"
+
+
+def test_html_to_summary_extracts_page_content():
+    html = """
+    <html><head>
+      <title>Example Title</title>
+      <meta name="description" content="Short useful description.">
+      <style>.x{}</style><script>bad()</script>
+    </head><body>
+      <nav>menu</nav>
+      <p>This is a long enough paragraph with actual useful page content that
+      should be visible to the retrieval layer and not hidden in tags.</p>
+    </body></html>
+    """
+    title, snippet = websearch._html_to_summary(html)
+    assert title == "Example Title"
+    assert "Short useful description" in snippet
+    assert "actual useful page content" in snippet
+    assert "bad()" not in snippet
+
+
 def test_ssrf_guard_rejects_non_https():
     from app.features.drun import provider
 
@@ -87,4 +135,3 @@ def test_ssrf_guard_rejects_private_and_loopback():
             assert False, f"expected rejection for {bad}"
         except provider.LlmError:
             pass
-
