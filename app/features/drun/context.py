@@ -27,6 +27,7 @@ from app.features.drun import attitude as drun_attitude
 from app.features.drun import chat_archive as drun_chat_archive
 from app.features.drun import memory as drun_memory
 from app.features.drun import memory_recall as drun_memory_recall
+from app.features.drun import identity as drun_identity
 from app.features.drun.names import name_for, resolve_names, resolve_person_hints
 from app.models import User, WorldEvent
 
@@ -723,6 +724,14 @@ async def _archive_block(
         return block
     except Exception:  # noqa: BLE001
         logger.debug("archive_block failed", exc_info=True)
+        return ""
+
+
+async def _identity_block(session: AsyncSession, query: str | None = None) -> str:
+    try:
+        return await drun_identity.build_identity_block(session, query)
+    except Exception:  # noqa: BLE001
+        logger.debug("identity_block failed", exc_info=True)
         return ""
 
 

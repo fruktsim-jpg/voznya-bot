@@ -114,6 +114,9 @@ def test_owner_diag_parser_search_commands():
     assert owner_dm._parse_owner_diag("память поиск хинт") == (
         "memory_search", "хинт",
     )
+    assert owner_dm._parse_owner_diag("друн человек найти хинт") == (
+        "person_find", "хинт",
+    )
 
 
 def test_owner_diag_parser_ignores_regular_talk():

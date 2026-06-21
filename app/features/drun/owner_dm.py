@@ -89,6 +89,9 @@ def _parse_owner_diag(text: str) -> tuple[str, str] | None:
     for prefix in ("память поиск", "memory search"):
         if low.startswith(prefix + " "):
             return "memory_search", body[len(prefix):].strip()
+    for prefix in ("человек найти", "person find", "найди человека"):
+        if low.startswith(prefix + " "):
+            return "person_find", body[len(prefix):].strip()
     return None
 
 
@@ -224,6 +227,13 @@ async def _memory_search(session: AsyncSession, query: str) -> str:
     return "\n".join(lines)
 
 
+async def _person_find(session: AsyncSession, query: str) -> str:
+    from app.features.drun import identity as drun_identity
+
+    candidates = await drun_identity.resolve_person(session, query, limit=8)
+    return drun_identity.render_candidates(candidates, title="# ПОИСК ЧЕЛОВЕКА")
+
+
 async def _jobs_status(session: AsyncSession) -> str:
     from app.features.drun import job_health as drun_job_health
 
@@ -289,6 +299,8 @@ async def _handle_owner_diag(
         out = await _archive_search(session, arg)
     elif command == "memory_search":
         out = await _memory_search(session, arg)
+    elif command == "person_find":
+        out = await _person_find(session, arg)
     elif command == "jobs_status":
         out = await _jobs_status(session)
     elif command == "critic_status":
