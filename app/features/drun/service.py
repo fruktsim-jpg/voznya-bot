@@ -446,19 +446,18 @@ async def generate(
     # Экономическая выходка (налог/подачка), если друн вставил директиву и
     # власть включена. Применяем к субъекту реплики.
     #
-    # ``asker_id`` отделён от ``subject_id`` намеренно: для адресного ответа
-    # (respond) автор обращения = субъект, и self-grant-блок ловит абуз через
-    # эхо директивы. Для спонтанного вкида (observe) человек НЕ обращался к
-    # друну — это инициатива друна, и блокировать grant как «самоначисление»
-    # неправильно (игрок не мог ничего «попросить»). По умолчанию asker_id=
-    # subject_id, чтобы старое поведение respond не сломалось; observe явно
-    # передаёт asker_id=None.
+    # ``asker_id`` отделён от ``subject_id`` намеренно. ``None`` означает, что
+    # это инициатива друна: grant адресату разрешён и проходит через обычные
+    # cap/cooldown/daily-cap лимиты. Если caller явно передаст asker_id ==
+    # target_id, econ.apply заблокирует self-grant. Пользовательские директивы
+    # заранее калечатся sanitize_user_text(), поэтому обычный respond() может
+    # безопасно оставлять asker_id=None: деньги двигает только директива модели,
+    # не отражённый ввод игрока.
     econ_result = None
     if allow_actions and cfg.econ_enabled:
-        effective_asker = asker_id if asker_id is not None else subject_id
         econ_result = await drun_actions.apply_if_any(
             session, cfg=cfg, target_id=subject_id, text=text,
-            asker_id=effective_asker, intent_kind=intent_kind,
+            asker_id=asker_id, intent_kind=intent_kind,
         )
     if drun_actions.parse(text) is not None:
         text = drun_actions.strip_directives(text)

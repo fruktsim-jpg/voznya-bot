@@ -182,9 +182,12 @@ def test_respond_threads_intent_kind_to_generate():
             intent_kind="hype",
         ))
     assert cap.kwargs["intent_kind"] == "hype"
-    # respond() передаёт автора как subject_id (он же асkер для self-grant
-    # блока в econ.apply: эхо grant=self ловится именно так).
+    # respond() передаёт автора как subject_id, а asker_id не выставляет:
+    # grant адресату считается инициативой друна. Пользовательские econ-токены
+    # режутся sanitize_user_text() до LLM, поэтому self-grant-блок не нужен на
+    # обычном пути respond и не должен ломать честную подачку.
     assert cap.kwargs["subject_id"] == 1
+    assert cap.kwargs.get("asker_id") is None
 
 
 def test_respond_unknown_intent_no_hint_no_crash():
