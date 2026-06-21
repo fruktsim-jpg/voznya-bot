@@ -25,6 +25,7 @@ from app.core.money import money
 from app.core.utils import now_utc
 from app.features.drun import attitude as drun_attitude
 from app.features.drun import memory as drun_memory
+from app.features.drun import memory_recall as drun_memory_recall
 from app.features.drun.names import name_for, resolve_names, resolve_person_hints
 from app.models import User, WorldEvent
 
@@ -666,32 +667,18 @@ async def _overview_block_uncached(session: AsyncSession) -> str:
 
 
 async def _memory_block(
-    session: AsyncSession, subject_id: int | None, query: str | None = None
+    session: AsyncSession,
+    subject_id: int | None,
+    query: str | None = None,
+    channel: str = "chat",
 ) -> str:
     try:
-        mems = await drun_memory.scored_memories(
-            session, subject_id=subject_id, query=query, limit=24
+        return await drun_memory_recall.build_recall_block(
+            session,
+            subject_id=subject_id,
+            query=query,
+            channel=channel,
         )
-        if not mems:
-            return ""
-        lines = ["Что ты помнишь про людей и мир (используй для подколов и связей):"]
-        # Типизированные факты (клички/шутки/мемы) помечаем — это «фишки» чата,
-        # ими особенно ценно подкалывать и звать людей по локальным прозвищам.
-        tag = {
-            "chat:nickname": "[кличка] ",
-            "chat:joke": "[шутка] ",
-            "chat:meme": "[мем] ",
-        }
-        for m in mems:
-            kind = getattr(m, "kind", "") or ""
-            # Эпизоды отношений рендерятся отдельным богатым блоком «ЧТО ОН
-            # ДЕЛАЛ» в досье (с типом/значимостью/давностью) — здесь их не
-            # дублируем плоским списком.
-            if kind.startswith("episode:"):
-                continue
-            prefix = tag.get(kind, "")
-            lines.append(f"- {prefix}{m.fact}")
-        return "\n".join(lines) if len(lines) > 1 else ""
     except Exception:  # noqa: BLE001
         logger.debug("memory_block failed", exc_info=True)
         return ""
@@ -915,7 +902,10 @@ async def build_context(
     # экономики; денежные блоки идут ФОНОМ в самом низу.
     blocks.append(
         await _isolated(
-            session, "memory", lambda: _memory_block(session, subject_id, query), ""
+            session,
+            "memory",
+            lambda: _memory_block(session, subject_id, query, channel),
+            "",
         )
     )
     blocks.append(
