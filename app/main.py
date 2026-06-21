@@ -39,6 +39,7 @@ from app.features.drun.worldview import setup_worldview
 from app.features.drun.autonomous import setup_autonomous_poster
 from app.features.drun.presence import setup_presence
 from app.features.drun.events import setup_events_scheduler
+from app.features.drun.event_proposer import setup_event_proposer
 from app.features.drun.events_listener import (
     setup_events_listener,
     teardown_events_listener,
@@ -187,6 +188,12 @@ async def on_startup(bot: Bot) -> None:
     # Автономные ивенты друна (Phase 4): фоновое авто-разрешение дозревших
     # челленджей/прогнозов — выплата наград через экономику + объявление итога.
     setup_events_scheduler(scheduler, sessionmaker)
+
+    # Автономные ПРЕДЛОЖЕНИЯ ивентов (Phase 6 мост): друн сам замечает повод
+    # (затухший чат, серия фарма) и кладёт предложение ивента в approval-очередь
+    # + пишет владельцу в личку. Ивент НЕ создаётся и деньги НЕ двигаются, пока
+    # владелец не ответит «да N». Опт-ин — autonomous_enabled, как у автопостинга.
+    setup_event_proposer(scheduler, sessionmaker)
 
     # Real-time подписка на крупные события через Postgres LISTEN/NOTIFY:
     # вместо 7-минутного опросного тика друн реагирует на джекпот/свадьбу/
