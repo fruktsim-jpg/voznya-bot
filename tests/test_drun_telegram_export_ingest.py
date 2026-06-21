@@ -10,6 +10,7 @@ from app.features.drun.telegram_export_ingest import (
     filter_messages,
     load_export_messages,
     normalize_text,
+    selected_chunks,
 )
 
 
@@ -75,3 +76,11 @@ def test_filter_messages_excludes_bot_id(tmp_path):
     filtered = filter_messages(messages, exclude_user_ids={8785112116})
     assert len(filtered) == 1
     assert filtered[0].user_id == 10
+
+
+def test_selected_chunks_samples_full_timeline():
+    messages = [object() for _ in range(100)]
+    chunks = selected_chunks(messages, chunk_size=10, max_chunks=3)
+    assert chunks[0][0] is messages[0]
+    assert chunks[1][0] is messages[40] or chunks[1][0] is messages[50]
+    assert chunks[2][0] is messages[90]

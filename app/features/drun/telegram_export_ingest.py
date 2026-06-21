@@ -141,6 +141,25 @@ def _chunks(messages: list[ExportMessage], size: int) -> Iterable[list[ExportMes
             yield chunk
 
 
+def selected_chunks(
+    messages: list[ExportMessage], *, chunk_size: int, max_chunks: int | None
+) -> list[list[ExportMessage]]:
+    """Returns chunks for LLM distill, sampling evenly across full history.
+
+    Processing every 90-message chunk of a 100k+ export would be thousands of LLM
+    calls. If max_chunks is set, we spread the budget across the whole timeline
+    instead of taking only the beginning.
+    """
+    chunks = list(_chunks(messages, max(1, chunk_size)))
+    if max_chunks is None or max_chunks <= 0 or len(chunks) <= max_chunks:
+        return chunks
+    if max_chunks == 1:
+        return [chunks[len(chunks) // 2]]
+    last = len(chunks) - 1
+    idxs = sorted({round(i * last / (max_chunks - 1)) for i in range(max_chunks)})
+    return [chunks[i] for i in idxs]
+
+
 def build_deterministic_proposals(messages: list[ExportMessage]) -> list[MemoryProposal]:
     """Cheap full-history facts without LLM calls."""
     by_user: dict[int, list[ExportMessage]] = defaultdict(list)
@@ -275,9 +294,8 @@ async def distill_export_chunks(
     if not cfg.usable:
         return []
     out: list[MemoryProposal] = []
-    for idx, chunk in enumerate(_chunks(messages, chunk_size), start=1):
-        if max_chunks is not None and idx > max_chunks:
-            break
+    chunks = selected_chunks(messages, chunk_size=chunk_size, max_chunks=max_chunks)
+    for idx, chunk in enumerate(chunks, start=1):
         lines = []
         for m in chunk:
             who = f"{m.name or 'unknown'} [user_id={m.user_id}]"
