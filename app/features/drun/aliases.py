@@ -92,35 +92,108 @@ def add_aliases(
     new_aliases: list[str],
     *,
     now: datetime | None = None,
+    source: str = "chat",
 ) -> list[dict]:
     """Сливает новые прозвища в список профиля, копя вес повторяемости.
 
-    Возвращает обновлённый список ``[{"alias","w","ts"}]`` (вес = сколько раз чат
-    подтвердил это прозвище, ``ts`` = когда подтверждали в последний раз). Чем
-    чаще зовут — тем выше приоритет при резолве и тем дольше TTL. ``ts`` каждого
-    подтверждённого сейчас прозвища освежается, чтобы реально живые клички не
-    протухали (см. :func:`prune_expired`).
+    Возвращает обновлённый список ``[{"alias","w","w_chat","w_export","ts"}]``.
+
+    ``w_chat`` — подтверждения из живого чата. Только они дают право на
+    автономный/untrusted резолв. ``w_export`` — имена из Telegram export; они
+    полезны владельцу (trusted path), но не должны сами по себе давать Друну
+    автономно угадывать людей для действий. ``w`` остаётся суммой для обратной
+    совместимости/отображения.
     """
     now = now or datetime.now(timezone.utc)
     now_iso = now.isoformat()
-    # alias → (вес, ts). Сохраняем прежний ts, если алиас не подтверждали сейчас.
-    state: dict[str, tuple[int, str]] = {}
+    # alias → {w_chat,w_export,ts}. Старый формат без раздельных весов считаем
+    # живым chat-подтверждением, кроме явно помеченного src=telegram_export.
+    state: dict[str, dict] = {}
     for item in prev or []:
         a = _norm(str(item.get("alias", "")))
         if not a:
             continue
         w = int(item.get("w", 1) or 1)
+        w_chat = item.get("w_chat")
+        w_export = item.get("w_export")
+        if w_chat is None and w_export is None:
+            if item.get("src") == "telegram_export":
+                w_chat, w_export = 0, w
+            else:
+                w_chat, w_export = w, 0
+        else:
+            w_chat = int(w_chat or 0)
+            w_export = int(w_export or 0)
         ts = str(item.get("ts") or now_iso)
-        prev_w = state.get(a, (0, ts))[0]
-        state[a] = (max(prev_w, w), ts)
+        prev = state.get(a)
+        if prev is None:
+            state[a] = {"w_chat": w_chat, "w_export": w_export, "ts": ts}
+        else:
+            prev["w_chat"] = max(int(prev.get("w_chat", 0)), w_chat)
+            prev["w_export"] = max(int(prev.get("w_export", 0)), w_export)
     for raw in new_aliases:
         a = _norm(raw)
         if len(a) < _MIN_ALIAS_LEN or a in _ALIAS_STOP:
             continue
-        w = state.get(a, (0, now_iso))[0] + 1
-        state[a] = (w, now_iso)  # подтверждено сейчас → освежаем ts
-    ranked = sorted(state.items(), key=lambda kv: kv[1][0], reverse=True)
-    return [{"alias": a, "w": w, "ts": ts} for a, (w, ts) in ranked[:_MAX_ALIASES]]
+        entry = state.setdefault(a, {"w_chat": 0, "w_export": 0, "ts": now_iso})
+        if source == "telegram_export":
+            # Один historical import не должен перескочить untrusted-порог.
+            entry["w_export"] = min(2, int(entry.get("w_export", 0)) + 1)
+        else:
+            entry["w_chat"] = int(entry.get("w_chat", 0)) + 1
+        entry["ts"] = now_iso  # подтверждено сейчас → освежаем ts
+    ranked = sorted(
+        state.items(),
+        key=lambda kv: int(kv[1].get("w_chat", 0)) + int(kv[1].get("w_export", 0)),
+        reverse=True,
+    )
+    out = []
+    for a, entry in ranked[:_MAX_ALIASES]:
+        w_chat = int(entry.get("w_chat", 0))
+        w_export = int(entry.get("w_export", 0))
+        item = {"alias": a, "w": w_chat + w_export, "w_chat": w_chat, "w_export": w_export, "ts": entry["ts"]}
+        if w_export and not w_chat:
+            item["src"] = "telegram_export"
+        out.append(item)
+    return out
+
+
+def mark_export_aliases(
+    aliases: list[dict] | None,
+    export_aliases: list[str],
+    *,
+    now: datetime | None = None,
+) -> list[dict]:
+    """Помечает уже импортированные имена как export-only.
+
+    Нужно для repair после старой версии ingest, которая писала export-имена как
+    обычные ``w`` без ``w_export``. Для safety переводим совпавшие с дампом имена
+    в ``w_export`` и обнуляем ``w_chat``: владелец их всё равно резолвит
+    (trusted), а автономный путь потребует живых подтверждений из чата.
+    """
+    if not aliases:
+        return []
+    now = now or datetime.now(timezone.utc)
+    export_set = {_norm(a) for a in export_aliases if _norm(a)}
+    out: list[dict] = []
+    for item in aliases:
+        a = _norm(str(item.get("alias", "")))
+        if not a:
+            continue
+        ts = str(item.get("ts") or now.isoformat())
+        if a in export_set:
+            w_export = min(2, max(1, int(item.get("w_export") or item.get("w") or 1)))
+            out.append({
+                "alias": a,
+                "w": w_export,
+                "w_chat": 0,
+                "w_export": w_export,
+                "ts": ts,
+                "src": "telegram_export",
+            })
+        else:
+            out.extend(add_aliases([item], [], now=now))
+    return sorted(out, key=lambda x: int(x.get("w", 0)), reverse=True)[:_MAX_ALIASES]
 
 
 def prune_expired(
@@ -155,7 +228,12 @@ def prune_expired(
         except (ValueError, TypeError):
             age_days = 0.0
         if age_days <= ttl_days:
-            out.append({"alias": a, "w": w, "ts": str(ts_raw)})
+            w_chat = int(item.get("w_chat", w if item.get("src") != "telegram_export" else 0) or 0)
+            w_export = int(item.get("w_export", w if item.get("src") == "telegram_export" else 0) or 0)
+            kept = {"alias": a, "w": w_chat + w_export, "w_chat": w_chat, "w_export": w_export, "ts": str(ts_raw)}
+            if w_export and not w_chat:
+                kept["src"] = "telegram_export"
+            out.append(kept)
     return out
 
 
@@ -225,7 +303,13 @@ async def resolve_alias(
         for item in (data or {}).get("aliases", []):
             alias = str(item.get("alias", ""))
             if _alias_matches(q, alias):
-                w = int(item.get("w", 1) or 1)
+                if trusted:
+                    w = int(item.get("w", 1) or 1)
+                else:
+                    # Autonomous/untrusted резолв доверяет только живым
+                    # подтверждениям из чата. Export-only имена видит владелец,
+                    # но не автономная власть Друна.
+                    w = int(item.get("w_chat", item.get("w", 1)) or 0)
                 if w > weight_by_uid.get(uid, 0):
                     weight_by_uid[uid] = w
     if not weight_by_uid:

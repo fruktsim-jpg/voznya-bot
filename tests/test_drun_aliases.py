@@ -32,6 +32,28 @@ def test_add_aliases_accumulates_weight_and_dedups():
     by = {x["alias"]: x["w"] for x in out}
     assert by["артем"] >= 3  # 1 prev + 2 confirmations (ё→е сливает формы)
     assert "тема" in by
+    rec = next(x for x in out if x["alias"] == "артем")
+    assert rec["w_chat"] >= 3
+    assert rec["w_export"] == 0
+
+
+def test_add_aliases_export_source_does_not_create_chat_weight():
+    out = al.add_aliases(None, ["Кот", "Кот", "Кот"], source="telegram_export")
+    rec = next(x for x in out if x["alias"] == "кот")
+    assert rec["w"] == 2  # import cap
+    assert rec["w_chat"] == 0
+    assert rec["w_export"] == 2
+    assert rec["src"] == "telegram_export"
+
+
+def test_mark_export_aliases_repairs_old_imported_alias():
+    old = [{"alias": "Кот", "w": 4, "ts": "2026-01-01T00:00:00+00:00"}]
+    out = al.mark_export_aliases(old, ["кот"])
+    rec = next(x for x in out if x["alias"] == "кот")
+    assert rec["w"] == 2
+    assert rec["w_chat"] == 0
+    assert rec["w_export"] == 2
+    assert rec["src"] == "telegram_export"
 
 
 def test_add_aliases_drops_short_and_stopwords():
@@ -53,6 +75,15 @@ def test_pick_resolved_requires_min_weight():
     assert al._pick_resolved({100: 2}) is None
     # Устоявшееся прозвище — резолвится.
     assert al._pick_resolved({100: 3}) == 100
+
+
+def test_untrusted_resolve_uses_only_chat_weight_shape():
+    # _pick_resolved only receives already-effective weights. Contract guard:
+    # export-only aliases must be converted to 0 before calling it, while trusted
+    # owner path can still use total weight.
+    assert al._pick_resolved({100: 0}) is None
+    assert al._pick_resolved({100: 2}) is None
+    assert al._pick_resolved({100: 2}, trusted=True) == 100
 
 
 def test_pick_resolved_ambiguous_collision_returns_none():

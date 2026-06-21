@@ -432,9 +432,15 @@ async def apply_profile_aliases(
         if not new_aliases:
             continue
         prof = await session.get(AiProfile, uid)
+        prev_aliases = (prof.data or {}).get("aliases") if prof is not None else None
+        # Repair-safe: если прошлый ingest уже записал эти export-имена как
+        # обычные chat-алиасы, сначала переводим совпавшие имена в export-only,
+        # затем добавляем текущий import с source="telegram_export".
+        repaired = drun_aliases.mark_export_aliases(prev_aliases, new_aliases)
         merged = drun_aliases.add_aliases(
-            (prof.data or {}).get("aliases") if prof is not None else None,
+            repaired,
             new_aliases,
+            source="telegram_export",
         )
         stats["profiles_touched"] += 1
         if dry_run:
@@ -447,4 +453,3 @@ async def apply_profile_aliases(
             data["aliases"] = merged
             prof.data = data
     return stats
-
