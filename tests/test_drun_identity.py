@@ -65,6 +65,14 @@ def test_render_dossier_includes_caution_facts_and_archive_lines():
             aliases=["Хинт", "h1nt"],
         ),
         memories=[identity.DossierMemoryLine(kind="chat:trait", fact="любит pgvector", weight=3)],
+        relationships=[
+            identity.DossierRelationshipLine(
+                user_id=20,
+                name="oew",
+                count=7,
+                direction="он отвечал им",
+            )
+        ],
         archive_lines=[identity.DossierArchiveLine(name="h1nt", text="pgvector норм", message_at=None)],
     )
 
@@ -73,4 +81,6 @@ def test_render_dossier_includes_caution_facts_and_archive_lines():
     assert "# АВТО-ДОСЬЕ ЧЕЛОВЕКА" in rendered
     assert "Низкая уверенность" in rendered
     assert "любит pgvector" in rendered
+    assert "reply-граф" in rendered
+    assert "oew" in rendered
     assert "pgvector норм" in rendered

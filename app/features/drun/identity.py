@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AiChatArchive, AiMemory
@@ -57,10 +57,19 @@ class DossierMemoryLine:
 
 
 @dataclass(frozen=True)
+class DossierRelationshipLine:
+    user_id: int | None
+    name: str
+    count: int
+    direction: str
+
+
+@dataclass(frozen=True)
 class PersonDossier:
     candidate: PersonCandidate
     archive_lines: list[DossierArchiveLine] = field(default_factory=list)
     memories: list[DossierMemoryLine] = field(default_factory=list)
+    relationships: list[DossierRelationshipLine] = field(default_factory=list)
 
 
 def normalize_name(text: str) -> str:
@@ -265,6 +274,13 @@ def render_dossier(dossier: PersonDossier) -> str:
         for mem in dossier.memories[:8]:
             tag = f"[{mem.kind} w={mem.weight}]"
             lines.append(f"- {tag} {mem.fact}")
+    if dossier.relationships:
+        lines.append("## Авто-связи по reply-графу")
+        for rel in dossier.relationships[:6]:
+            uid = rel.user_id if rel.user_id is not None else "?"
+            lines.append(
+                f"- {rel.name} (user_id={uid}): {rel.direction}, reply-связей={rel.count}"
+            )
     if dossier.archive_lines:
         lines.append("## Реальные старые реплики этого человека")
         for line in dossier.archive_lines[:6]:
@@ -276,6 +292,68 @@ def render_dossier(dossier: PersonDossier) -> str:
         "- Если confidence низкий или фактов мало, не делай вид, что уверен; скажи 'если ты про этого...'."
     )
     return "\n".join(lines)
+
+
+async def build_relationship_lines(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    limit: int = 6,
+) -> list[DossierRelationshipLine]:
+    """Infer social edges from Telegram reply links in raw archive."""
+    sql = text(
+        """
+        WITH edges AS (
+            SELECT
+                replied.user_id AS other_user_id,
+                replied.name AS other_name,
+                'он отвечал им' AS direction,
+                count(*) AS cnt
+            FROM ai_chat_archive AS msg
+            JOIN ai_chat_archive AS replied
+              ON replied.source = msg.source
+             AND replied.source_message_id = CAST(msg.meta->>'reply_to_message_id' AS bigint)
+            WHERE msg.user_id = :uid
+              AND msg.meta ? 'reply_to_message_id'
+              AND replied.user_id IS NOT NULL
+              AND replied.user_id <> :uid
+            GROUP BY replied.user_id, replied.name
+            UNION ALL
+            SELECT
+                msg.user_id AS other_user_id,
+                msg.name AS other_name,
+                'ему отвечали' AS direction,
+                count(*) AS cnt
+            FROM ai_chat_archive AS replied
+            JOIN ai_chat_archive AS msg
+              ON replied.source = msg.source
+             AND replied.source_message_id = CAST(msg.meta->>'reply_to_message_id' AS bigint)
+            WHERE replied.user_id = :uid
+              AND msg.meta ? 'reply_to_message_id'
+              AND msg.user_id IS NOT NULL
+              AND msg.user_id <> :uid
+            GROUP BY msg.user_id, msg.name
+        )
+        SELECT other_user_id, other_name, direction, sum(cnt) AS cnt
+        FROM edges
+        GROUP BY other_user_id, other_name, direction
+        ORDER BY sum(cnt) DESC
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (await session.execute(sql, {"uid": int(user_id), "limit": int(limit)})).all()
+    except Exception:  # noqa: BLE001
+        return []
+    return [
+        DossierRelationshipLine(
+            user_id=int(r.other_user_id) if r.other_user_id is not None else None,
+            name=r.other_name or "?",
+            count=int(r.cnt or 0),
+            direction=r.direction or "reply-связь",
+        )
+        for r in rows
+    ]
 
 
 async def build_person_dossier(
@@ -322,7 +400,16 @@ async def build_person_dossier(
             if fact
         ]
 
-    return PersonDossier(candidate=cand, archive_lines=archive_lines, memories=memories)
+    relationships: list[DossierRelationshipLine] = []
+    if cand.user_id is not None:
+        relationships = await build_relationship_lines(session, int(cand.user_id))
+
+    return PersonDossier(
+        candidate=cand,
+        archive_lines=archive_lines,
+        memories=memories,
+        relationships=relationships,
+    )
 
 
 async def build_identity_block(session: AsyncSession, query: str | None) -> str:
