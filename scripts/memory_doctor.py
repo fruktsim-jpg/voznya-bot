@@ -1,12 +1,13 @@
-"""Read-only memory doctor: показывает дубли/шум/перекос в ``ai_memories``.
+"""Memory doctor: показывает дубли/шум/перекос в ``ai_memories``.
 
 Запуск:
     docker compose exec -T bot python -m scripts.memory_doctor
     docker compose exec -T bot python -m scripts.memory_doctor --source telegram_export --top 20
 
-НИЧЕГО не пишет и не удаляет — только диагностика, чтобы видеть, не зашумлена ли
-долгосрочная память после больших импортов (дубли фактов, почти-дубли, слишком
-общие мемы, перекос по kind/subject). Решение о чистке принимает человек.
+По умолчанию ничего не пишет и не удаляет — только диагностика, чтобы видеть, не
+зашумлена ли долгосрочная память после больших импортов. ``--apply`` включает
+только безопасную чистку: схлопывает точные дубли и near-dup пары с sim=1.0,
+оставляя строку с максимальным weight.
 """
 
 from __future__ import annotations
@@ -16,13 +17,35 @@ import asyncio
 import json
 import re
 from collections import Counter, defaultdict
+from dataclasses import dataclass
+from typing import Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.core.db import dispose_engine, get_sessionmaker
 from app.models import AiMemory
 
 _WORD_RE = re.compile(r"[\w']+", re.UNICODE)
+
+
+@dataclass(frozen=True)
+class MemoryRow:
+    id: int
+    subject_id: int | None
+    kind: str
+    fact: str
+    weight: int
+    source: str | None
+
+
+@dataclass(frozen=True)
+class CleanupGroup:
+    reason: str
+    keep_id: int
+    delete_ids: tuple[int, ...]
+    ids: tuple[int, ...]
+    subject_id: int | None
+    norm_fact: str
 
 
 def _norm_fact(text: str) -> str:
@@ -46,7 +69,56 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return inter / union if union else 0.0
 
 
-async def main(source: str | None, top: int, near_threshold: float) -> None:
+def _keep_key(row: MemoryRow) -> tuple[int, int]:
+    """Prefer the strongest memory, then the oldest stable row id."""
+    return (int(row.weight or 0), -int(row.id))
+
+
+def _build_cleanup_plan(rows: Iterable[MemoryRow]) -> list[CleanupGroup]:
+    """Build safe duplicate cleanup plan without touching storage.
+
+    Safe means only groups whose normalized facts are equal. That covers exact
+    duplicates and the reported ``хинт``/``Хинт`` class of sim=1.0 near-dups.
+    We deliberately do not merge looser near-duplicates here.
+    """
+    by_key: dict[tuple[int | None, str], list[MemoryRow]] = defaultdict(list)
+    for row in rows:
+        norm = _norm_fact(row.fact)
+        if norm:
+            by_key[(row.subject_id, norm)].append(row)
+
+    groups: list[CleanupGroup] = []
+    for (subject_id, norm_fact), items in by_key.items():
+        if len(items) < 2:
+            continue
+        keep = max(items, key=_keep_key)
+        delete_ids = tuple(sorted(row.id for row in items if row.id != keep.id))
+        groups.append(CleanupGroup(
+            reason="normalized_fact",
+            keep_id=keep.id,
+            delete_ids=delete_ids,
+            ids=tuple(sorted(row.id for row in items)),
+            subject_id=subject_id,
+            norm_fact=norm_fact,
+        ))
+
+    groups.sort(
+        key=lambda g: (
+            g.subject_id is not None,
+            g.subject_id or 0,
+            g.norm_fact,
+            g.keep_id,
+        )
+    )
+    return groups
+
+
+async def main(
+    source: str | None,
+    top: int,
+    near_threshold: float,
+    apply: bool,
+) -> None:
     sm = get_sessionmaker()
     async with sm() as session:
         stmt = select(
@@ -55,7 +127,14 @@ async def main(source: str | None, top: int, near_threshold: float) -> None:
         )
         if source:
             stmt = stmt.where(AiMemory.source == source)
-        rows = (await session.execute(stmt)).all()
+        rows = [MemoryRow(
+            id=int(r.id),
+            subject_id=r.subject_id,
+            kind=r.kind,
+            fact=r.fact,
+            weight=int(r.weight or 0),
+            source=r.source,
+        ) for r in (await session.execute(stmt)).all()]
 
         total = len(rows)
         by_kind = Counter(r.kind for r in rows)
@@ -68,6 +147,8 @@ async def main(source: str | None, top: int, near_threshold: float) -> None:
             exact[(r.subject_id, _norm_fact(r.fact))].append(r.id)
         exact_dups = {k: v for k, v in exact.items() if len(v) > 1}
         exact_dup_rows = sum(len(v) - 1 for v in exact_dups.values())
+        cleanup_plan = _build_cleanup_plan(rows)
+        cleanup_delete_ids = [mid for group in cleanup_plan for mid in group.delete_ids]
 
         # 2) Почти-дубли по subject (Jaccard шинглов выше порога). Ограничиваем
         #    сравнение внутри subject, чтобы не делать O(n^2) по всей базе.
@@ -106,7 +187,17 @@ async def main(source: str | None, top: int, near_threshold: float) -> None:
             "near_duplicate_pairs": len(near_pairs),
             "short_fact_rows": len(short_facts),
             "distinct_subjects": len(by_subject),
+            "cleanup_mode": "apply" if apply else "dry_run",
+            "cleanup_groups": len(cleanup_plan),
+            "cleanup_delete_rows": len(cleanup_delete_ids),
         }, ensure_ascii=False, indent=2))
+
+        print("\n# CLEANUP PLAN (safe normalized duplicates only):")
+        for group in cleanup_plan[:top]:
+            print(
+                f"  keep=#{group.keep_id}; delete={list(group.delete_ids)}; "
+                f"subject={group.subject_id}; fact={group.norm_fact[:100]}"
+            )
 
         print("\n# TOP REPEATED FACT TEXTS (same text across rows):")
         for t, c in repeated_text[:top]:
@@ -120,6 +211,22 @@ async def main(source: str | None, top: int, near_threshold: float) -> None:
         for subj, c in top_subjects:
             print(f"  subject={subj}: {c} facts")
 
+        if apply and cleanup_delete_ids:
+            result = await session.execute(
+                delete(AiMemory).where(AiMemory.id.in_(cleanup_delete_ids))
+            )
+            await session.commit()
+            print(json.dumps({
+                "cleanup_applied": True,
+                "deleted_rows": int(result.rowcount or 0),
+            }, ensure_ascii=False, indent=2))
+        elif apply:
+            print(json.dumps(
+                {"cleanup_applied": True, "deleted_rows": 0},
+                ensure_ascii=False,
+                indent=2,
+            ))
+
     await dispose_engine()
 
 
@@ -128,8 +235,9 @@ def _cli() -> int:
     p.add_argument("--source", default=None, help="filter by AiMemory.source (e.g. telegram_export)")
     p.add_argument("--top", type=int, default=15)
     p.add_argument("--near-threshold", type=float, default=0.6)
+    p.add_argument("--apply", action="store_true", help="delete safe normalized duplicate rows")
     a = p.parse_args()
-    asyncio.run(main(a.source, a.top, a.near_threshold))
+    asyncio.run(main(a.source, a.top, a.near_threshold, a.apply))
     return 0
 
 
