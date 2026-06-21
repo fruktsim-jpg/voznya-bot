@@ -7,6 +7,7 @@ import json
 from app.features.drun.telegram_export_ingest import (
     SOURCE,
     build_deterministic_proposals,
+    chunk_range,
     filter_messages,
     load_export_messages,
     normalize_text,
@@ -84,3 +85,11 @@ def test_selected_chunks_samples_full_timeline():
     assert chunks[0][0] is messages[0]
     assert chunks[1][0] is messages[40] or chunks[1][0] is messages[50]
     assert chunks[2][0] is messages[90]
+
+
+def test_chunk_range_supports_resumable_batches():
+    messages = [object() for _ in range(100)]
+    chunks = chunk_range(messages, chunk_size=10, start=3, count=2)
+    assert len(chunks) == 2
+    assert chunks[0][0] is messages[30]
+    assert chunks[1][0] is messages[40]

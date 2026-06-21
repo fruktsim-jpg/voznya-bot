@@ -47,6 +47,7 @@ async def _amain(args: argparse.Namespace) -> int:
                 messages,
                 chunk_size=args.chunk_size,
                 max_chunks=max_chunks,
+                start_chunk=args.start_chunk,
             ))
         stats = await apply_proposals(session, proposals, dry_run=not args.apply)
         if args.apply:
@@ -78,6 +79,12 @@ def main() -> int:
     llm.add_argument("--no-llm", action="store_true", help="only deterministic proposals")
     parser.add_argument("--chunk-size", type=int, default=90)
     parser.add_argument("--max-chunks", type=int, default=80, help="0 = all chunks")
+    parser.add_argument(
+        "--start-chunk",
+        type=int,
+        default=None,
+        help="0-based contiguous chunk offset for resumable LLM batches; disables timeline sampling",
+    )
     parser.add_argument("--sample", type=int, default=25)
     parser.add_argument(
         "--exclude-user-id",

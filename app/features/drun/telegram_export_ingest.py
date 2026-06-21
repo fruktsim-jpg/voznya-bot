@@ -160,6 +160,17 @@ def selected_chunks(
     return [chunks[i] for i in idxs]
 
 
+def chunk_range(
+    messages: list[ExportMessage], *, chunk_size: int, start: int = 0, count: int | None = None
+) -> list[list[ExportMessage]]:
+    """Returns a contiguous 0-based chunk range for resumable batch learning."""
+    chunks = list(_chunks(messages, max(1, chunk_size)))
+    start = max(0, int(start or 0))
+    if count is None or count <= 0:
+        return chunks[start:]
+    return chunks[start : start + count]
+
+
 def build_deterministic_proposals(messages: list[ExportMessage]) -> list[MemoryProposal]:
     """Cheap full-history facts without LLM calls."""
     by_user: dict[int, list[ExportMessage]] = defaultdict(list)
@@ -289,12 +300,21 @@ async def distill_export_chunks(
     *,
     chunk_size: int = 90,
     max_chunks: int | None = 120,
+    start_chunk: int | None = None,
 ) -> list[MemoryProposal]:
     cfg = await drun_config.get_config(session)
     if not cfg.usable:
         return []
     out: list[MemoryProposal] = []
-    chunks = selected_chunks(messages, chunk_size=chunk_size, max_chunks=max_chunks)
+    if start_chunk is not None:
+        chunks = chunk_range(
+            messages,
+            chunk_size=chunk_size,
+            start=start_chunk,
+            count=max_chunks,
+        )
+    else:
+        chunks = selected_chunks(messages, chunk_size=chunk_size, max_chunks=max_chunks)
     for idx, chunk in enumerate(chunks, start=1):
         lines = []
         for m in chunk:
