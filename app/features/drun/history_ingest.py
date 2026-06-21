@@ -52,7 +52,8 @@ def _clean(text: object, limit: int = 160) -> str:
 
 def _display_name(row: CombotUserStats, live: User | None = None) -> str:
     if live is not None:
-        for value in (live.full_name, live.username):
+        display = live.display_name() if hasattr(live, "display_name") else ""
+        for value in (display, getattr(live, "first_name", None), live.username):
             value = _clean(value, 80)
             if value:
                 return value
