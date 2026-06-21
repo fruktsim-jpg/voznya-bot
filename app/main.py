@@ -32,6 +32,7 @@ from app.features.treasure.service import setup_treasure_scheduler
 from app.features.drun.ears import DrunEarsMiddleware
 from app.features.drun.distill import setup_memory_distill
 from app.features.drun.chat_memory import setup_chat_distill
+from app.features.drun.chat_archive import setup_archive_embeddings_backfill
 from app.features.drun.embeddings import setup_embeddings_backfill
 from app.features.drun.profile import setup_profile_sweep
 from app.features.drun.reflect import setup_reflection
@@ -157,6 +158,10 @@ async def on_startup(bot: Bot) -> None:
     # cosine-сходство к BM25/trigram. Если embedding_api_key пуст —
     # джоб тихо ничего не делает, ретривал остаётся на BM25+trigram.
     setup_embeddings_backfill(scheduler, sessionmaker, minutes=5)
+
+    # Сырой архив Telegram export: фоново добивает embeddings для старых реплик,
+    # чтобы Друн мог искать конкретные цитаты/сцены, а не только сжатые факты.
+    setup_archive_embeddings_backfill(scheduler, sessionmaker, minutes=10)
 
     # Профили игроков: фоновый свип (раз в несколько минут) пересобирает досье
     # активных игроков из всей базы + LLM-портрет — почти реалтайм-память.

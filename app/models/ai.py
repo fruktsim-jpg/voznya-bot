@@ -9,6 +9,7 @@
   редактируются из админки.
 * ``AiMessage`` — краткосрочная память: история запросов/ответов.
 * ``AiMemory`` — долгосрочная память: факты об игроках/мире.
+* ``AiChatArchive`` — сырой архив исторических реплик для retrieval.
 
 Связи логические, без FK (соглашение проекта).
 """
@@ -159,17 +160,47 @@ class AiMemory(Base):
         nullable=False,
     )
 
-    # Семантический эмбеддинг факта (миграция 0049). NULL = ещё не посчитан
-    # (бэкафилл-джоб добьёт), либо embedder выключен. Размерность 1536 под
-    # text-embedding-3-small; смена размерности — отдельная миграция.
-    # Тип хранится как pgvector ``vector(1536)``; в Python с этой колонкой
+    # Семантический эмбеддинг факта. NULL = ещё не посчитан (бэкафилл-джоб
+    # добьёт), либо embedder выключен. Размерность 384 под локальный fastembed.
+    # Тип хранится как pgvector ``vector(384)``; в Python с этой колонкой
     # напрямую не работаем (запись/поиск идут сырым SQL в drun/memory.py и
     # drun/embeddings.py), поэтому Mapped[None]-аннотация и Optional[Any].
     embedding: Mapped[object | None] = mapped_column(
-        _Vector(1536), nullable=True
+        _Vector(384), nullable=True
     )
 
     __table_args__ = (
         Index("ix_ai_memories_subject", "subject_id", "weight"),
         Index("ix_ai_memories_kind", "kind", "created_at"),
+    )
+
+
+class AiChatArchive(Base):
+    """Сырой исторический чат: реальные реплики из export для поиска/цитат."""
+
+    __tablename__ = "ai_chat_archive"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, primary_key=True, autoincrement=True
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    name: Mapped[str] = mapped_column(String(96), nullable=False, default="")
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    message_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    embedding: Mapped[object | None] = mapped_column(
+        _Vector(384), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("uq_ai_chat_archive_source_msg", "source", "source_message_id", unique=True),
+        Index("ix_ai_chat_archive_user_time", "user_id", "message_at"),
+        Index("ix_ai_chat_archive_source_time", "source", "message_at"),
     )

@@ -24,6 +24,7 @@ from app.core.logger import get_logger
 from app.core.money import money
 from app.core.utils import now_utc
 from app.features.drun import attitude as drun_attitude
+from app.features.drun import chat_archive as drun_chat_archive
 from app.features.drun import memory as drun_memory
 from app.features.drun import memory_recall as drun_memory_recall
 from app.features.drun.names import name_for, resolve_names, resolve_person_hints
@@ -684,6 +685,25 @@ async def _memory_block(
         return ""
 
 
+async def _archive_block(
+    session: AsyncSession,
+    subject_id: int | None,
+    query: str | None = None,
+) -> str:
+    try:
+        if not (query or "").strip():
+            return ""
+        return await drun_chat_archive.build_archive_block(
+            session,
+            subject_id=subject_id,
+            query=query,
+            limit=6,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("archive_block failed", exc_info=True)
+        return ""
+
+
 # Человекочитаемые метки вложений для контекста (друн «видит» форму активности).
 _MEDIA_RU: dict[str, str] = {
     "photo": "фото", "sticker": "стикер", "gif": "гифка", "voice": "голосовуха",
@@ -905,6 +925,14 @@ async def build_context(
             session,
             "memory",
             lambda: _memory_block(session, subject_id, query, channel),
+            "",
+        )
+    )
+    blocks.append(
+        await _isolated(
+            session,
+            "chat_archive",
+            lambda: _archive_block(session, subject_id, query),
             "",
         )
     )
