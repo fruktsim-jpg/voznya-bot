@@ -98,7 +98,7 @@ async def _execute_tool(
     """Исполняет tool через единый registry-диспетчер (клампы/аудит внутри)."""
 
     async def _resolve_who(who: str) -> int | None:
-        return await drun_tools.find_user_id(session, who)
+        return await drun_tools.find_user_id(session, who, trusted=True)
 
     async def _resolve_audience(*, scope, minutes, days, limit=None) -> list[int]:
         return await drun_tools.resolve_audience(

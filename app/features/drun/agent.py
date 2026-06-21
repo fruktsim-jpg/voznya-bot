@@ -145,9 +145,11 @@ async def try_handle(
     if tool in ("none", ""):
         return AgentOutcome(handled=False)
 
-    # Резолверы для хендлеров реестра (он не знает деталей tools.py).
+    # Резолверы для хендлеров реестра (он не знает деталей tools.py). Это путь
+    # ЯВНОЙ команды владельца, поэтому резолв клички — trusted (вес ≥1, в т.ч.
+    # выученные из импорта прозвища).
     async def _resolve_who(who: str) -> int | None:
-        return await drun_tools.find_user_id(session, who)
+        return await drun_tools.find_user_id(session, who, trusted=True)
 
     async def _resolve_audience(
         *, scope: str, minutes: int, days: int, limit: int | None = None

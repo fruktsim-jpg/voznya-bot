@@ -284,6 +284,45 @@ async def _h_spawn_treasure(ctx: ToolContext) -> drun_tools.ToolResult:
     return drun_tools.ToolResult(ok=True, summary=SPAWN_TREASURE_SENTINEL)
 
 
+async def _h_create_event(ctx: ToolContext) -> drun_tools.ToolResult:
+    """Запускает структурный ивент друна (challenge/prediction/mini/goal)."""
+    from app.features.drun import events as drun_events
+
+    kind_raw = ctx.arg_str("kind", "mini").lower()
+    kind_map = {
+        "challenge": drun_events.KIND_CHALLENGE, "челлендж": drun_events.KIND_CHALLENGE,
+        "prediction": drun_events.KIND_PREDICTION, "прогноз": drun_events.KIND_PREDICTION,
+        "mini": drun_events.KIND_MINI_EVENT, "мини": drun_events.KIND_MINI_EVENT,
+        "goal": drun_events.KIND_GOAL, "цель": drun_events.KIND_GOAL,
+    }
+    kind = kind_map.get(kind_raw, drun_events.KIND_MINI_EVENT)
+    title = ctx.arg_str("title", limit=256)
+    if not title:
+        return drun_tools.ToolResult(ok=False, error="нужен заголовок ивента")
+    res = await drun_events.create_event(
+        ctx.session,
+        kind=kind,
+        title=title,
+        body=ctx.arg_str("body", limit=2000),
+        created_by=ctx.owner_id,
+        reward_amount=ctx.arg_int("reward", 0),
+        ttl_hours=ctx.arg_int("hours", drun_events._DEFAULT_TTL_HOURS),
+    )
+    if not res.ok:
+        human = {
+            "too_many": "уже идёт максимум ивентов",
+            "empty_title": "нужен заголовок ивента",
+        }.get(res.error, f"не вышло создать ивент ({res.error})")
+        return drun_tools.ToolResult(ok=False, error=human)
+    reward = ctx.arg_int("reward", 0)
+    reward_str = f", награда {reward} ешек" if reward > 0 else ""
+    return drun_tools.ToolResult(
+        ok=True,
+        summary=f"запустил ивент #{res.event_id}: {title}{reward_str}",
+        meta={"event_id": res.event_id, "kind": kind, "reward": reward},
+    )
+
+
 # --- Реестр: единственный источник правды ------------------------------------
 
 REGISTRY: dict[str, ToolSpec] = {
@@ -411,6 +450,16 @@ REGISTRY: dict[str, ToolSpec] = {
             "{} (без аргументов)",
             _h_spawn_treasure,
             ("клад", "клады", "сокровище", "спавн", "раздай клад"),
+        ),
+        ToolSpec(
+            "create_event",
+            "запустить ивент друна (челлендж/прогноз/мини/цель) с наградой и дедлайном",
+            "kind ('challenge'|'prediction'|'mini'|'goal'), title (str), "
+            "body (str), reward (int ешки, ≤5000), hours (int, дедлайн)",
+            _h_create_event,
+            ("ивент", "запусти ивент", "сделай ивент", "челлендж", "запили ивент",
+             "проведи ивент", "устрой ивент", "замути ивент", "прогноз ивент",
+             "объяви ивент", "создай ивент", "ивент на"),
         ),
         ToolSpec(
             "feature_toggle",

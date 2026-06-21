@@ -317,8 +317,15 @@ async def giveaway(
 # --- Инструмент: выдать/снять одному игроку (по имени/@username) --------------
 
 
-async def find_user_id(session: AsyncSession, who: str) -> int | None:
-    """Ищет игрока по @username, числовому id или отображаемому имени."""
+async def find_user_id(
+    session: AsyncSession, who: str, *, trusted: bool = False
+) -> int | None:
+    """Ищет игрока по @username, числовому id или отображаемому имени.
+
+    ``trusted=True`` — это явный owner-резолв (команда владельца): тогда даже
+    кличка с весом 1 (в т.ч. выученная из исторического импорта) годится для
+    резолва. Anti-poisoning порог остаётся для автономного резолва.
+    """
     from app.repositories import users as users_repo
 
     who = (who or "").strip()
@@ -348,7 +355,7 @@ async def find_user_id(session: AsyncSession, who: str) -> int | None:
     try:
         from app.features.drun import aliases as drun_aliases
 
-        return await drun_aliases.resolve_alias(session, who)
+        return await drun_aliases.resolve_alias(session, who, trusted=trusted)
     except Exception:  # noqa: BLE001
         logger.debug("find_user_id alias fallback failed", exc_info=True)
         return None

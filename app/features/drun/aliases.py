@@ -182,7 +182,9 @@ def drop_colliding_weak(
     return out
 
 
-async def resolve_alias(session: AsyncSession, who: str) -> int | None:
+async def resolve_alias(
+    session: AsyncSession, who: str, *, trusted: bool = False
+) -> int | None:
     """Ищет игрока по выученному прозвищу. None — если совпадений нет/неоднозначно.
 
     Безопасность (alias-poisoning): прозвища вытаскивает LLM из ОБЫЧНОГО чата, и
@@ -194,8 +196,13 @@ async def resolve_alias(session: AsyncSession, who: str) -> int | None:
     * при коллизии (ник знают несколько профилей) требуем явного ПЕРЕВЕСА
       лидера над вторым местом, иначе считаем неоднозначным и возвращаем None.
 
-    Так owner-команда по сомнительной кличке честно не находит игрока, а не
-    бьёт по «самому накрученному» кандидату.
+    ``trusted=True`` — это ЯВНАЯ команда владельца (он сам набрал кличку и сам
+    отвечает за результат). Тогда порог устойчивости снижается до 1: владелец
+    может выдать ешки/наказать по любой известной кличке, в т.ч. выученной из
+    исторического импорта (вес 1). Anti-poisoning порог остаётся для
+    АВТОНОМНОГО резолва (trusted=False), где кличку мог вбросить кто угодно.
+    Перевес лидера над вторым местом требуется всегда — чтобы не ударить
+    наугад при коллизии тёзок.
     """
     q = _norm(who)
     if len(q) < _MIN_ALIAS_LEN:
@@ -223,20 +230,22 @@ async def resolve_alias(session: AsyncSession, who: str) -> int | None:
                     weight_by_uid[uid] = w
     if not weight_by_uid:
         return None
-    return _pick_resolved(weight_by_uid)
+    return _pick_resolved(weight_by_uid, trusted=trusted)
 
 
-def _pick_resolved(weight_by_uid: dict[int, int]) -> int | None:
+def _pick_resolved(weight_by_uid: dict[int, int], *, trusted: bool = False) -> int | None:
     """Выбирает игрока из карты {uid: вес} с предохранителями anti-poisoning.
 
-    Возвращает uid только если прозвище устоявшееся (вес ≥ _MIN_RESOLVE_WEIGHT)
-    и лидер однозначно опережает второго (margin ≥ _RESOLVE_MARGIN). Иначе None.
+    Возвращает uid только если прозвище устоявшееся (вес ≥ _MIN_RESOLVE_WEIGHT,
+    либо ≥1 при ``trusted``) и лидер однозначно опережает второго
+    (margin ≥ _RESOLVE_MARGIN). Иначе None.
     """
     if not weight_by_uid:
         return None
+    min_weight = 1 if trusted else _MIN_RESOLVE_WEIGHT
     ranked = sorted(weight_by_uid.items(), key=lambda kv: kv[1], reverse=True)
     best_id, best_w = ranked[0]
-    if best_w < _MIN_RESOLVE_WEIGHT:
+    if best_w < min_weight:
         return None  # прозвище ещё не устоявшееся — не рискуем
     # Коллизия: ник знают двое и веса близки → неоднозначно, не угадываем.
     if len(ranked) > 1 and best_w - ranked[1][1] < _RESOLVE_MARGIN:
