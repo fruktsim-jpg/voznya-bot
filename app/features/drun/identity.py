@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +40,27 @@ class PersonCandidate:
     aliases: list[str] = field(default_factory=list)
     memory_hits: int = 0
     archive_hits: int = 0
+
+
+@dataclass(frozen=True)
+class DossierArchiveLine:
+    name: str
+    text: str
+    message_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class DossierMemoryLine:
+    kind: str
+    fact: str
+    weight: int = 0
+
+
+@dataclass(frozen=True)
+class PersonDossier:
+    candidate: PersonCandidate
+    archive_lines: list[DossierArchiveLine] = field(default_factory=list)
+    memories: list[DossierMemoryLine] = field(default_factory=list)
 
 
 def normalize_name(text: str) -> str:
@@ -228,9 +250,89 @@ def render_candidates(candidates: list[PersonCandidate], *, title: str = "# IDEN
     return "\n".join(lines)
 
 
+def render_dossier(dossier: PersonDossier) -> str:
+    cand = dossier.candidate
+    lines = ["# АВТО-ДОСЬЕ ЧЕЛОВЕКА"]
+    uid = cand.user_id if cand.user_id is not None else "?"
+    caution = "" if cand.confidence >= 0.78 else " Низкая уверенность: формулируй осторожно."
+    aliases = ", ".join(cand.aliases[:8]) or cand.name
+    lines.append(
+        f"- identity: user_id={uid}; name={cand.name}; conf={cand.confidence:.2f}; "
+        f"aliases=[{aliases}].{caution}"
+    )
+    if dossier.memories:
+        lines.append("## Сжатые факты/черты")
+        for mem in dossier.memories[:8]:
+            tag = f"[{mem.kind} w={mem.weight}]"
+            lines.append(f"- {tag} {mem.fact}")
+    if dossier.archive_lines:
+        lines.append("## Реальные старые реплики этого человека")
+        for line in dossier.archive_lines[:6]:
+            when = line.message_at.date().isoformat() if line.message_at else "без даты"
+            text = line.text if len(line.text) <= 180 else line.text[:179].rstrip() + "…"
+            lines.append(f"- [{when}] {line.name}: {text}")
+    lines.append(
+        "## Правило ответа\n"
+        "- Если confidence низкий или фактов мало, не делай вид, что уверен; скажи 'если ты про этого...'."
+    )
+    return "\n".join(lines)
+
+
+async def build_person_dossier(
+    session: AsyncSession,
+    query: str,
+    *,
+    limit_archive: int = 6,
+    limit_memories: int = 8,
+) -> PersonDossier | None:
+    candidates = await resolve_person(session, query, limit=1)
+    if not candidates:
+        return None
+    cand = candidates[0]
+
+    archive_lines: list[DossierArchiveLine] = []
+    if cand.user_id is not None:
+        rows = (
+            await session.execute(
+                select(AiChatArchive.name, AiChatArchive.text, AiChatArchive.message_at)
+                .where(AiChatArchive.user_id == cand.user_id)
+                .where(func.length(AiChatArchive.text) >= 8)
+                .order_by(AiChatArchive.message_at.desc().nullslast())
+                .limit(limit_archive)
+            )
+        ).all()
+        archive_lines = [
+            DossierArchiveLine(name=name or cand.name, text=text or "", message_at=message_at)
+            for name, text, message_at in rows
+        ]
+
+    memories: list[DossierMemoryLine] = []
+    if cand.user_id is not None:
+        rows = (
+            await session.execute(
+                select(AiMemory.kind, AiMemory.fact, AiMemory.weight)
+                .where(AiMemory.subject_id == cand.user_id)
+                .order_by(AiMemory.weight.desc(), AiMemory.created_at.desc())
+                .limit(limit_memories)
+            )
+        ).all()
+        memories = [
+            DossierMemoryLine(kind=kind or "fact", fact=fact or "", weight=int(weight or 0))
+            for kind, fact, weight in rows
+            if fact
+        ]
+
+    return PersonDossier(candidate=cand, archive_lines=archive_lines, memories=memories)
+
+
 async def build_identity_block(session: AsyncSession, query: str | None) -> str:
     q = extract_person_query(query or "")
     if not q:
         return ""
     candidates = await resolve_person(session, q, limit=5)
-    return render_candidates(candidates, title="# КТО ЭТО МОЖЕТ БЫТЬ")
+    parts = [render_candidates(candidates, title="# КТО ЭТО МОЖЕТ БЫТЬ")]
+    if candidates and candidates[0].confidence >= 0.45:
+        dossier = await build_person_dossier(session, q)
+        if dossier is not None:
+            parts.append(render_dossier(dossier))
+    return "\n\n".join(part for part in parts if part)

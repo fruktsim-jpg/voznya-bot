@@ -54,3 +54,23 @@ def test_render_candidates_empty_warns_not_to_invent():
 
     assert "кандидатов не найдено" in rendered
     assert "не выдумывай" in rendered
+
+
+def test_render_dossier_includes_caution_facts_and_archive_lines():
+    dossier = identity.PersonDossier(
+        candidate=identity.PersonCandidate(
+            user_id=10,
+            name="Хинт",
+            confidence=0.6,
+            aliases=["Хинт", "h1nt"],
+        ),
+        memories=[identity.DossierMemoryLine(kind="chat:trait", fact="любит pgvector", weight=3)],
+        archive_lines=[identity.DossierArchiveLine(name="h1nt", text="pgvector норм", message_at=None)],
+    )
+
+    rendered = identity.render_dossier(dossier)
+
+    assert "# АВТО-ДОСЬЕ ЧЕЛОВЕКА" in rendered
+    assert "Низкая уверенность" in rendered
+    assert "любит pgvector" in rendered
+    assert "pgvector норм" in rendered
