@@ -29,6 +29,7 @@ from app.features.drun import emotion as drun_emotion
 from app.features.drun import filter as drun_filter
 from app.features.drun import memory as drun_memory
 from app.features.drun import persona as drun_persona
+from app.features.drun import policy as drun_policy
 from app.features.drun import provider as drun_provider
 from app.features.drun import variance as drun_variance
 
@@ -305,6 +306,17 @@ async def generate(
     await _heal_if_poisoned(session)
 
     cfg = await drun_config.get_config(session)
+    pol = await drun_policy.build_policy(
+        session,
+        subject_id=subject_id,
+        channel=channel,
+        intent_kind=intent_kind,
+        addressed=addressed,
+        text=query or memory_user_content or task,
+    )
+    policy_block = pol.block()
+    if policy_block:
+        task = f"{policy_block}\n\n{task}"
     if not cfg.usable:
         return GenerateResult(ok=False, error="disabled")
 
@@ -509,7 +521,7 @@ async def generate(
     # безопасно оставлять asker_id=None: деньги двигает только директива модели,
     # не отражённый ввод игрока.
     econ_result = None
-    if allow_actions and cfg.econ_enabled:
+    if allow_actions and cfg.econ_enabled and pol.allow_econ_hint:
         econ_result = await drun_actions.apply_if_any(
             session, cfg=cfg, target_id=subject_id, text=text,
             asker_id=asker_id, intent_kind=intent_kind,
@@ -577,7 +589,14 @@ async def observe(
         session, drun_config.PROMPT_OBSERVATION, _DEFAULT_OBSERVATION
     )
     cfg = await drun_config.get_config(session)
-    if intent_kind and cfg.econ_enabled and subject_id is not None:
+    pol = await drun_policy.build_policy(
+        session,
+        subject_id=subject_id,
+        channel=channel,
+        intent_kind=intent_kind,
+        addressed=False,
+    )
+    if intent_kind and cfg.econ_enabled and pol.allow_econ_hint and subject_id is not None:
         hint = _econ_hint_for_intent(intent_kind)
         if hint:
             task = f"{task}\n\n# ВОЗМОЖНОЕ ДЕЙСТВИЕ: {hint}"
@@ -764,7 +783,15 @@ async def respond(
     # без него NameError валит весь хэндлер и аборт транзакции каскадирует
     # на следующие селекты (см. INCIDENT 2026-06-18).
     cfg = await drun_config.get_config(session)
-    if intent_kind and cfg.econ_enabled:
+    pol = await drun_policy.build_policy(
+        session,
+        subject_id=asker_id,
+        channel=channel,
+        intent_kind=intent_kind,
+        addressed=True,
+        text=safe_text,
+    )
+    if intent_kind and cfg.econ_enabled and pol.allow_econ_hint:
         hint = _econ_hint_for_intent(intent_kind)
         if hint:
             task = f"{task}\n\n# ВОЗМОЖНОЕ ДЕЙСТВИЕ: {hint}"
