@@ -24,6 +24,7 @@ import re
 from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.types import Message
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -50,6 +51,43 @@ _DIAG = (
     "что в мире", "сводка", "как мир", "состояние",
 )
 _REMEMBER_PREFIXES = ("запомни:", "запомни ", "правило:", "имей в виду:")
+
+_OWNER_DIAG_PREFIXES = ("друн ", "drun ")
+
+
+def _strip_drun_prefix(text: str) -> str:
+    low = text.lower().strip()
+    for prefix in _OWNER_DIAG_PREFIXES:
+        if low.startswith(prefix):
+            return text[len(prefix):].strip()
+    return text.strip()
+
+
+def _parse_owner_diag(text: str) -> tuple[str, str] | None:
+    """Cheap owner diagnostics parser.
+
+    Returns (command, arg). Kept pure for tests and to avoid LLM/tool routing for
+    read-only introspection commands.
+    """
+    body = _strip_drun_prefix(text)
+    low = body.lower().strip()
+    commands = {
+        "архив статус": "archive_status",
+        "archive status": "archive_status",
+        "память статус": "memory_status",
+        "memory status": "memory_status",
+        "джобы статус": "jobs_status",
+        "jobs status": "jobs_status",
+    }
+    if low in commands:
+        return commands[low], ""
+    for prefix in ("архив поиск", "archive search"):
+        if low.startswith(prefix + " "):
+            return "archive_search", body[len(prefix):].strip()
+    for prefix in ("память поиск", "memory search"):
+        if low.startswith(prefix + " "):
+            return "memory_search", body[len(prefix):].strip()
+    return None
 
 
 def _is_owner(message: Message) -> bool:
@@ -92,6 +130,117 @@ async def _diagnostics(session: AsyncSession) -> str:
     return "\n\n".join(parts)
 
 
+async def _archive_status(session: AsyncSession) -> str:
+    """Raw chat archive status for owner DM."""
+    from app.models import AiChatArchive
+
+    total = int(await session.scalar(select(func.count()).select_from(AiChatArchive)) or 0)
+    embedded = int(
+        await session.scalar(
+            select(func.count()).select_from(AiChatArchive).where(
+                AiChatArchive.embedding.is_not(None)
+            )
+        ) or 0
+    )
+    users = int(
+        await session.scalar(
+            select(func.count(func.distinct(AiChatArchive.user_id))).where(
+                AiChatArchive.user_id.is_not(None)
+            )
+        ) or 0
+    )
+    oldest = await session.scalar(select(func.min(AiChatArchive.message_at)))
+    newest = await session.scalar(select(func.max(AiChatArchive.message_at)))
+    pct = (embedded / total * 100.0) if total else 0.0
+    return (
+        "Архив сырого чата:\n"
+        f"- строк: {total}\n"
+        f"- с embeddings: {embedded} ({pct:.1f}%)\n"
+        f"- без embeddings: {max(0, total - embedded)}\n"
+        f"- пользователей: {users}\n"
+        f"- период: {oldest.date().isoformat() if oldest else '?'} → "
+        f"{newest.date().isoformat() if newest else '?'}"
+    )
+
+
+async def _memory_status(session: AsyncSession) -> str:
+    """Long memory status for owner DM."""
+    from app.models import AiMemory
+
+    total = int(await session.scalar(select(func.count()).select_from(AiMemory)) or 0)
+    embedded = int(
+        await session.scalar(
+            select(func.count()).select_from(AiMemory).where(AiMemory.embedding.is_not(None))
+        ) or 0
+    )
+    by_source = (
+        await session.execute(
+            select(AiMemory.source, func.count())
+            .group_by(AiMemory.source)
+            .order_by(func.count().desc())
+            .limit(8)
+        )
+    ).all()
+    by_kind = (
+        await session.execute(
+            select(AiMemory.kind, func.count())
+            .group_by(AiMemory.kind)
+            .order_by(func.count().desc())
+            .limit(8)
+        )
+    ).all()
+    source_s = ", ".join(f"{src or '?'}={cnt}" for src, cnt in by_source)
+    kind_s = ", ".join(f"{kind}={cnt}" for kind, cnt in by_kind)
+    pct = (embedded / total * 100.0) if total else 0.0
+    return (
+        "Долгая память ai_memories:\n"
+        f"- фактов: {total}\n"
+        f"- с embeddings: {embedded} ({pct:.1f}%)\n"
+        f"- источники: {source_s or '?'}\n"
+        f"- типы: {kind_s or '?'}"
+    )
+
+
+async def _archive_search(session: AsyncSession, query: str) -> str:
+    from app.features.drun import chat_archive as drun_chat_archive
+
+    hits = await drun_chat_archive.search_archive(session, query=query, limit=8)
+    block = drun_chat_archive.render_archive_hits(hits)
+    return block or "В архиве ничего не всплыло."
+
+
+async def _memory_search(session: AsyncSession, query: str) -> str:
+    from app.features.drun import memory as drun_memory
+
+    mems = await drun_memory.scored_memories(session, query=query, limit=12)
+    if not mems:
+        return "В долгой памяти ничего не всплыло."
+    lines = ["# ПОИСК ПО ДОЛГОЙ ПАМЯТИ"]
+    for m in mems:
+        sid = f" user={m.subject_id}" if m.subject_id is not None else ""
+        lines.append(f"- #{m.id}{sid} [{m.kind}/{m.source or '?'} w={m.weight}]: {m.fact}")
+    return "\n".join(lines)
+
+
+async def _handle_owner_diag(
+    message: Message, session: AsyncSession, command: str, arg: str
+) -> None:
+    if command == "archive_status":
+        out = await _archive_status(session)
+    elif command == "memory_status":
+        out = await _memory_status(session)
+    elif command == "archive_search":
+        out = await _archive_search(session, arg)
+    elif command == "memory_search":
+        out = await _memory_search(session, arg)
+    elif command == "jobs_status":
+        out = "Job health layer ещё не включён. Следующий слой — last_run/error/duration по джобам."
+    else:
+        out = "Не понял диагностику."
+    await session.commit()
+    await message.answer(out, parse_mode=None)
+
+
 async def _execute_tool(
     session: AsyncSession, *, owner_id: int, tool: str, args: dict
 ) -> drun_tools.ToolResult | None:
@@ -131,6 +280,13 @@ async def on_owner_dm(message: Message, session: AsyncSession) -> None:
     if not text:
         return
     owner_id = user.id
+
+    # 0) Read-only диагностика мозга/архива. Не отправляем в LLM/agent: это
+    # служебный операторский интерфейс и должен быть дешёвым/предсказуемым.
+    diag_cmd = _parse_owner_diag(text)
+    if diag_cmd is not None:
+        await _handle_owner_diag(message, session, *diag_cmd)
+        return
 
     # 1) Управление очередью предложений (approval-flow).
     if _matches(text, _LIST):

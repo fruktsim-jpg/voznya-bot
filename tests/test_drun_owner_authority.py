@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from app.features.drun import aliases as drun_aliases
+from app.features.drun import owner_dm
 from app.features.drun import registry as drun_registry
 
 
@@ -94,3 +95,25 @@ def test_create_event_clamps_reward_and_creates():
     assert res.ok is True
     assert res.meta.get("event_id")
     assert res.meta.get("kind") == "challenge"
+
+
+# --- owner DM diagnostics ----------------------------------------------------
+
+
+def test_owner_diag_parser_status_commands():
+    assert owner_dm._parse_owner_diag("друн архив статус") == ("archive_status", "")
+    assert owner_dm._parse_owner_diag("drun memory status") == ("memory_status", "")
+    assert owner_dm._parse_owner_diag("джобы статус") == ("jobs_status", "")
+
+
+def test_owner_diag_parser_search_commands():
+    assert owner_dm._parse_owner_diag("друн архив поиск pgvector") == (
+        "archive_search", "pgvector",
+    )
+    assert owner_dm._parse_owner_diag("память поиск хинт") == (
+        "memory_search", "хинт",
+    )
+
+
+def test_owner_diag_parser_ignores_regular_talk():
+    assert owner_dm._parse_owner_diag("друн как дела") is None
