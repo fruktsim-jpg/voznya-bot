@@ -82,7 +82,7 @@ def build_player_proposals(
 
     weight = 3 if messages >= 1000 else 2 if messages >= 300 else 1
     parts = [f"{name} — заметный участник старой истории чата"]
-    parts.append(f"у него было около {messages} сообщений в Combot-снимке")
+    parts.append(f"в Combot-снимке: около {messages} сообщений")
     if days > 0:
         parts.append(f"примерно {days} дней в чате на момент импорта")
     if rep:
@@ -100,11 +100,14 @@ def build_player_proposals(
     title = _clean(row.title, 80)
     username = _clean(row.username, 80).lstrip("@")
     live_names = {
+        name.lower().lstrip("@"),
         _clean(getattr(live_user, "full_name", ""), 80).lower() if live_user else "",
+        _clean(getattr(live_user, "first_name", ""), 80).lower() if live_user else "",
         _clean(getattr(live_user, "username", ""), 80).lower().lstrip("@") if live_user else "",
     }
     for alias in (title, username):
-        if not alias or alias.lower().lstrip("@") in live_names:
+        norm_alias = alias.lower().lstrip("@")
+        if not alias or norm_alias in live_names:
             continue
         out.append(HistoricalMemoryProposal(
             subject_id=int(row.user_id),
