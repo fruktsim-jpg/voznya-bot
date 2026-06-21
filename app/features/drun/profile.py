@@ -269,9 +269,23 @@ async def refresh_profile(
         new_gender if new_gender and new_gender != "unknown"
         else prev.get("gender", "unknown")
     )
+    # Фолбэк: если ни LLM, ни прошлый профиль пол не дали — добираем грубой
+    # эвристикой по СОБСТВЕННЫМ репликам игрока (русские глаголы прош. вр.:
+    # «я сделалА» → ж). Лечит 34% профилей с gender='unknown' в проде. При
+    # сомнении остаётся 'unknown' (нейтрально лучше, чем неверно).
+    if gender == "unknown":
+        try:
+            from app.features.drun import gender as drun_gender
+
+            inferred = drun_gender.infer_gender(msgs)
+            if inferred != "unknown":
+                gender = inferred
+        except Exception:  # noqa: BLE001
+            logger.debug("gender heuristic failed", exc_info=True)
     preferred_name = portrait.get("preferred_name") or prev.get("preferred_name", "")
     # Консолидация: свежие факты о себе ВЫТЕСНЯЮТ устаревшие по той же теме
     # (переехал/сменил работу), а не копятся противоречиями. См. consolidate.
+    from app.features.drun import aliases as drun_aliases
     from app.features.drun import consolidate as drun_consolidate
 
     merged_facts = drun_consolidate.merge_self_facts(
@@ -287,8 +301,10 @@ async def refresh_profile(
         "preferred_name": preferred_name,
         "self_facts": merged_facts,
         # Прозвища выучиваются отдельным проходом (chat_memory) и живут в
-        # профиле — НЕ затираем их при пересборке портрета.
-        "aliases": prev.get("aliases", []),
+        # профиле — НЕ затираем их при пересборке портрета. Но протухшие
+        # (TTL по весу) выкидываем: разовая мис-привязка к чужому имени сама
+        # испаряется за ~2 недели, устоявшаяся кличка держится.
+        "aliases": drun_aliases.prune_expired(prev.get("aliases", [])),
         # Аффинити (личное отношение) копится в реалтайме (affinity.py) в ТОМ ЖЕ
         # JSONB. Пересборка портрета НЕ должна его обнулять — иначе у активных
         # игроков (а это ровно те, кто общается с друном) дружба/вражда

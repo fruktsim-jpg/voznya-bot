@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +30,12 @@ logger = get_logger(__name__)
 _MAX_ALIASES = 12
 # Минимальная длина значимого алиаса (отсекаем «он», «ты», шум).
 _MIN_ALIAS_LEN = 3
+# TTL прозвища в днях по накопленному весу: слабые (разовый вброс/ошибка LLM)
+# живут недолго и сами испаряются, устоявшиеся держатся месяцами. Это лечит
+# alias-poisoning «навсегда»: мис-привязка с весом 1 (напр. чужое имя, по ошибке
+# приклеенное к профилю) истекает за 2 недели, а реальная кличка, которую чат
+# повторяет, копит вес и остаётся. Ключ — min(вес, 3).
+_ALIAS_TTL_DAYS_BY_WEIGHT = {1: 14, 2: 30, 3: 90}
 # Мин. накопленный вес прозвища, чтобы по нему РЕЗОЛВИТЬ owner-команду. Один-два
 # вброса в чат (вес 1-2) не должны уводить бан/мут не на того — нужна
 # устойчивость (ник реально прижился в чате).
@@ -79,24 +87,99 @@ def _alias_matches(query: str, alias: str) -> bool:
     return len(qs) >= _MIN_ALIAS_LEN and qs == as_
 
 
-def add_aliases(prev: list[dict] | None, new_aliases: list[str]) -> list[dict]:
+def add_aliases(
+    prev: list[dict] | None,
+    new_aliases: list[str],
+    *,
+    now: datetime | None = None,
+) -> list[dict]:
     """Сливает новые прозвища в список профиля, копя вес повторяемости.
 
-    Возвращает обновлённый список ``[{"alias","w"}]`` (вес = сколько раз чат
-    подтвердил это прозвище). Чем чаще зовут — тем выше приоритет при резолве.
+    Возвращает обновлённый список ``[{"alias","w","ts"}]`` (вес = сколько раз чат
+    подтвердил это прозвище, ``ts`` = когда подтверждали в последний раз). Чем
+    чаще зовут — тем выше приоритет при резолве и тем дольше TTL. ``ts`` каждого
+    подтверждённого сейчас прозвища освежается, чтобы реально живые клички не
+    протухали (см. :func:`prune_expired`).
     """
-    by_alias: dict[str, int] = {}
+    now = now or datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    # alias → (вес, ts). Сохраняем прежний ts, если алиас не подтверждали сейчас.
+    state: dict[str, tuple[int, str]] = {}
     for item in prev or []:
         a = _norm(str(item.get("alias", "")))
-        if a:
-            by_alias[a] = max(by_alias.get(a, 0), int(item.get("w", 1) or 1))
+        if not a:
+            continue
+        w = int(item.get("w", 1) or 1)
+        ts = str(item.get("ts") or now_iso)
+        prev_w = state.get(a, (0, ts))[0]
+        state[a] = (max(prev_w, w), ts)
     for raw in new_aliases:
         a = _norm(raw)
         if len(a) < _MIN_ALIAS_LEN or a in _ALIAS_STOP:
             continue
-        by_alias[a] = by_alias.get(a, 0) + 1
-    ranked = sorted(by_alias.items(), key=lambda kv: kv[1], reverse=True)
-    return [{"alias": a, "w": w} for a, w in ranked[:_MAX_ALIASES]]
+        w = state.get(a, (0, now_iso))[0] + 1
+        state[a] = (w, now_iso)  # подтверждено сейчас → освежаем ts
+    ranked = sorted(state.items(), key=lambda kv: kv[1][0], reverse=True)
+    return [{"alias": a, "w": w, "ts": ts} for a, (w, ts) in ranked[:_MAX_ALIASES]]
+
+
+def prune_expired(
+    aliases: list[dict] | None, *, now: datetime | None = None
+) -> list[dict]:
+    """Выкидывает протухшие прозвища (TTL по весу, см. ``_ALIAS_TTL_DAYS_BY_WEIGHT``).
+
+    Чистая функция: разовая мис-привязка (вес 1) истекает за 14 дней, вес 2 — за
+    30, устоявшаяся кличка (вес ≥3) — за 90 дней без подтверждений. Алиас без
+    ``ts`` (старый формат до этой правки) считаем «только что увиденным», чтобы
+    не выкосить всю историю при первом проходе — он протухнет, только если его
+    больше не подтверждают. Возвращает отфильтрованный список (порядок сохранён).
+    """
+    if not aliases:
+        return []
+    now = now or datetime.now(timezone.utc)
+    out: list[dict] = []
+    for item in aliases:
+        a = _norm(str(item.get("alias", "")))
+        if not a:
+            continue
+        w = int(item.get("w", 1) or 1)
+        ttl_days = _ALIAS_TTL_DAYS_BY_WEIGHT.get(max(1, min(3, w)), 14)
+        ts_raw = item.get("ts")
+        if not ts_raw:
+            # Старый формат без ts — не роняем сразу, штампуем «сейчас».
+            out.append({"alias": a, "w": w, "ts": now.isoformat()})
+            continue
+        try:
+            last = datetime.fromisoformat(str(ts_raw))
+            age_days = (now - last).total_seconds() / 86400.0
+        except (ValueError, TypeError):
+            age_days = 0.0
+        if age_days <= ttl_days:
+            out.append({"alias": a, "w": w, "ts": str(ts_raw)})
+    return out
+
+
+def drop_colliding_weak(
+    aliases: list[dict] | None, foreign_names: set[str]
+) -> list[dict]:
+    """Выкидывает СЛАБЫЕ (вес ≤1) прозвища, совпадающие с именем ДРУГОГО игрока.
+
+    Лечит классическую мис-привязку: LLM по ошибке приклеил к профилю А имя
+    игрока Б (напр. «соня»/«маша» — это вообще другие люди). Сильные клички
+    (вес ≥2, чат подтверждал не раз) не трогаем — совпадение с чьим-то именем
+    может быть законным (тёзки). ``foreign_names`` — нормализованные имена ДРУГИХ
+    игроков (без самого субъекта). Чистая функция.
+    """
+    if not aliases:
+        return []
+    out: list[dict] = []
+    for item in aliases:
+        a = _norm(str(item.get("alias", "")))
+        w = int(item.get("w", 1) or 1)
+        if w <= 1 and a in foreign_names:
+            continue  # слабый алиас = чужое имя → почти наверняка мис-привязка
+        out.append(item)
+    return out
 
 
 async def resolve_alias(session: AsyncSession, who: str) -> int | None:

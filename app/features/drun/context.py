@@ -418,6 +418,11 @@ async def _player_block(session: AsyncSession, user_id: int) -> str:
                 elif gender == "female":
                     lines.append("- ПОЛ: женский (говори о ней в женском роде, "
                                  "это девушка — не лажай с родом)")
+                else:
+                    lines.append("- ПОЛ НЕИЗВЕСТЕН: НЕ угадывай род. Стройся "
+                                 "нейтрально (обращайся по нику/на «ты», "
+                                 "избегай родовых окончаний типа «сделал/"
+                                 "сделала») — лучше нейтрально, чем не угадать.")
                 if prof.summary:
                     lines.append(f"- ЛИЧНОСТЬ: {prof.summary[:400]}")
                 if prof.speech_style:
