@@ -1,0 +1,310 @@
+"""Ингест реального Telegram Desktop export в долгую память Друна.
+
+Источник: `result.json` из Telegram Desktop (`Export chat history` -> JSON).
+Сырые сообщения НЕ складываем в `ai_messages`: это краткосрочная память с
+ретеншеном. Вместо этого вся история читается, сжимается в `ai_memories`:
+детерминированные факты активности + LLM-дистилляция локальных мемов, черт,
+отношений и эпизодов по хронологическим чанкам.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.logger import get_logger
+from app.features.drun import config as drun_config
+from app.features.drun import provider as drun_provider
+from app.models import AiMemory
+
+logger = get_logger(__name__)
+
+SOURCE = "telegram_export"
+_USER_RE = re.compile(r"^user(\d+)$")
+_SPACE_RE = re.compile(r"\s+")
+_MAX_FACT = 260
+
+
+@dataclass(frozen=True)
+class ExportMessage:
+    message_id: int
+    user_id: int | None
+    name: str
+    text: str
+    dt: datetime | None
+    reply_to_message_id: int | None = None
+
+
+@dataclass(frozen=True)
+class MemoryProposal:
+    subject_id: int | None
+    kind: str
+    fact: str
+    weight: int
+    source: str = SOURCE
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "subject_id": self.subject_id,
+            "kind": self.kind,
+            "fact": self.fact,
+            "weight": self.weight,
+            "source": self.source,
+        }
+
+
+def _clean(text: object, limit: int = 500) -> str:
+    return _SPACE_RE.sub(" ", str(text or "").strip())[:limit]
+
+
+def _parse_user_id(raw: object) -> int | None:
+    m = _USER_RE.match(str(raw or ""))
+    return int(m.group(1)) if m else None
+
+
+def normalize_text(value: object) -> str:
+    """Telegram export text can be str or mixed entity list."""
+    if isinstance(value, str):
+        return _clean(value, 2000)
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or ""))
+        return _clean("".join(parts), 2000)
+    return ""
+
+
+def _parse_dt(raw: object) -> datetime | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return datetime.fromtimestamp(int(raw), tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def load_export_messages(path: str | Path) -> list[ExportMessage]:
+    """Loads text messages from Telegram Desktop JSON export."""
+    with Path(path).open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    out: list[ExportMessage] = []
+    for item in data.get("messages") or []:
+        if item.get("type") != "message":
+            continue
+        text = normalize_text(item.get("text"))
+        if not text:
+            continue
+        out.append(ExportMessage(
+            message_id=int(item.get("id") or 0),
+            user_id=_parse_user_id(item.get("from_id")),
+            name=_clean(item.get("from") or "", 80),
+            text=text,
+            dt=_parse_dt(item.get("date_unixtime")),
+            reply_to_message_id=(
+                int(item["reply_to_message_id"])
+                if item.get("reply_to_message_id") is not None else None
+            ),
+        ))
+    return out
+
+
+def _chunks(messages: list[ExportMessage], size: int) -> Iterable[list[ExportMessage]]:
+    for i in range(0, len(messages), size):
+        chunk = messages[i : i + size]
+        if chunk:
+            yield chunk
+
+
+def build_deterministic_proposals(messages: list[ExportMessage]) -> list[MemoryProposal]:
+    """Cheap full-history facts without LLM calls."""
+    by_user: dict[int, list[ExportMessage]] = defaultdict(list)
+    names: dict[int, Counter[str]] = defaultdict(Counter)
+    phrases: Counter[str] = Counter()
+    for m in messages:
+        if m.user_id is not None:
+            by_user[m.user_id].append(m)
+            if m.name:
+                names[m.user_id][m.name] += 1
+        low = m.text.lower().strip()
+        if 2 <= len(low) <= 80 and not low.startswith("/"):
+            phrases[low] += 1
+
+    out: list[MemoryProposal] = []
+    if messages:
+        first = min((m.dt for m in messages if m.dt), default=None)
+        last = max((m.dt for m in messages if m.dt), default=None)
+        if first and last:
+            out.append(MemoryProposal(
+                None,
+                "legend",
+                (
+                    f"Реальный Telegram-export чата охватывает {len(messages)} "
+                    f"текстовых сообщений с {first.date()} по {last.date()}. "
+                    "Это источник старой живой речи, мемов и конфликтов Возни."
+                ),
+                3,
+            ))
+
+    for uid, rows in sorted(by_user.items(), key=lambda kv: len(kv[1]), reverse=True)[:120]:
+        if len(rows) < 20:
+            continue
+        name = names[uid].most_common(1)[0][0] if names[uid] else f"id{uid}"
+        first = min((m.dt for m in rows if m.dt), default=None)
+        last = max((m.dt for m in rows if m.dt), default=None)
+        date_part = f" с {first.date()} по {last.date()}" if first and last else ""
+        weight = 3 if len(rows) >= 1000 else 2 if len(rows) >= 200 else 1
+        out.append(MemoryProposal(
+            uid,
+            "trait",
+            f"{name} написал(а) {len(rows)} сообщений в реальном Telegram-export{date_part}; это важный голос старой истории чата.",
+            weight,
+        ))
+        for alias, count in names[uid].most_common(4):
+            if alias and alias != name and count >= 3:
+                out.append(MemoryProposal(
+                    uid,
+                    "chat:nickname",
+                    f"В Telegram-export {name} также появлялся(ась) под именем «{alias}».",
+                    1,
+                ))
+
+    noisy = {"да", "нет", "ок", "ага", "ахах", "хах", "лол", "пон", "че", "что"}
+    for phrase, count in phrases.most_common(80):
+        if count < 5 or phrase in noisy or len(phrase) < 4:
+            continue
+        out.append(MemoryProposal(
+            None,
+            "chat:meme",
+            f"В старом Telegram-export фраза/мем «{phrase[:80]}» повторялась примерно {count} раз.",
+            2 if count >= 15 else 1,
+        ))
+    return out
+
+
+_DISTILL_SYSTEM = (
+    "Ты — архивариус живого Telegram-чата. По фрагменту старой истории выдели "
+    "только устойчивые социальные факты: локальные мемы, клички, черты людей, "
+    "конфликты, дружбу, яркие поступки, стиль речи. Не пересказывай обычную "
+    "болтовню и не выдумывай."
+)
+_DISTILL_INSTRUCTION = (
+    "Верни СТРОГО JSON-массив до 8 объектов: "
+    '{"user_id":123 или null,"kind":"trait|topic|nickname|meme|relationship|episode|legend",'
+    '"fact":"короткий факт по-русски","weight":1-3}. '
+    "user_id ставь только если факт явно про одного человека из лога. "
+    "kind episode — только для яркого поступка/конфликта/поддержки. "
+    "Если ничего устойчивого нет — верни []."
+)
+
+
+def _parse_llm_items(raw: str) -> list[MemoryProposal]:
+    text = (raw or "").strip()
+    start, end = text.find("["), text.rfind("]")
+    if start == -1 or end <= start:
+        return []
+    try:
+        data = json.loads(text[start : end + 1])
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[MemoryProposal] = []
+    kind_map = {
+        "trait": "chat:trait",
+        "topic": "chat:topic",
+        "nickname": "chat:nickname",
+        "meme": "chat:meme",
+        "relationship": "chat:relationship",
+        "episode": "episode:export",
+        "legend": "legend",
+    }
+    for item in data[:8]:
+        if not isinstance(item, dict):
+            continue
+        fact = _clean(item.get("fact"), _MAX_FACT)
+        if len(fact) < 8:
+            continue
+        uid = item.get("user_id")
+        try:
+            subject_id = int(uid) if uid not in (None, "", "null") else None
+        except (TypeError, ValueError):
+            subject_id = None
+        kind = kind_map.get(str(item.get("kind") or "").lower(), "chat")
+        try:
+            weight = max(1, min(3, int(item.get("weight") or 1)))
+        except (TypeError, ValueError):
+            weight = 1
+        out.append(MemoryProposal(subject_id, kind, fact, weight))
+    return out
+
+
+async def distill_export_chunks(
+    session: AsyncSession,
+    messages: list[ExportMessage],
+    *,
+    chunk_size: int = 90,
+    max_chunks: int | None = 120,
+) -> list[MemoryProposal]:
+    cfg = await drun_config.get_config(session)
+    if not cfg.usable:
+        return []
+    out: list[MemoryProposal] = []
+    for idx, chunk in enumerate(_chunks(messages, chunk_size), start=1):
+        if max_chunks is not None and idx > max_chunks:
+            break
+        lines = []
+        for m in chunk:
+            who = f"{m.name or 'unknown'} [user_id={m.user_id}]"
+            lines.append(f"{who}: {m.text[:500]}")
+        try:
+            raw = await drun_provider.chat(
+                cfg,
+                system=_DISTILL_SYSTEM,
+                messages=[{"role": "user", "content": f"{_DISTILL_INSTRUCTION}\n\n# ЛОГ\n" + "\n".join(lines)}],
+                model=cfg.model_for(drun_config.ROLE_MEMORY_EXTRACT),
+            )
+        except drun_provider.LlmError as exc:
+            logger.warning("telegram export distill chunk %s failed: %s", idx, exc)
+            continue
+        out.extend(_parse_llm_items(raw))
+    return out
+
+
+async def apply_proposals(
+    session: AsyncSession,
+    proposals: list[MemoryProposal],
+    *,
+    dry_run: bool = True,
+) -> dict[str, int]:
+    stats = {"seen": len(proposals), "inserted": 0, "skipped": 0}
+    existing = set((await session.execute(
+        select(AiMemory.subject_id, AiMemory.kind, AiMemory.fact)
+        .where(AiMemory.source == SOURCE)
+    )).all())
+    for p in proposals:
+        key = (p.subject_id, p.kind, p.fact)
+        if key in existing:
+            stats["skipped"] += 1
+            continue
+        existing.add(key)
+        if not dry_run:
+            session.add(AiMemory(
+                subject_id=p.subject_id,
+                kind=p.kind,
+                fact=p.fact,
+                weight=max(1, min(3, int(p.weight))),
+                source=p.source,
+            ))
+        stats["inserted"] += 1
+    return stats
