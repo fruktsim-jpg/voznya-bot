@@ -207,6 +207,35 @@ class AiChatArchive(Base):
     )
 
 
+class AiPersonMention(Base):
+    """Normalized person/name mentions mined from raw chat archive."""
+
+    __tablename__ = "ai_person_mentions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    archive_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    mention: Mapped[str] = mapped_column(String(96), nullable=False)
+    mention_norm: Mapped[str] = mapped_column(String(96), nullable=False)
+    speaker_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    speaker_name: Mapped[str] = mapped_column(String(96), nullable=False, default="")
+    text_excerpt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="regex")
+    meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("uq_ai_person_mentions_archive_norm", "archive_id", "mention_norm", unique=True),
+        Index("ix_ai_person_mentions_norm_time", "mention_norm", "message_at"),
+        Index("ix_ai_person_mentions_speaker", "speaker_user_id", "message_at"),
+    )
+
+
 class AiJobHealth(Base):
     """Last-run status for Drun/background jobs."""
 

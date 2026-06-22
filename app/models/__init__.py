@@ -11,6 +11,7 @@ from app.models.ai import (
     AiJobHealth,
     AiMemory,
     AiMessage,
+    AiPersonMention,
     AiPrompt,
     AiSetting,
 )
@@ -130,6 +131,7 @@ __all__ = [
     "AiMemory",
     "AiChatArchive",
     "AiJobHealth",
+    "AiPersonMention",
     "AiProfile",
     "DrunEvent",
     "DrunProposal",
