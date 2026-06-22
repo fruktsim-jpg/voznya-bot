@@ -1,4 +1,4 @@
-"""Lightweight answer planner for Drun.
+﻿"""Lightweight answer planner for Drun.
 
 Response modes decide tone/interaction type. The planner decides what the answer
 must accomplish: goal, evidence to use, what to avoid, and a flexible format. It
@@ -43,7 +43,7 @@ def build_answer_plan(
     response_mode: str,
     context_intent: str,
     context: str | None = None,
-+) -> AnswerPlan:
+) -> AnswerPlan:
     """Build final-task planning guidance from mode + routed context."""
     ctx = context or ""
     has_identity = _has_block(ctx, "# КТО ЭТО МОЖЕТ БЫТЬ") or _has_block(ctx, "# АВТО-ДОСЬЕ")
