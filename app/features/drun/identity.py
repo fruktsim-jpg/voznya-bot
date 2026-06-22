@@ -15,7 +15,7 @@ from datetime import datetime
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AiChatArchive, AiMemory
+from app.models import AiChatArchive, AiMemory, AiPersonMention
 
 _WORD_RE = re.compile(r"[\w']+", re.UNICODE)
 
@@ -244,6 +244,30 @@ async def resolve_person(
             name=display_name or name,
             confidence=0.36,
             source="archive_text_mentioner",
+            archive_hits=int(cnt or 0),
+        )
+
+    mention_index_rows = (
+        await session.execute(
+            select(
+                AiPersonMention.speaker_user_id,
+                AiPersonMention.speaker_name,
+                func.count().label("cnt"),
+            )
+            .where(AiPersonMention.mention_norm == norm)
+            .where(AiPersonMention.speaker_user_id.is_not(None))
+            .group_by(AiPersonMention.speaker_user_id, AiPersonMention.speaker_name)
+            .order_by(func.count().desc())
+            .limit(20)
+        )
+    ).all()
+    for user_id, speaker_name, cnt in mention_index_rows:
+        _merge_candidate(
+            bucket,
+            user_id=int(user_id) if user_id is not None else None,
+            name=speaker_name or name,
+            confidence=0.48,
+            source="person_mention_index",
             archive_hits=int(cnt or 0),
         )
 
