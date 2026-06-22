@@ -192,6 +192,7 @@ class ContextBuildResult(str):
 
     memory_ids: list[int]
     archive_ids: list[int]
+    joke_style: str
 
     def __new__(
         cls,
@@ -199,10 +200,12 @@ class ContextBuildResult(str):
         *,
         memory_ids: list[int] | None = None,
         archive_ids: list[int] | None = None,
+        joke_style: str = "",
     ):
         obj = str.__new__(cls, value)
         obj.memory_ids = memory_ids or []
         obj.archive_ids = archive_ids or []
+        obj.joke_style = joke_style
         return obj
 
 
