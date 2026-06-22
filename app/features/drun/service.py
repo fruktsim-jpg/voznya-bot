@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
 from app.features.drun import config as drun_config
+from app.features.drun import answer_planner as drun_answer_planner
 from app.features.drun import context as drun_context
 from app.features.drun import actions as drun_actions
 from app.features.drun import ask as drun_ask
@@ -470,6 +471,23 @@ async def generate(
             task = task + "\n\n" + mode_block
         except Exception:  # noqa: BLE001
             logger.debug("drun response_mode failed, skipping", exc_info=True)
+            _mode_name = "default"
+    else:
+        _mode_name = "default"
+
+    try:
+        route = drun_context.classify_context_route(
+            query, channel=channel, subject_id=subject_id
+        )
+        plan = drun_answer_planner.build_answer_plan(
+            query=mode_source or query,
+            response_mode=_mode_name,
+            context_intent=route.intent.value,
+            context=str(ctx),
+        )
+        task = task + "\n\n" + plan.render()
+    except Exception:  # noqa: BLE001
+        logger.debug("drun answer_planner failed, skipping", exc_info=True)
 
     if grounded:
         # Для web/factual ответов стиль может быть живым, но декодер — холоднее:

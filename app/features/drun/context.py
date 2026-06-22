@@ -68,6 +68,7 @@ class ContextRoute:
     include_worldview: bool = True
     include_economy: bool = True
     include_identity: bool = False
+    include_joke_material: bool = False
     archive_limit: int = 4
 
 
@@ -162,6 +163,7 @@ def classify_context_route(
             include_worldview=True,
             include_economy=False,
             include_identity=False,
+            include_joke_material=True,
             archive_limit=0,
         )
     if _route_has_any(q, _ECONOMY_WORDS):
@@ -1102,6 +1104,12 @@ async def build_context(
         blocks.append(
             await _isolated(
                 session, "identity", lambda: _identity_block(session, query), ""
+            )
+        )
+    if route.include_joke_material and query:
+        blocks.append(
+            await _isolated(
+                session, "joke_material", lambda: _joke_material_block(session, query), ""
             )
         )
     # ПАМЯТЬ про людей (факты/клички/связи) идёт СРАЗУ за живым чатом и досье —
