@@ -63,8 +63,9 @@ def test_mood_classifies_achievement_and_gift_as_celebratory():
 def test_autonomous_min_gap_default_conservative():
     # Анти-спам по умолчанию: ощутимая пауза между автопостами.
     assert drun_config.DEFAULTS[drun_config.KEY_AUTONOMOUS_MIN_GAP] >= 30
-    # Автономность по-прежнему выключена по умолчанию (явный опт-ин).
-    assert drun_config.DEFAULTS[drun_config.KEY_AUTONOMOUS_ENABLED] is False
+    # Безопасная автономность включена: Друн живёт сам, но экономика остаётся off.
+    assert drun_config.DEFAULTS[drun_config.KEY_AUTONOMOUS_ENABLED] is True
+    assert drun_config.DEFAULTS[drun_config.KEY_ECON_ENABLED] is False
 
 
 def test_new_sense_event_types_have_severity():
@@ -87,4 +88,3 @@ def test_mood_classifies_nominations():
     # Пидор дня — публичный «позор» (конфликт), пара дня — праздник.
     assert we.EVENT_NOMINATION_PIDOR in drun_mood._CONFLICT_TYPES
     assert we.EVENT_NOMINATION_PARA in drun_mood._CELEBRATORY_TYPES
-

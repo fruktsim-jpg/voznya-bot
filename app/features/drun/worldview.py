@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.logger import get_logger
@@ -36,7 +37,7 @@ from app.features.drun import config as drun_config
 from app.features.drun import economy as drun_economy
 from app.features.drun import provider as drun_provider
 from app.features.drun.names import name_for, resolve_names
-from app.models import AiMemory, Transaction, User, WorldEvent
+from app.models import AiMemory, AiSetting, Transaction, User, WorldEvent
 
 logger = get_logger(__name__)
 
@@ -56,6 +57,7 @@ _MAX_OPINIONS = 60      # ~ по мнению на активного игрок
 _MAX_STORYLINES = 12
 _MAX_LEGENDS = 20
 _PER_RUN = 8            # сколько выводов максимум за один проход думы
+_KEY_LAST_DAILY_WEB_SUMMARY = "drun_last_daily_web_summary"
 
 
 @dataclass
@@ -662,6 +664,65 @@ async def worldview_block(session: AsyncSession, *, limit: int = 14) -> str:
         return ""
 
 
+async def daily_web_summary(session: AsyncSession) -> str | None:
+    """Генерит одну web-only сводку дня голосом Друна.
+
+    Это не Telegram-автопост и не новая власть: только read-only наррация для
+    web/Mini App ленты. Кулдаун хранится в ``ai_settings``, чтобы перезапуски не
+    дублировали сводку. Commit делает вызывающий.
+    """
+    cfg = await drun_config.get_config(session)
+    if not cfg.usable:
+        return None
+
+    last = await session.scalar(
+        select(AiSetting.value).where(AiSetting.key == _KEY_LAST_DAILY_WEB_SUMMARY)
+    )
+    now = now_utc()
+    if isinstance(last, str):
+        try:
+            if (now - datetime.fromisoformat(last)).total_seconds() < 20 * 3600:
+                return None
+        except (TypeError, ValueError):
+            pass
+
+    snap = await observe(session, hours=24)
+    if not _has_material(snap):
+        return None
+    chronicle = await worldview_block(session, limit=10)
+    task = (
+        "Ты — Тёмный друн, живой летописец Возни. Дай одну короткую web-сводку "
+        "дня для сайта/мини-аппа: что в мире пахнет драмой, кто двигает баланс, "
+        "какой сюжет стоит заметить. 2-4 фразы, в образе, без списка команд, без "
+        "объяснения что ты бот. Это не чат-ответ, а публичная заметка в ленту.\n\n"
+        f"# СРЕЗ ЗА 24 ЧАСА:\n{_snapshot_text(snap)}\n\n"
+        f"# ТВОЯ ЛЕТОПИСЬ:\n{chronicle or '(пока пусто)'}"
+    )
+    try:
+        raw_text = await drun_provider.chat(
+            cfg,
+            system=_THINK_SYSTEM,
+            messages=[{"role": "user", "content": task}],
+            model=cfg.model_for(drun_config.ROLE_NARRATOR),
+        )
+    except drun_provider.LlmError as exc:
+        logger.debug("daily web summary llm failed: %s", exc)
+        return None
+
+    text = (raw_text or "").strip()[:900]
+    if not text:
+        return None
+    stmt = (
+        pg_insert(AiSetting)
+        .values(key=_KEY_LAST_DAILY_WEB_SUMMARY, value=now.isoformat())
+        .on_conflict_do_update(
+            index_elements=[AiSetting.key], set_={"value": now.isoformat()}
+        )
+    )
+    await session.execute(stmt)
+    return text
+
+
 def setup_worldview(
     scheduler,
     sessionmaker: async_sessionmaker[AsyncSession],
@@ -677,16 +738,28 @@ def setup_worldview(
 
     async def _job() -> None:
         try:
+            summary = None
             async with sessionmaker() as session:
                 closed = await resolve_predictions(session)
                 added = await think(session, hours=24)
                 legends = await detect_legends(session, hours=hours * 6)
+                summary = await daily_web_summary(session)
                 await session.commit()
                 if added or closed or legends:
                     logger.info(
                         "drun worldview: +%d beliefs, %d predictions closed, +%d legends",
                         added, closed, legends,
                     )
+            if summary:
+                from app.features.drun.presence import PresenceTarget, get_presence
+
+                presence = get_presence()
+                if presence is not None:
+                    await presence.deliver(
+                        PresenceTarget.web(), summary,
+                        meta={"kind": "daily_summary"},
+                    )
+                    logger.info("drun worldview: daily web summary posted")
         except Exception:  # noqa: BLE001
             logger.warning("drun worldview loop failed", exc_info=True)
 
