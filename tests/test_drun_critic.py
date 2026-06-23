@@ -71,10 +71,12 @@ def test_repair_trims_too_long_response():
 def test_should_rewrite_only_serious_quality_failures():
     generic = critic.Critique(ok=False, reasons=("generic_refusal",))
     economy = critic.Critique(ok=False, reasons=("ungrounded_economy_claim",))
+    stale_joke = critic.Critique(ok=False, reasons=("stale_economy_duel_joke",))
     ok = critic.Critique(ok=True)
 
     assert critic.should_rewrite(generic) is True
     assert critic.should_rewrite(economy) is False
+    assert critic.should_rewrite(stale_joke) is True
     assert critic.should_rewrite(ok) is False
 
 

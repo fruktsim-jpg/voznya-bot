@@ -11,6 +11,19 @@ def test_joke_plan_blocks_economy_duel_fallback():
     assert "сетап + панчлайн" in text
 
 
+def test_fun_fact_plan_requires_concrete_memory_or_archive():
+    plan = p.build_answer_plan(
+        query="расскажи забавный факт",
+        response_mode="fun_fact",
+        context_intent="past",
+        context="# СЫРОЙ АРХИВ\n# ДОЛГАЯ ПАМЯТЬ ДРУНА",
+    )
+    text = plan.render()
+    assert "забавный факт" in text
+    assert "сырую архивную реплику" in text
+    assert "ешки/казино/дуэли" in text
+
+
 def test_help_plan_requires_steps():
     plan = p.build_answer_plan(query="как заработать ешки", response_mode="help", context_intent="economy", context="# ЭКОНОМИКА")
     text = plan.render()

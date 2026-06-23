@@ -48,7 +48,7 @@ def _clean_query(text: str) -> str:
 def _bad_stale_material(text: str, *, query: str) -> bool:
     low = (text or "").lower()
     q = (query or "").lower()
-    if any(w in q for w in _ECONOMY_DUEL_WORDS):
+    if any(w in q for w in _ECONOMY_DUEL_WORDS if w not in {"проиграл", "проигран"}):
         return False
     return any(w in low for w in _ECONOMY_DUEL_WORDS)
 

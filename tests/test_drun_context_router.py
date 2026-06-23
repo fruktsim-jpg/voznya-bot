@@ -46,6 +46,16 @@ def test_context_router_joke_request_suppresses_economy_noise():
     assert route.intent == ContextIntent.DEFAULT
     assert route.include_economy is False
     assert route.include_worldview is True
+    assert route.include_joke_material is True
+
+
+def test_context_router_fun_fact_uses_archive_not_economy():
+    route = classify_context_route("расскажи забавный факт из чата")
+
+    assert route.intent == ContextIntent.PAST
+    assert route.include_archive is True
+    assert route.archive_limit == 8
+    assert route.include_economy is False
 
 
 def test_context_router_person_focuses_social_memory():

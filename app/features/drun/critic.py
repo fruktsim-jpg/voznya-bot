@@ -134,6 +134,7 @@ def should_rewrite(critique: Critique) -> bool:
         "generic_refusal",
         "ignores_archive_query",
         "context_copy",
+        "stale_economy_duel_joke",
     }
     return any(reason in serious for reason in critique.reasons)
 

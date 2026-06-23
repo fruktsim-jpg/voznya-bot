@@ -26,6 +26,7 @@ from app.features.drun import answer_planner as drun_answer_planner
 from app.features.drun import context as drun_context
 from app.features.drun import actions as drun_actions
 from app.features.drun import ask as drun_ask
+from app.features.drun import critic as drun_critic
 from app.features.drun import emotion as drun_emotion
 from app.features.drun import filter as drun_filter
 from app.features.drun import memory as drun_memory
@@ -370,6 +371,7 @@ async def generate(
         ctx = ""
     memory_ids = list(getattr(ctx, "memory_ids", []) or [])
     archive_ids = list(getattr(ctx, "archive_ids", []) or [])
+    joke_style = str(getattr(ctx, "joke_style", "") or "")
     # Страховка перед фазой записи: если что-то в helpers всё же отравило
     # транзакцию (например, асинхронный таск, или persona без savepoint'а),
     # лечим до recent_messages/add_message.
@@ -582,6 +584,47 @@ async def generate(
             text = "..."
     text = _guard_econ_claim(text, econ_result)
 
+    critique = drun_critic.critique_response(
+        query=query or memory_user_content or task,
+        context=str(ctx),
+        response=text,
+        memory_ids=memory_ids,
+        archive_ids=archive_ids,
+    )
+    if drun_critic.should_rewrite(critique):
+        try:
+            rewrite = drun_critic.rewrite_prompt(
+                query=query or memory_user_content or task,
+                context=str(ctx),
+                bad_response=text,
+                critique=critique,
+            )
+            raw2 = await drun_provider.chat(
+                cfg,
+                system=system,
+                messages=[{"role": "user", "content": rewrite}],
+                model=cfg.model_for(role or drun_config.ROLE_NARRATOR),
+                temperature=temp_override,
+            )
+            text2 = drun_filter.clean(raw2, max_chars=max_chars)
+            if text2:
+                # Rewrite happens after ask/econ directive handling, so sanitize
+                # again to avoid a second pass reintroducing hidden commands.
+                text = drun_ask.strip_directives(text2) or "..."
+                if drun_actions.parse(text) is not None:
+                    text = drun_actions.strip_directives(text) or "..."
+                text = _guard_econ_claim(text, econ_result)
+                critique = drun_critic.critique_response(
+                    query=query or memory_user_content or task,
+                    context=str(ctx),
+                    response=text,
+                    memory_ids=memory_ids,
+                    archive_ids=archive_ids,
+                )
+        except drun_provider.LlmError as exc:
+            logger.warning("drun critic rewrite failed: %s", exc)
+    text = drun_critic.repair_response_text(text, critique)
+
     if remember_message:
         # В историю кладём чистую реплику (а не весь шаблон), чтобы диалог
         # читался по-человечески и не засорял контекст инструкциями. Тип хода
@@ -608,6 +651,8 @@ async def generate(
                 "to_name": subject_name,
                 "memory_ids": memory_ids[:32],
                 "archive_ids": archive_ids[:32],
+                "joke_style": joke_style,
+                "critique": critique.as_meta(),
             },
         )
 

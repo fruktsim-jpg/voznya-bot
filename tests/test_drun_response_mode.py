@@ -37,6 +37,14 @@ def test_joke_request_mode_avoids_generic_roast():
     assert "сетап" in mode.directive
 
 
+def test_fun_fact_mode_uses_memory_not_roast():
+    mode = rm.classify_response_mode("расскажи забавный факт из чата")
+
+    assert mode.name == "fun_fact"
+    assert "забавный факт" in mode.directive
+    assert "ешки/дуэли" in mode.directive
+
+
 def test_aggression_mode():
     mode = rm.classify_response_mode("тупой бот заткнись")
     assert mode.name == "aggression"

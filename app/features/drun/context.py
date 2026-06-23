@@ -27,6 +27,8 @@ from app.core.money import money
 from app.core.utils import now_utc
 from app.features.drun import attitude as drun_attitude
 from app.features.drun import chat_archive as drun_chat_archive
+from app.features.drun import joke_material as drun_joke_material
+from app.features.drun import joke_style as drun_joke_style
 from app.features.drun import memory as drun_memory
 from app.features.drun import memory_recall as drun_memory_recall
 from app.features.drun import identity as drun_identity
@@ -93,6 +95,10 @@ _PERSON_WORDS = (
 )
 _JOKE_WORDS = (
     "анекдот", "пошути", "шутк", "смешно", "рассмеши", "зарофли", "прикол",
+)
+_FUN_FACT_WORDS = (
+    "факт", "забавн", "интересн", "расскажи что-нибудь", "расскажи чтонить",
+    "удиви", "байк", "историю из чата", "что было в чате", "из архива",
 )
 
 
@@ -165,6 +171,17 @@ def classify_context_route(
             include_identity=False,
             include_joke_material=True,
             archive_limit=0,
+        )
+    if _route_has_any(q, _FUN_FACT_WORDS):
+        return ContextRoute(
+            intent=ContextIntent.PAST,
+            include_archive=True,
+            include_web=False,
+            include_overview=False,
+            include_worldview=True,
+            include_economy=False,
+            include_identity=False,
+            archive_limit=8,
         )
     if _route_has_any(q, _ECONOMY_WORDS):
         return ContextRoute(
@@ -881,6 +898,33 @@ async def _archive_block(
         return ""
 
 
+async def _joke_material_bundle(
+    session: AsyncSession,
+    *,
+    query: str,
+    channel: str = "chat",
+) -> tuple[str, str]:
+    """Joke request support: premises + rotated form.
+
+    This used to be referenced but not implemented, so joke requests silently lost
+    the exact material that should prevent fallback into stale casino/duel/KD
+    roasts. Return the selected style key so the assistant turn can persist it in
+    meta and the next joke avoids the same vessel.
+    """
+    material = await drun_joke_material.build_joke_material_block(session, query=query)
+    style_block, style_key = await drun_joke_style.build_joke_style_block(
+        session, query=query, channel=channel,
+    )
+    block = "\n\n".join(part for part in (material, style_block) if part)
+    return block, style_key
+
+
+async def _joke_material_block(session: AsyncSession, query: str) -> str:
+    """Compatibility wrapper for tests/older call sites."""
+    block, _style = await _joke_material_bundle(session, query=query)
+    return block
+
+
 async def _identity_block(session: AsyncSession, query: str | None = None) -> str:
     try:
         return await drun_identity.build_identity_block(session, query)
@@ -1109,12 +1153,15 @@ async def build_context(
                 session, "identity", lambda: _identity_block(session, query), ""
             )
         )
+    joke_style = ""
     if route.include_joke_material and query:
-        blocks.append(
-            await _isolated(
-                session, "joke_material", lambda: _joke_material_block(session, query), ""
-            )
+        joke_block, joke_style = await _isolated(
+            session,
+            "joke_material",
+            lambda: _joke_material_bundle(session, query=query, channel=channel),
+            ("", ""),
         )
+        blocks.append(joke_block)
     # ПАМЯТЬ про людей (факты/клички/связи) идёт СРАЗУ за живым чатом и досье —
     # это «социальное знание», на котором друн должен строить ответ. Раньше оно
     # тонуло НИЖЕ трёх денежных блоков (overview/economy/worldview), и модель,
@@ -1173,4 +1220,9 @@ async def build_context(
         )
     )
     text = "\n\n".join(b for b in blocks if b).strip()
-    return ContextBuildResult(text, memory_ids=memory_ids, archive_ids=archive_ids)
+    return ContextBuildResult(
+        text,
+        memory_ids=memory_ids,
+        archive_ids=archive_ids,
+        joke_style=joke_style,
+    )
