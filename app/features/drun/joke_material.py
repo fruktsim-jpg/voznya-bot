@@ -48,7 +48,16 @@ def _clean_query(text: str) -> str:
 def _bad_stale_material(text: str, *, query: str) -> bool:
     low = (text or "").lower()
     q = (query or "").lower()
-    if any(w in q for w in _ECONOMY_DUEL_WORDS if w not in {"проиграл", "проигран"}):
+    q_tokens = set(_WORD_RE.findall(q))
+
+    def query_requests_topic(word: str) -> bool:
+        # Short markers like "кд" must be token-matched, otherwise "анекдот"
+        # accidentally opens the stale KD/duel fallback for every joke request.
+        if len(word) <= 2:
+            return word in q_tokens
+        return word in q
+
+    if any(query_requests_topic(w) for w in _ECONOMY_DUEL_WORDS):
         return False
     return any(w in low for w in _ECONOMY_DUEL_WORDS)
 
