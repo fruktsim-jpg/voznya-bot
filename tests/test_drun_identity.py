@@ -8,6 +8,11 @@ def test_normalize_name_lowers_and_strips_punctuation():
     assert identity.normalize_name("h1nt_jpg") == "h1nt_jpg"
 
 
+def test_normalize_person_key_handles_case_forms():
+    assert identity.normalize_person_key("Карине") == "карин"
+    assert identity.normalize_person_key("Карина") == "карин"
+
+
 def test_extract_person_query_removes_common_prefixes():
     assert identity.extract_person_query("кто такой Хинт вообще") == "Хинт"
     assert identity.extract_person_query("досье на oew") == "oew"

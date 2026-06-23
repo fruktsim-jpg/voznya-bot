@@ -15,6 +15,7 @@ from datetime import datetime
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.features.drun import person_mentions as drun_person_mentions
 from app.models import AiChatArchive, AiMemory, AiPersonMention
 
 _WORD_RE = re.compile(r"[\w']+", re.UNICODE)
@@ -77,6 +78,11 @@ class PersonDossier:
 def normalize_name(text: str) -> str:
     words = _WORD_RE.findall((text or "").lower())
     return " ".join(words)
+
+
+def normalize_person_key(text: str) -> str:
+    """Canonical key for matching person names across cases/spellings."""
+    return drun_person_mentions.normalize_mention(text or "")
 
 
 def extract_person_query(text: str) -> str:
@@ -187,6 +193,7 @@ async def resolve_person(
 ) -> list[PersonCandidate]:
     name = extract_person_query(query)
     norm = normalize_name(name)
+    person_key = normalize_person_key(name)
     if not norm:
         return []
 
@@ -210,7 +217,7 @@ async def resolve_person(
         )
     ).all()
     for user_id, display_name, cnt in archive_rows:
-        exact = normalize_name(display_name) == norm
+        exact = normalize_person_key(display_name or "") == person_key
         _merge_candidate(
             bucket,
             user_id=user_id,
@@ -221,55 +228,26 @@ async def resolve_person(
         )
 
     # 1b) If the queried name appears in message text ("Карина", "карине"),
-    # find the speakers who mention it most. This covers people who are talked
-    # about a lot but rarely use that exact string as their display name.
+    # treat that only as evidence that the name exists in chat lore. Do NOT turn
+    # mentioners into identity candidates: "who said Karina most" is not Karina.
+    mention_evidence = 0
     mention_rows = (
         await session.execute(
-            select(
-                AiChatArchive.user_id,
-                AiChatArchive.name,
-                func.count().label("cnt"),
-            )
+            select(func.count())
             .where(AiChatArchive.text.ilike(like))
             .where(AiChatArchive.user_id.is_not(None))
-            .group_by(AiChatArchive.user_id, AiChatArchive.name)
-            .order_by(func.count().desc())
-            .limit(20)
         )
-    ).all()
-    for user_id, display_name, cnt in mention_rows:
-        _merge_candidate(
-            bucket,
-            user_id=int(user_id) if user_id is not None else None,
-            name=display_name or name,
-            confidence=0.36,
-            source="archive_text_mentioner",
-            archive_hits=int(cnt or 0),
-        )
+    ).scalar_one_or_none()
+    mention_evidence += int(mention_rows or 0)
 
     mention_index_rows = (
         await session.execute(
-            select(
-                AiPersonMention.speaker_user_id,
-                AiPersonMention.speaker_name,
-                func.count().label("cnt"),
-            )
-            .where(AiPersonMention.mention_norm == norm)
+            select(func.count())
+            .where(AiPersonMention.mention_norm == person_key)
             .where(AiPersonMention.speaker_user_id.is_not(None))
-            .group_by(AiPersonMention.speaker_user_id, AiPersonMention.speaker_name)
-            .order_by(func.count().desc())
-            .limit(20)
         )
-    ).all()
-    for user_id, speaker_name, cnt in mention_index_rows:
-        _merge_candidate(
-            bucket,
-            user_id=int(user_id) if user_id is not None else None,
-            name=speaker_name or name,
-            confidence=0.48,
-            source="person_mention_index",
-            archive_hits=int(cnt or 0),
-        )
+    ).scalar_one_or_none()
+    mention_evidence += int(mention_index_rows or 0)
 
     # 2) Long-memory subjects mentioning the name. Lower confidence than speaker
     # identity, but useful for aliases/kлички that don't appear as display names.
@@ -320,6 +298,16 @@ async def resolve_person(
                 source="archive_text_stem_mentioner",
                 archive_hits=int(cnt or 0),
             )
+
+    if not bucket and mention_evidence > 0:
+        _merge_candidate(
+            bucket,
+            user_id=None,
+            name=name,
+            confidence=0.34,
+            source="name_mentioned_in_chat",
+            archive_hits=min(mention_evidence, 50),
+        )
 
     await _attach_archive_aliases(session, bucket)
     return rank_candidates(list(bucket.values()))[:limit]
