@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils import now_utc
@@ -40,7 +40,7 @@ from app.settings import mmr as mmr_settings
 class ChallengeResult:
     """Результат создания вызова на дуэль."""
 
-    status: str  # "cooldown" / "poor" / "ok"
+    status: str  # "cooldown" / "pending_exists" / "poor" / "ok"
     remaining: float = 0.0
     balance: int = 0
     pending_id: int = 0
@@ -87,6 +87,26 @@ async def create_challenge(
     remaining = await cooldowns.get_remaining(session, initiator_id, "duel")
     if remaining > 0:
         return ChallengeResult(status="cooldown", remaining=remaining)
+
+    # Serialize challenge creation per initiator. Without this, two very fast
+    # /бой commands can both observe "no pending rows" before either insert is
+    # committed and create duplicate active challenges.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        {"lock_key": int(initiator_id)},
+    )
+
+    existing = await session.execute(
+        select(PendingAction)
+        .where(PendingAction.action_type == TYPE_DUEL)
+        .where(PendingAction.initiator_id == initiator_id)
+        .where(PendingAction.status == STATUS_PENDING)
+        .where(PendingAction.expires_at > now_utc())
+        .limit(1)
+        .with_for_update()
+    )
+    if existing.scalars().first() is not None:
+        return ChallengeResult(status="pending_exists")
 
     initiator = await session.get(User, initiator_id)
     if initiator is None or initiator.balance < amount:
@@ -262,12 +282,10 @@ async def accept_challenge(
         meta={"bank": bank, "stake": amount},
     )
 
-    # Кулдаун дуэли ставится здесь — только теперь бой реально состоялся.
-    # Обоим участникам, чтобы спам-замесами не заваливали чат. Длительность
-    # редактируется из админки (app_settings: duel.cooldown).
+    # Кулдаун дуэли ставится только инициатору вызова. Принятие чужого боя не
+    # должно блокировать игроку возможность самому кого-то вызвать позже.
     duel_cd = await dynamic.get_int(session, "duel.cooldown", balance.COOLDOWNS["duel"])
     await cooldowns.set_cooldown(session, initiator_id, "duel", duel_cd)
-    await cooldowns.set_cooldown(session, confirmer_id, "duel", duel_cd)
 
     return DuelResult(
 

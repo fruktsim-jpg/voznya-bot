@@ -98,6 +98,7 @@ async def _finish_duel(
             winner=winner_mention,
             loser=loser_mention,
             bank=money(result.bank),
+            amount=money(result.amount),
             phrase=phrase,
         )
     ]
@@ -221,6 +222,9 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
                 texts.COOLDOWN_NOTICE.format(time=format_cooldown(result.remaining)),
             )
             return
+        if result.status == "pending_exists":
+            await notify_and_cleanup(session, message, texts.DUEL_PENDING_EXISTS)
+            return
         if result.status == "poor":
             await notify_and_cleanup(
                 session,
@@ -291,6 +295,9 @@ async def cmd_duel(message: Message, session: AsyncSession, command_args: str) -
             message,
             texts.COOLDOWN_NOTICE.format(time=format_cooldown(result.remaining)),
         )
+        return
+    if result.status == "pending_exists":
+        await notify_and_cleanup(session, message, texts.DUEL_PENDING_EXISTS)
         return
     if result.status == "poor":
         await notify_and_cleanup(
