@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 from app.core.money import money
+from app.core.responses import notify_and_cleanup, send_info_window
 from app.core.utils import display_name
 from app.features.achievements.service import check_award_and_notify
 from app.features.para.service import get_or_choose_para
@@ -37,7 +38,9 @@ async def cmd_para(message: Message, session: AsyncSession, command_args: str) -
     result = await get_or_choose_para(session, user.id)
 
     if result.status == "not_enough":
-        await message.answer(
+        await notify_and_cleanup(
+            session,
+            message,
             texts.NOMINATION_NOT_ENOUGH.format(min=balance.NOMINATION_MIN_CANDIDATES)
         )
         return
@@ -54,7 +57,7 @@ async def cmd_para(message: Message, session: AsyncSession, command_args: str) -
     else:
         text = texts.PARA_TODAY.format(first=first, second=second)
 
-    await message.answer(text)
+    await send_info_window(session, message, "para", text)
 
     # При фактическом выборе открывший получает продуктивный бонус
     # (total_earned), который может открыть экономическое достижение —

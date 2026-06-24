@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.filters import RuCommand
 from app.core.money import money
+from app.core.responses import notify_and_cleanup, send_info_window
 from app.core.utils import display_name, place_marker
 
 from app.features.achievements.service import check_award_and_notify
@@ -46,7 +47,9 @@ async def cmd_pidor(message: Message, session: AsyncSession, command_args: str) 
     result = await get_or_choose_pidor(session, user.id)
 
     if result.status == "not_enough":
-        await message.answer(
+        await notify_and_cleanup(
+            session,
+            message,
             texts.NOMINATION_NOT_ENOUGH.format(min=balance.NOMINATION_MIN_CANDIDATES)
         )
         return
@@ -67,7 +70,7 @@ async def cmd_pidor(message: Message, session: AsyncSession, command_args: str) 
     else:
         text = texts.PIDOR_TODAY.format(mention=who, count=result.count)
 
-    await message.answer(text + top_block)
+    await send_info_window(session, message, "pidor", text + top_block)
 
     # Только при фактическом выборе сегодня меняются счётчики: победителю
     # +1 к pidor_count, открывшему — продуктивный бонус (total_earned). Тогда

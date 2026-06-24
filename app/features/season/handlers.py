@@ -20,11 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.keyboards import ranking_site_button
-from app.core.responses import notify_and_cleanup, send_leaderboard
+from app.core.responses import notify_and_cleanup, send_info_window, send_leaderboard
 from app.core.utils import display_name, place_marker
 from app.features.season import service as season_service
 from app.repositories import season as season_repo
-from app.services.deletion import get_deletion_service
 from app.settings import season as cfg
 
 router = Router(name="season")
@@ -63,7 +62,10 @@ async def cmd_season(
         0, (active.ends_at - datetime.now(timezone.utc)).days
     )
     season_url = f"{get_settings().website_url}/season"
-    sent = await message.answer(
+    await send_info_window(
+        session,
+        message,
+        "season_card",
         cfg.SEASON_CARD.format(
             season_name=active.name,
             season_mmr=season_mmr,
@@ -74,15 +76,6 @@ async def cmd_season(
         reply_markup=ranking_site_button(
             "🗓 Сезон на сайте", season_url, message.chat.type
         ),
-    )
-    deletion = get_deletion_service()
-    await deletion.schedule_info_message(
-        session,
-        user_id=user.id,
-        chat_id=message.chat.id,
-        user_command_id=message.message_id,
-        bot_message_id=sent.message_id,
-        ttl_seconds=180,
     )
 
 
@@ -129,22 +122,16 @@ async def cmd_missions(
             f"{mark} {mission.title} — +{mission.reward_eshki} ешек, "
             f"+{mission.reward_mmr} MMR"
         )
-    sent = await message.answer(
+    await send_info_window(
+        session,
+        message,
+        "missions",
         "\n".join(lines),
         reply_markup=ranking_site_button(
             "🗓 Миссии на сайте",
             f"{get_settings().website_url}/season",
             message.chat.type,
         ),
-    )
-    deletion = get_deletion_service()
-    await deletion.schedule_info_message(
-        session,
-        user_id=user.id,
-        chat_id=message.chat.id,
-        user_command_id=message.message_id,
-        bot_message_id=sent.message_id,
-        ttl_seconds=180,
     )
 
 

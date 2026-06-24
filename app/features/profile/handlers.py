@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.keyboards import profile_shortcuts, supports_web_app
+from app.core.responses import notify_and_cleanup, send_info_window
 from app.core.utils import display_name, format_marriage_duration_days
 from app.models import User
 from app.settings import texts
@@ -80,29 +81,19 @@ async def render_profile(session: AsyncSession, user: User) -> str:
 
 async def _send_profile(message: Message, session: AsyncSession, user: User) -> None:
     """Отправляет карточку профиля игрока с кнопкой на сайт + автоудаление."""
-    from app.services.deletion import get_deletion_service
-
     settings = get_settings()
     text = await render_profile(session, user)
 
-    sent = await message.answer(
+    await send_info_window(
+        session,
+        message,
+        "profile",
         text,
         reply_markup=profile_shortcuts(
             settings.website_url,
             user.user_id,
             prefer_web_app=supports_web_app(message.chat.type),
         ),
-    )
-
-    # Автоудаление информационного сообщения (чистота чата).
-    deletion = get_deletion_service()
-    await deletion.schedule_info_message(
-        session,
-        user_id=message.from_user.id if message.from_user else user.user_id,
-        chat_id=message.chat.id,
-        user_command_id=message.message_id,
-        bot_message_id=sent.message_id,
-        ttl_seconds=180,
     )
 
 
@@ -118,7 +109,7 @@ async def profile_command(message: Message, session: AsyncSession, command_args:
 
     user = await get_user(session, user_tg.id)
     if user is None:
-        await message.answer(texts.USER_NOT_FOUND)
+        await notify_and_cleanup(session, message, texts.USER_NOT_FOUND)
         return
 
     await _send_profile(message, session, user)
@@ -143,7 +134,7 @@ async def who_are_you_command(
 
     user = await get_user(session, reply.from_user.id)
     if user is None:
-        await message.answer(texts.USER_NOT_FOUND)
+        await notify_and_cleanup(session, message, texts.USER_NOT_FOUND)
         return
 
     await _send_profile(message, session, user)

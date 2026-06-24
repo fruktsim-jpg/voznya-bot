@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.keyboards import ranking_site_button
-from app.core.responses import send_leaderboard
+from app.core.responses import notify_and_cleanup, send_info_window, send_leaderboard
 from app.core.utils import display_name, place_marker
 from app.repositories import mmr as mmr_repo
 from app.settings import mmr as mmr_texts
@@ -52,7 +52,7 @@ async def cmd_mmr(
             f"\n\n➡️ Следующий ранг: {next_rank.emoji} {next_rank.name}"
             f"\n📊 Осталось: {next_rank.min_mmr - mmr:,} MMR"
         )
-    await send_leaderboard(
+    await send_info_window(
         session,
         message,
         "mmr",
@@ -74,14 +74,7 @@ async def cmd_top_mmr(
     """Показывает топ игроков по рейтингу."""
     top = await mmr_repo.top_by_mmr(session, mmr_texts.TOP_MMR_LIMIT)
     if not top:
-        await message.answer(
-            mmr_texts.MMR_TOP_EMPTY,
-            reply_markup=ranking_site_button(
-                "🏆 Рейтинги на сайте",
-                f"{get_settings().website_url}/live",
-                message.chat.type,
-            ),
-        )
+        await notify_and_cleanup(session, message, mmr_texts.MMR_TOP_EMPTY)
         return
 
     rows = "\n".join(

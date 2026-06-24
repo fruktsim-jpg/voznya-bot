@@ -15,13 +15,13 @@ from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.keyboards import inventory_pagination, supports_web_app
 from app.core.money import money
+from app.core.responses import send_info_window
 from app.core.targets import resolve_target
 
 from app.features.inventory.service import render_inventory
 from app.repositories import gifts as gifts_repo
 from app.repositories import inventory as inv_repo
 from app.repositories import users as users_repo
-from app.services.deletion import get_deletion_service
 from app.settings import inventory as inv_texts
 from app.settings.balance import ESHKI_PER_STAR, ITEM_SELL_RATE
 
@@ -146,19 +146,12 @@ async def cmd_inventory(
             page, pages, sender.id, url, prefer_web_app=supports_web_app(message.chat.type)
         )
 
-    sent = await message.answer(text, reply_markup=markup)
-
-
-
-    # Автоудаление информационного сообщения (чистота чата) — как в profile.
-    deletion = get_deletion_service()
-    await deletion.schedule_info_message(
+    await send_info_window(
         session,
-        user_id=sender.id,
-        chat_id=message.chat.id,
-        user_command_id=message.message_id,
-        bot_message_id=sent.message_id,
-        ttl_seconds=180,
+        message,
+        "inventory",
+        text,
+        reply_markup=markup,
     )
 
 

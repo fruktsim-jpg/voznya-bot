@@ -19,11 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.filters import RuCommand
 from app.core.keyboards import ranking_site_button
-from app.core.responses import send_leaderboard
+from app.core.responses import notify_and_cleanup, send_info_window, send_leaderboard
 from app.core.utils import display_name, format_cooldown, mention, place_marker
 from app.features.reputation.service import apply_reputation, classify
 from app.repositories import reputation as rep_repo
-from app.services.deletion import get_deletion_service
 from app.settings import reputation as rep_texts
 
 router = Router(name="reputation")
@@ -122,7 +121,10 @@ async def cmd_reputation(
         target_id = reply.from_user.id
 
     summary = await rep_repo.get_summary(session, target_id)
-    sent = await message.answer(
+    await send_info_window(
+        session,
+        message,
+        "reputation",
         rep_texts.REP_CARD.format(
             score=summary.score, plus=summary.plus, minus=summary.minus
         ),
@@ -131,15 +133,6 @@ async def cmd_reputation(
             f"{get_settings().website_url}/live",
             message.chat.type,
         ),
-    )
-    deletion = get_deletion_service()
-    await deletion.schedule_info_message(
-        session,
-        user_id=user.id,
-        chat_id=message.chat.id,
-        user_command_id=message.message_id,
-        bot_message_id=sent.message_id,
-        ttl_seconds=180,
     )
 
 
@@ -152,14 +145,7 @@ async def cmd_top_reputation(
         session, rep_texts.TOP_REPUTATION_LIMIT
     )
     if not top:
-        await message.answer(
-            rep_texts.REP_TOP_EMPTY,
-            reply_markup=ranking_site_button(
-                "🏆 Рейтинги на сайте",
-                f"{get_settings().website_url}/live",
-                message.chat.type,
-            ),
-        )
+        await notify_and_cleanup(session, message, rep_texts.REP_TOP_EMPTY)
         return
 
     rows = "\n".join(

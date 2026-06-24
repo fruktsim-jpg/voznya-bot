@@ -37,6 +37,7 @@ async def send_leaderboard(
     text: str,
     *,
     reply_markup=None,
+    ttl_seconds: float = balance.HELP_DELETE_AFTER,
 ) -> Message:
     """Единый шаблон вывода рейтинга/топа (P1-11).
 
@@ -54,4 +55,32 @@ async def send_leaderboard(
         sent.message_id,
     )
     await deletion.schedule(session, message.chat.id, message.message_id, 1)
+    if ttl_seconds > 0:
+        await deletion.schedule(session, sent.chat.id, sent.message_id, ttl_seconds)
     return sent
+
+
+async def send_info_window(
+    session: AsyncSession,
+    message: Message,
+    window_type: str,
+    text: str,
+    *,
+    reply_markup=None,
+    ttl_seconds: float = balance.HELP_DELETE_AFTER,
+) -> Message:
+    """Sends one replaceable public info window per chat and type.
+
+    Unlike per-user info cleanup, this prevents many players from filling the
+    chat with separate profile/inventory/help/MMR cards. A new window of the
+    same type deletes the previous command + bot reply, then both current
+    messages expire by TTL.
+    """
+    return await send_leaderboard(
+        session,
+        message,
+        f"info:{window_type}",
+        text,
+        reply_markup=reply_markup,
+        ttl_seconds=ttl_seconds,
+    )
