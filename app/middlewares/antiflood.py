@@ -14,39 +14,8 @@ from typing import Any
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
+from app.core.filters import looks_like_known_command
 from app.settings import balance
-
-
-_COMMAND_ALIASES = {
-    # economy/gameplay
-    "ферма", "farm", "фарм", "казино", "casino", "ставка", "бой", "duel",
-    "дуэль", "дуэлька", "го", "accept", "go", "клад", "claim", "снять",
-    # info windows
-    "баланс", "balance", "бал", "деньги", "кошелёк", "кошелек", "бабки",
-    "профиль", "profile", "проф", "кто", "инвентарь", "инв", "рюкзак",
-    "inventory", "inv", "ачивки", "achievements", "ачивы", "достижения",
-    "помощь", "help", "старт", "start", "команды", "меню",
-    # leaderboards
-    "топ", "top", "рейтинг", "лидеры", "богачи", "богатые", "топнеделя",
-    "weekly", "семьи", "families", "браки", "свадьбы", "ммр", "mmr",
-    "топммр", "topmmr", "реп", "репутация", "rep", "reputation",
-    "топреп", "toprep", "сезон", "season", "миссии", "missions",
-    "топсезон", "topseason",
-    # social/noisy
-    "пидор", "pidor", "пара", "couple", "para", "осеменить", "изнасиловать",
-    "выебать", "наплюхать", "сделать_беременной",
-}
-
-
-def _looks_like_command(text: str) -> bool:
-    first = (text or "").strip().split(maxsplit=1)[0].lower()
-    if not first:
-        return False
-    if first.startswith("/"):
-        return True
-    if "@" in first:
-        first = first.split("@", 1)[0]
-    return first in _COMMAND_ALIASES
 
 
 class AntiFloodMiddleware(BaseMiddleware):
@@ -63,7 +32,7 @@ class AntiFloodMiddleware(BaseMiddleware):
     ) -> Any:
         if isinstance(event, Message) and event.from_user is not None:
             text = event.text or event.caption or ""
-            if _looks_like_command(text):
+            if looks_like_known_command(text):
                 user_id = event.from_user.id
                 now = time.monotonic()
                 last = self._last_command.get(user_id, 0.0)

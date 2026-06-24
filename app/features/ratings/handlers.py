@@ -64,7 +64,7 @@ async def render_top(session: AsyncSession, page: int) -> tuple[str, int]:
     return ("\n\n".join(parts), total_pages)
 
 
-@router.message(RuCommand("топ", "top", "рейтинг", "лидеры", "богачи", "богатые"))
+@router.message(RuCommand("топ", "top", "лидеры", "богачи", "богатые"))
 
 async def cmd_top(message: Message, session: AsyncSession, command_args: str) -> None:
     """Рейтинг богатства: /топ."""
