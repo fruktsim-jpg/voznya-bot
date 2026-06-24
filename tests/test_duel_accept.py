@@ -80,6 +80,10 @@ def test_duel_cooldown_set_only_for_initiator(monkeypatch):
                 User(user_id=2, first_name="target", balance=100),
             ]
         )
+        for user in session.users.values():
+            user.duels_won = 0
+            user.duels_lost = 0
+            user.duel_loss_streak = 0
         await session.flush()
 
         cooldowns: list[tuple[int, str, int]] = []
