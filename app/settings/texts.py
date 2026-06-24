@@ -245,10 +245,10 @@ DUEL_DECLINED = "🏳️ {decliner} сливается. {initiator}, ищи см
 DUEL_TARGET_POOR = "⚔️ {mention} нищий, у него только <b>{balance}</b>."
 DUEL_INITIATOR_POOR_NOW = "⚔️ У соперника пусто. Замес отменён."
 # Результат боя: фикс-шапка (кто кого + банк) + случайная живая фраза.
-# {winner}/{loser} — упоминания, {bank}/{amount} — суммы со склонением («50 ешек»).
+# {winner}/{loser} — упоминания, {amount} — чистая дельта баланса («50 ешек»).
 DUEL_RESULT = (
     "⚔️ {winner} победил {loser}\n"
-    "💰 +{bank} · 💸 −{amount}\n"
+    "💰 +{amount} · 💸 −{amount}\n"
     "{phrase}"
 )
 # Пул фраз для последней строки. Вайб группового чата, без ИИ-канцелярита.
